@@ -37,7 +37,7 @@ export type DiagnosisEvidence = {
 export type DiagnosisClaim = {
   id: string;
   text: string;
-  evidenceIds: string[];
+  evidence_ids: string[];
 };
 
 export type DiagnosisRecommendation = {
@@ -45,7 +45,7 @@ export type DiagnosisRecommendation = {
   title: string;
   priority: "high" | "medium" | "low";
   detail: string;
-  evidenceIds: string[];
+  evidence_ids: string[];
 };
 
 export type DiagnosisAnalysisRequest = {
@@ -66,7 +66,7 @@ export type DiagnosisAnalysisRequest = {
 
 export type DiagnosisResult = {
   title: string;
-  riskLevel: "high" | "medium" | "low";
+  risk_level: "high" | "medium" | "low";
   confidence: number;
   summary: string;
   alternatives: Array<{
@@ -76,12 +76,12 @@ export type DiagnosisResult = {
 };
 
 export type DiagnosisAnalysisResponse = {
-  runId: string;
+  run_id: string;
   diagnosis: DiagnosisResult;
   claims: DiagnosisClaim[];
   evidence: DiagnosisEvidence[];
   recommendations: DiagnosisRecommendation[];
-  retrievalSummary: Record<string, unknown>;
+  retrieval_summary: Record<string, unknown>;
   metadata: {
     mode: "real";
     generationMode?: string;
@@ -93,4 +93,3 @@ export type DiagnosisAnalysisResponse = {
     [key: string]: unknown;
   };
 };
-

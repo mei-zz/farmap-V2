@@ -48,6 +48,13 @@ export type DemoDiagnosis = {
   createdAt: string;
 };
 
+export type DemoRecommendation = {
+  title: string;
+  priority: string;
+  tone: "high" | "medium";
+  detail: string;
+};
+
 export type DemoAgentStep = {
   id: string;
   title: string;
