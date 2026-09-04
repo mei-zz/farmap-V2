@@ -1,0 +1,178 @@
+export interface MonitorType {
+  id: number;
+  serial: string;
+  name: string;
+  longitude: string;
+  latitude: string;
+}
+
+export const monitorList: MonitorType[] = [
+  {
+    id: 0,
+    serial: "GC9054260",
+    longitude: "109.914693",
+    latitude: "31.082733",
+    name: "廖荣华-球机",
+  },
+  {
+    id: 1,
+    serial: "GA1738420",
+    longitude: "109.932434",
+    latitude: "31.084613",
+    name: "陈仁俊-球机",
+  },
+  {
+    id: 2,
+    serial: "GA1738425",
+    longitude: "109.932259",
+    latitude: "31.103548",
+    name: "刘庆贵-球机",
+  },
+  {
+    id: 3,
+    serial: "GA1738438",
+    longitude: "109.920324",
+    latitude: "31.143435",
+    name: "王祖保-球机",
+  },
+  {
+    id: 4,
+    serial: "GA1738413",
+    longitude: "109.821102",
+    latitude: "31.963625",
+    name: "贺维清-球机",
+  },
+  {
+    id: 5,
+    serial: "GA1738435",
+    longitude: "109.671962",
+    latitude: "31.293361",
+    name: "聂宗寿-球机",
+  },
+  {
+    id: 6,
+    serial: "GA1738401",
+    longitude: "109.914693",
+    latitude: "31.082733",
+    name: "刘书建-球机",
+  },
+  {
+    id: 7,
+    serial: "GA3302963",
+    longitude: "109.914693",
+    latitude: "31.082733",
+    name: "彭美春-球机",
+  },
+  {
+    id: 8,
+    serial: "GA1738422",
+    longitude: "109.650080",
+    latitude: "31.270829",
+    name: "邹贤亮-球机",
+  },
+  {
+    id: 9,
+    serial: "GA1738434",
+    longitude: "109.780183",
+    latitude: "31.220559",
+    name: "罗伟-球机",
+  },
+  {
+    id: 10,
+    serial: "GA3302944",
+    longitude: "109.782013",
+    latitude: "31.201212",
+    name: "刘毅-球机",
+  },
+  {
+    id: 11,
+    serial: "GA1738431",
+    longitude: "109.774911",
+    latitude: "31.232603",
+    name: "彭斌-球机",
+  },
+  {
+    id: 12,
+    serial: "GA1738418",
+    longitude: "109.767093",
+    latitude: "31.137653",
+    name: "李军-球机",
+  },
+  {
+    id: 13,
+    serial: "GD1221224",
+    longitude: "109.718101",
+    latitude: "31.023009",
+    name: "龚正第-球机",
+  },
+  {
+    id: 14,
+    serial: "GC5448241",
+    longitude: "109.725240",
+    latitude: "31.017196",
+    name: "陈嗣春-球机",
+  },
+  {
+    id: 15,
+    serial: "GD1221262",
+    longitude: "109.777335",
+    latitude: "31.070149",
+    name: "李洪-球机",
+  },
+  {
+    id: 16,
+    serial: "GA1738411",
+    longitude: "109.791725",
+    latitude: "31.071729",
+    name: "李淑桂-球机",
+  },
+  {
+    id: 17,
+    serial: "GA1738437",
+    longitude: "109.713775",
+    latitude: "31.029861",
+    name: "张怀-球机",
+  },
+  {
+    id: 18,
+    serial: "GA1738393",
+    longitude: "109.726345",
+    latitude: "31.031300",
+    name: "向耀松-球机",
+  },
+  {
+    id: 19,
+    serial: "GA3302969",
+    longitude: "109.619158",
+    latitude: "30.871521",
+    name: "翁发福-球机",
+  },
+  {
+    id: 20,
+    serial: "GA3302956",
+    longitude: "109.694230",
+    latitude: "31.234700",
+    name: "陈勇-球机",
+  },
+  {
+    id: 21,
+    serial: "GA1738402",
+    longitude: "109.707898",
+    latitude: "31.275263",
+    name: "覃传德-球机",
+  },
+  {
+    id: 22,
+    serial: "GA1738409",
+    longitude: "110.128162",
+    latitude: "31.172659",
+    name: "刘绪海-球机",
+  },
+  {
+    id: 23,
+    serial: "GA1738433",
+    longitude: "110.002466",
+    latitude: "31.231587",
+    name: "赖明星-球机",
+  },
+];

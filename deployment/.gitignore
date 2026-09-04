@@ -1,0 +1,5 @@
+.env
+mysql-init/*.sql
+data/
+logs/*.log
+*.tar.gz

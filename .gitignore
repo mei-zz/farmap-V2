@@ -1,0 +1,32 @@
+/zhgy/clip-image-encoder.onnx
+
+# Dependencies and generated output
+**/node_modules/
+**/.vite/
+**/dist/
+**/build/
+**/target/
+**/__pycache__/
+*.py[cod]
+*.class
+*.jar
+*.onnx
+.tools/apache-maven*/
+.tools/deploy-venv/
+*.zip
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.log
+
+# Local IDE state
+.idea/
+.vscode/
+.DS_Store
+/1.png
+/2.png
+/3.png
+**/qa/
+**/design-qa.md
