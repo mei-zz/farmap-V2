@@ -22,7 +22,7 @@ The first registry contains Field Context, Weather, Camera, GIS, Multimodal RAG,
 
 ## F. Planner and models
 
-`AgentPlanner` emits `agent-plan-v1` typed steps and records `qwen3.6-plus` as the normal planning model. Optional ModelGateway planning is controlled by `FARMAP_AGENT_PLANNER_MODEL_ENABLED`; deterministic schema planning remains available for local/offline validation. The 235B model is not used for ordinary planning.
+`AgentPlanner` emits `agent-plan-v1` typed steps and uses `ModelGateway` with `qwen3.6-plus` as the normal planning model. If that gateway is unavailable, the same typed deterministic schema plan is retained; no free-text parser or hidden reasoning is introduced. The 235B model is not used for ordinary planning. Set `FARMAP_AGENT_PLANNER_MODEL_ENABLED=false` for offline unit/smoke runs.
 
 ## G. Persistence boundary
 

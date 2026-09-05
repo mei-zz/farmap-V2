@@ -22,7 +22,7 @@ public class AgentPlanner {
     private final long timeoutMs;
 
     public AgentPlanner(ModelGateway modelGateway,
-                        @Value("${farmap.agent.planner.model-enabled:false}") boolean modelEnabled,
+                        @Value("${farmap.agent.planner.model-enabled:true}") boolean modelEnabled,
                         @Value("${farmap.agent.max-steps:8}") int maxSteps,
                         @Value("${farmap.agent.max-tool-calls:12}") int maxToolCalls,
                         @Value("${farmap.agent.timeout-ms:120000}") long timeoutMs) {

@@ -85,7 +85,7 @@ farmap:
   agent:
     persistence: ${FARMAP_AGENT_PERSISTENCE:file}
     planner:
-      model-enabled: ${FARMAP_AGENT_PLANNER_MODEL_ENABLED:false}
+      model-enabled: ${FARMAP_AGENT_PLANNER_MODEL_ENABLED:true}
     max-steps: ${FARMAP_AGENT_MAX_STEPS:8}
     max-tool-calls: ${FARMAP_AGENT_MAX_TOOL_CALLS:12}
     timeout-ms: ${FARMAP_AGENT_TIMEOUT_MS:120000}
