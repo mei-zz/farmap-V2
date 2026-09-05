@@ -14,6 +14,9 @@ import com.mei.zhgy.service.ai.ModelRouter;
 import com.mei.zhgy.service.ai.ModelRoutingPolicy;
 import com.mei.zhgy.service.ai.ModelUsageRecord;
 import com.mei.zhgy.service.ai.ModelUsageRecorder;
+import com.mei.zhgy.service.ai.LocalAiClient;
+import com.mei.zhgy.service.ai.LocalBgeEmbeddingProvider;
+import com.mei.zhgy.service.ai.LocalClipEmbeddingProvider;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -69,11 +72,14 @@ class DiagnosisRagIntegrationTest {
                 new ModelEscalationPolicy(),
                 new ObjectMapper());
 
-        KnowledgeEvidenceRetriever knowledge = new KnowledgeEvidenceRetriever();
+        LocalAiClient localAi = new LocalAiClient(firstEnvironmentValueOrDefault("http://127.0.0.1:8001", "LOCAL_AI_BASE_URL"), 30000);
+        LocalBgeEmbeddingProvider bge = new LocalBgeEmbeddingProvider(localAi);
+        LocalClipEmbeddingProvider clip = new LocalClipEmbeddingProvider(localAi);
+        KnowledgeEvidenceRetriever knowledge = new KnowledgeEvidenceRetriever(bge);
         org.springframework.test.util.ReflectionTestUtils.setField(knowledge, "resourcePath", "knowledge/orchard_management.txt");
         knowledge.loadKnowledge();
         List<DiagnosisRetriever> retrievers = Arrays.asList(
-                new VisualEvidenceRetriever(),
+                new VisualEvidenceRetriever(clip),
                 new WeatherEvidenceRetriever(),
                 knowledge);
 
@@ -114,6 +120,10 @@ class DiagnosisRagIntegrationTest {
         assertTrue(response.getEvidence().stream().anyMatch(item -> "camera".equals(item.getModality())));
         assertTrue(response.getEvidence().stream().anyMatch(item -> "weather".equals(item.getModality())));
         assertTrue(response.getEvidence().stream().anyMatch(item -> "knowledge".equals(item.getModality())));
+        assertTrue(response.getEvidence().stream().filter(item -> "camera".equals(item.getModality()))
+                .anyMatch(item -> Integer.valueOf(512).equals(item.getMetadata().get("embeddingDimension"))));
+        assertTrue(response.getEvidence().stream().filter(item -> "knowledge".equals(item.getModality()))
+                .anyMatch(item -> "hybrid".equals(item.getMetadata().get("retrievalType"))));
 
         java.util.Set<String> evidenceIds = new java.util.HashSet<>();
         response.getEvidence().forEach(item -> evidenceIds.add(item.getId()));
@@ -141,5 +151,10 @@ class DiagnosisRagIntegrationTest {
             if (value != null && !value.isBlank()) return value;
         }
         return "";
+    }
+
+    private String firstEnvironmentValueOrDefault(String fallback, String... names) {
+        String value = firstEnvironmentValue(names);
+        return value.isBlank() ? fallback : value;
     }
 }

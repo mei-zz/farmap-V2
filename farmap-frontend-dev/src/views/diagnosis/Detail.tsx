@@ -326,6 +326,12 @@ export default function DiagnosisDetail() {
           {realResult.metadata.escalatedModel && <div><span>Escalated to</span><b>{modelLabel(realResult.metadata.escalatedModel)}</b></div>}
           {realResult.metadata.fallbackChain?.length ? <div><span>Fallback</span><b>{realResult.metadata.fallbackChain.map(modelLabel).join(" → ")}</b></div> : null}
           <div><span>Tokens</span><b>{realResult.metadata.totalTokens ?? "—"}</b></div>
+          <div><span>Runtime Mode</span><b>REAL</b></div>
+          <div><span>Text Embedding</span><b>{realResult.metadata.textEmbeddingModel || "FALLBACK"} · LOCAL · {realResult.metadata.textEmbeddingDimension ?? 0}-d</b></div>
+          <div><span>Image Embedding</span><b>{realResult.metadata.imageEmbeddingModel || "UNAVAILABLE"} · LOCAL · {realResult.metadata.imageEmbeddingDimension ?? 0}-d</b></div>
+          <div><span>Milvus</span><b>{realResult.metadata.milvusEndpoint || "—"} · {realResult.metadata.milvusCollection || "—"} · {realResult.metadata.milvusStatus || "—"}</b></div>
+          <div><span>Historical Retriever</span><b>{realResult.metadata.historicalRetriever || "BLOCKED"}</b></div>
+          <div><span>Latency</span><b>retrieval {realResult.metadata.retrievalLatencyMs ?? "—"} ms · fusion {realResult.metadata.fusionLatencyMs ?? "—"} ms · model {realResult.metadata.generationLatencyMs ?? "—"} ms · total {realResult.metadata.totalLatencyMs ?? "—"} ms</b></div>
         </div>
       )}
       <div className="fm-technical-list">

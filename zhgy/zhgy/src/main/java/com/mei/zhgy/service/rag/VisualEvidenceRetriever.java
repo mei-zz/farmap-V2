@@ -2,12 +2,16 @@ package com.mei.zhgy.service.rag;
 
 import com.mei.zhgy.dto.DiagnosisAnalyzeRequest;
 import com.mei.zhgy.vo.DiagnosisEvidenceVO;
+import com.mei.zhgy.service.ai.EmbeddingProvider;
+import com.mei.zhgy.service.ai.ImageEmbeddingProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Camera Retriever：复用已有上传接口产出的 URL，只负责形成统一视觉证据。
@@ -15,6 +19,9 @@ import java.util.List;
  */
 @Component
 public class VisualEvidenceRetriever implements DiagnosisRetriever {
+    private final ImageEmbeddingProvider embeddingProvider;
+    public VisualEvidenceRetriever() { this.embeddingProvider = null; }
+    @Autowired public VisualEvidenceRetriever(ImageEmbeddingProvider embeddingProvider) { this.embeddingProvider = embeddingProvider; }
     @Override
     public String modality() {
         return "camera";
@@ -33,6 +40,15 @@ public class VisualEvidenceRetriever implements DiagnosisRetriever {
                 continue;
             }
             String id = "camera_" + index;
+            Map<String, Object> metadata = new LinkedHashMap<>();
+            metadata.put("sourceMode", "real-input");
+            if (index == 1 && embeddingProvider != null) {
+                EmbeddingProvider.EmbeddingResult embedding = embeddingProvider.embedImage(imageUrl);
+                metadata.put("embeddingProvider", embedding.getProvider());
+                metadata.put("embeddingModel", embedding.getModel());
+                metadata.put("embeddingDimension", embedding.getDimension());
+                metadata.put("embeddingLatencyMs", embedding.getLatencyMs());
+            }
             evidence.add(DiagnosisEvidenceVO.builder()
                     .id(id)
                     .modality("camera")
@@ -47,7 +63,7 @@ public class VisualEvidenceRetriever implements DiagnosisRetriever {
                             .cameraId("CAM-" + String.format("%02d", index))
                             .build())
                     .preview(DiagnosisEvidenceVO.Preview.builder().imageUrl(imageUrl).build())
-                    .metadata(new LinkedHashMap<>(Collections.singletonMap("sourceMode", "real-input")))
+                    .metadata(metadata)
                     .build());
             index++;
         }

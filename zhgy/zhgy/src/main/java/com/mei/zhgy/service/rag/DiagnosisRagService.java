@@ -38,6 +38,8 @@ public class DiagnosisRagService {
 
     @Value("${farmap.ai.generation.mode:template}")
     private String generationMode;
+    @Value("${milvus.host:127.0.0.1}") private String milvusHost = "127.0.0.1";
+    @Value("${milvus.port:19530}") private int milvusPort = 19530;
 
     public DiagnosisRagService(List<DiagnosisRetriever> retrievers, EvidenceFusionService evidenceFusionService) {
         this(retrievers, evidenceFusionService, null);
@@ -79,6 +81,7 @@ public class DiagnosisRagService {
                 item.put("count", retrieved.size());
                 item.put("latencyMs", System.currentTimeMillis() - start);
                 item.put("topK", request.getTopK() == null ? 5 : request.getTopK());
+                if (retrieved.isEmpty() && "historical_case".equals(retriever.modality())) item.put("status", "BLOCKED");
                 retrieverSummary.put(retriever.modality(), item);
             } catch (RuntimeException exception) {
                 log.warn("Retriever {} 执行失败，runId={}: {}", retriever.modality(), runId, exception.getMessage());
@@ -89,7 +92,10 @@ public class DiagnosisRagService {
                 retrieverSummary.put(retriever.modality(), item);
             }
         }
+        int inputEvidenceCount = evidence.size();
+        long fusionStart = System.currentTimeMillis();
         evidence = evidenceFusionService.fuse(evidence);
+        long fusionLatency = System.currentTimeMillis() - fusionStart;
         long retrievalLatency = System.currentTimeMillis() - retrievalStart;
         ensureMinimumModalities(evidence);
 
@@ -132,6 +138,9 @@ public class DiagnosisRagService {
         responseSummary.put("enabledModalities", enabledModalities.isEmpty() ? "all" : enabledModalities);
         responseSummary.put("modelPolicy", request.getModelPolicy() == null ? "default" : request.getModelPolicy());
         responseSummary.put("retrievalLatencyMs", retrievalLatency);
+        responseSummary.put("inputEvidenceCount", inputEvidenceCount);
+        responseSummary.put("outputEvidenceCount", evidence.size());
+        responseSummary.put("fusionLatencyMs", fusionLatency);
         response.setRetrievalSummary(responseSummary);
 
         Map<String, Object> metadata = new LinkedHashMap<>();
@@ -142,6 +151,14 @@ public class DiagnosisRagService {
         metadata.put("model", generationResult == null ? "not-invoked" : generationResult.getModelCall().getSelectedModel());
         metadata.put("embeddingModel", firstEvidenceMetadata(evidence, "embeddingModel", "not-invoked"));
         metadata.put("embeddingProvider", firstEvidenceMetadata(evidence, "embeddingProvider", "not-invoked"));
+        metadata.put("textEmbeddingModel", firstModalityMetadata(evidence, "knowledge", "embeddingModel", "not-invoked"));
+        metadata.put("imageEmbeddingModel", firstModalityMetadata(evidence, "camera", "embeddingModel", "not-invoked"));
+        metadata.put("textEmbeddingDimension", firstModalityMetadata(evidence, "knowledge", "embeddingDimension", 512));
+        metadata.put("imageEmbeddingDimension", firstModalityMetadata(evidence, "camera", "embeddingDimension", 0));
+        metadata.put("historicalRetriever", historicalStatus(retrieverSummary));
+        metadata.put("milvusEndpoint", milvusHost + ":" + milvusPort);
+        metadata.put("milvusCollection", "farmap_image_vectors_new");
+        metadata.put("milvusStatus", "BLOCKED".equals(historicalStatus(retrieverSummary)) ? "VERIFIED_EMPTY" : "REAL");
         metadata.put("runTimestamp", Instant.now().toString());
         metadata.put("fieldId", request.getFieldId());
         metadata.put("farmId", request.getFarmId());
@@ -151,6 +168,7 @@ public class DiagnosisRagService {
         metadata.put("retrievedEvidenceIds", evidence.stream().map(DiagnosisEvidenceVO::getId).collect(Collectors.toList()));
         metadata.put("selectedEvidenceIds", evidence.stream().map(DiagnosisEvidenceVO::getId).collect(Collectors.toList()));
         metadata.put("retrievalLatencyMs", retrievalLatency);
+        metadata.put("fusionLatencyMs", fusionLatency);
         metadata.put("generationLatencyMs", generationLatency);
         metadata.put("totalLatencyMs", totalLatency);
         if (generationFallbackReason != null) {
@@ -196,6 +214,21 @@ public class DiagnosisRagService {
             }
         }
         return fallback;
+    }
+
+    private Object firstModalityMetadata(List<DiagnosisEvidenceVO> evidence, String modality, String key, Object fallback) {
+        for (DiagnosisEvidenceVO item : evidence) {
+            if (modality.equals(item.getModality()) && item.getMetadata() != null && item.getMetadata().get(key) != null) return item.getMetadata().get(key);
+        }
+        return fallback;
+    }
+
+    @SuppressWarnings("unchecked")
+    private String historicalStatus(Map<String, Object> summary) {
+        Object value = summary.get("historical_case");
+        if (!(value instanceof Map)) return "DISABLED";
+        Object count = ((Map<String, Object>) value).get("count");
+        return count instanceof Number && ((Number) count).intValue() > 0 ? "REAL" : "BLOCKED";
     }
 
     private void validateRequest(DiagnosisAnalyzeRequest request) {

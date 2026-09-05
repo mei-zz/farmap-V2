@@ -100,7 +100,16 @@ export type DiagnosisAnalysisResponse = {
     thinkingTokens?: number;
     totalTokens?: number;
     embeddingModel?: string;
+    textEmbeddingModel?: string;
+    imageEmbeddingModel?: string;
+    textEmbeddingDimension?: number;
+    imageEmbeddingDimension?: number;
+    historicalRetriever?: string;
+    milvusEndpoint?: string;
+    milvusCollection?: string;
+    milvusStatus?: string;
     retrievalLatencyMs?: number;
+    fusionLatencyMs?: number;
     generationLatencyMs?: number;
     totalLatencyMs?: number;
     [key: string]: unknown;

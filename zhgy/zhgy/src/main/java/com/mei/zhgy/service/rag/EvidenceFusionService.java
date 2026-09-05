@@ -59,8 +59,9 @@ public class EvidenceFusionService {
 
     private double sourceReliability(DiagnosisEvidenceVO item) {
         Object expertStatus = item.getMetadata() == null ? null : item.getMetadata().get("expertStatus");
-        if ("expert-confirmed".equals(expertStatus)) return 1.1;
-        if ("reviewed".equals(expertStatus)) return 1.05;
+        if ("expert_confirmed".equals(expertStatus) || "expert-confirmed".equals(expertStatus)) return 1.1;
+        if ("expert_reviewed".equals(expertStatus) || "reviewed".equals(expertStatus)) return 1.05;
+        if ("ai_only".equals(expertStatus)) return 0.95;
         return 1.0;
     }
 }

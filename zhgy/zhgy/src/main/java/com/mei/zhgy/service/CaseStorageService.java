@@ -15,10 +15,20 @@ public interface CaseStorageService {
     class SimilarCaseWithScore {
         private Case caseEntity;
         private double similarityScore;
+        private double vectorDistance;
+        private double rankingScore;
 
         public SimilarCaseWithScore(Case caseEntity, double similarityScore) {
             this.caseEntity = caseEntity;
             this.similarityScore = similarityScore;
+            this.rankingScore = similarityScore / 100D;
+        }
+
+        public SimilarCaseWithScore(Case caseEntity, double vectorDistance, double rankingScore) {
+            this.caseEntity = caseEntity;
+            this.vectorDistance = vectorDistance;
+            this.rankingScore = rankingScore;
+            this.similarityScore = rankingScore * 100D;
         }
 
         public Case getCaseEntity() {
@@ -28,6 +38,8 @@ public interface CaseStorageService {
         public double getSimilarityScore() {
             return similarityScore;
         }
+        public double getVectorDistance() { return vectorDistance; }
+        public double getRankingScore() { return rankingScore; }
     }
     
     /**

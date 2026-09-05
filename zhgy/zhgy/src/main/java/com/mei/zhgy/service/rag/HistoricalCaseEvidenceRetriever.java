@@ -4,6 +4,7 @@ import com.mei.zhgy.dto.DiagnosisAnalyzeRequest;
 import com.mei.zhgy.entity.Case;
 import com.mei.zhgy.service.CaseStorageService;
 import com.mei.zhgy.service.ai.EmbeddingProvider;
+import com.mei.zhgy.service.ai.ImageEmbeddingProvider;
 import com.mei.zhgy.vo.DiagnosisEvidenceVO;
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,13 +23,13 @@ import java.util.Map;
 @Component
 public class HistoricalCaseEvidenceRetriever implements DiagnosisRetriever {
     private final CaseStorageService caseStorageService;
-    private final EmbeddingProvider embeddingProvider;
+    private final ImageEmbeddingProvider embeddingProvider;
 
     @Value("${farmap.ai.local-vision.enabled:true}")
     private boolean localVisionEnabled;
 
     public HistoricalCaseEvidenceRetriever(CaseStorageService caseStorageService,
-                                           EmbeddingProvider embeddingProvider) {
+                                           ImageEmbeddingProvider embeddingProvider) {
         this.caseStorageService = caseStorageService;
         this.embeddingProvider = embeddingProvider;
     }
@@ -60,6 +61,13 @@ public class HistoricalCaseEvidenceRetriever implements DiagnosisRetriever {
             Map<String, Object> metadata = new LinkedHashMap<>();
             metadata.put("sourceMode", "provided-context");
             metadata.put("expertStatus", stringValue(rawCase.get("expertStatus"), "unknown"));
+            metadata.put("caseId", caseId);
+            metadata.put("fieldId", rawCase.get("fieldId"));
+            metadata.put("crop", rawCase.get("crop"));
+            metadata.put("date", rawCase.get("date"));
+            metadata.put("diagnosis", rawCase.get("diagnosis"));
+            metadata.put("treatment", rawCase.get("treatment"));
+            metadata.put("outcome", rawCase.get("outcome"));
             evidence.add(DiagnosisEvidenceVO.builder()
                     .id("historical_" + index)
                     .modality("historical_case")
@@ -99,16 +107,26 @@ public class HistoricalCaseEvidenceRetriever implements DiagnosisRetriever {
             String diagnosis = firstText(caseEntity.getDiseaseType(), caseEntity.getNutritionStatus(), caseEntity.getTreeSpecies());
             Map<String, Object> metadata = new LinkedHashMap<>();
             metadata.put("sourceMode", "local-clip-milvus");
-            metadata.put("expertStatus", caseEntity.getFinalJson() == null ? "reviewed" : "expert-confirmed");
+            metadata.put("expertStatus", caseEntity.getFinalJson() == null ? "expert_reviewed" : "expert_confirmed");
+            metadata.put("caseId", caseId);
+            metadata.put("fieldId", request.getFieldId());
+            metadata.put("crop", firstText(caseEntity.getTreeSpecies(), request.getCrop()));
+            metadata.put("date", caseEntity.getUpdateTime() == null ? null : caseEntity.getUpdateTime().toString());
+            metadata.put("diagnosis", diagnosis);
+            metadata.put("treatment", null);
+            metadata.put("outcome", null);
             metadata.put("embeddingProvider", embedding.getProvider());
             metadata.put("embeddingModel", embedding.getModel());
             metadata.put("embeddingDimension", embedding.getDimension());
+            metadata.put("vectorDistance", item.getVectorDistance());
+            metadata.put("scoreTransform", "1/(1+distance)");
+            metadata.put("rankingScore", item.getRankingScore());
             evidence.add(DiagnosisEvidenceVO.builder()
                     .id("historical_local_" + index)
                     .modality("historical_case")
                     .title(caseId + " 历史专家案例")
                     .summary(diagnosis == null ? "本地 CLIP + Milvus 返回的专家案例，待结合当前证据核验。" : "历史案例诊断：" + diagnosis)
-                    .score(Math.max(0D, Math.min(1D, item.getSimilarityScore() / 100D)))
+                    .score(item.getRankingScore())
                     .source(DiagnosisEvidenceVO.Source.builder()
                             .type("historical_case")
                             .name("Local CLIP + Milvus case index")

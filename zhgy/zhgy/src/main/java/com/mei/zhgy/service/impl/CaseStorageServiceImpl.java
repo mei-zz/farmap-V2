@@ -11,10 +11,12 @@ import com.mei.zhgy.util.CLIPModelUtil;
 import io.milvus.client.MilvusServiceClient;
 import io.milvus.grpc.DataType;
 import io.milvus.grpc.DescribeIndexResponse;
+import io.milvus.grpc.DescribeCollectionResponse;
 import io.milvus.grpc.MutationResult;
 import io.milvus.grpc.SearchResults;
 import io.milvus.param.*;
 import io.milvus.param.collection.CreateCollectionParam;
+import io.milvus.param.collection.DescribeCollectionParam;
 import io.milvus.param.collection.DropCollectionParam;
 import io.milvus.param.collection.FieldType;
 import io.milvus.param.collection.HasCollectionParam;
@@ -32,7 +34,6 @@ import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 
-import javax.annotation.PostConstruct;
 import java.time.LocalDateTime;
 import java.util.*;
 
@@ -49,7 +50,7 @@ public class CaseStorageServiceImpl implements CaseStorageService {
     @Autowired(required = false)
     private MilvusServiceClient milvusClient;
     
-    @Autowired
+    @Autowired(required = false)
     private CLIPModelUtil clipModelUtil;
     
     @Autowired
@@ -76,7 +77,6 @@ public class CaseStorageServiceImpl implements CaseStorageService {
     /**
      * 初始化Milvus集合
      */
-    @PostConstruct
     public void initMilvusCollection() {
         log.info("开始初始化Milvus集合: {}", COLLECTION_NAME);
         
@@ -340,19 +340,17 @@ public class CaseStorageServiceImpl implements CaseStorageService {
             String imageUrl = extractImageUrlFromJson(caseEntity.getInitialJson());
             if (imageUrl == null || imageUrl.isEmpty()) {
                 log.error("案例中没有图片URL，requestId: {}", requestId);
-                // 使用模拟数据作为备选方案
-                List<Float> embedding = generateMockEmbedding(EMBEDDING_DIM);
-                saveEmbeddingToMilvus(requestId, embedding);
                 return;
             }
             
             // 使用CLIP模型提取图片特征向量
+            if (clipModelUtil == null) {
+                log.warn("旧 Java CLIP 已禁用，案例写入需要迁移到 Local AI provider");
+                return;
+            }
             String embeddingBase64 = clipModelUtil.extractImageEmbedding(imageUrl);
             if (embeddingBase64 == null || embeddingBase64.isEmpty()) {
                 log.error("提取图片特征向量失败，图片URL: {}", imageUrl);
-                // 使用模拟数据作为备选方案
-                List<Float> embedding = generateMockEmbedding(EMBEDDING_DIM);
-                saveEmbeddingToMilvus(requestId, embedding);
                 return;
             }
             
@@ -360,9 +358,6 @@ public class CaseStorageServiceImpl implements CaseStorageService {
             List<Float> embedding = parseEmbeddingFromString(embeddingBase64);
             if (embedding.isEmpty()) {
                 log.error("解析特征向量失败，requestId: {}", requestId);
-                // 使用模拟数据作为备选方案
-                embedding = generateMockEmbedding(EMBEDDING_DIM);
-                saveEmbeddingToMilvus(requestId, embedding);
                 return;
             }
             
@@ -465,20 +460,6 @@ public class CaseStorageServiceImpl implements CaseStorageService {
         }
     }
     
-    /**
-     * 生成模拟的特征向量（实际应使用CLIP模型提取）
-     * @param dimension 向量维度
-     * @return 模拟的特征向量
-     */
-    private List<Float> generateMockEmbedding(int dimension) {
-        Random random = new Random();
-        List<Float> embedding = new ArrayList<>(dimension);
-        for (int i = 0; i < dimension; i++) {
-            embedding.add(random.nextFloat());
-        }
-        return embedding;
-    }
-    
     @Override
     public List<Case> searchSimilarCases(List<Float> imageEmbedding, int limit) {
         // 检查milvusClient是否为null
@@ -493,11 +474,12 @@ public class CaseStorageServiceImpl implements CaseStorageService {
                 log.warn("图片特征向量为空，跳过相似案例检索");
                 return Collections.emptyList();
             }
+            if (!validateVectorDimension(imageEmbedding.size())) return Collections.emptyList();
             
             // 在Milvus中搜索相似的图片特征向量
             SearchParam searchParam = SearchParam.newBuilder()
                     .withCollectionName(COLLECTION_NAME)
-                    .withMetricType(MetricType.IP) // 使用与集合创建时相同的IP度量类型
+                    .withMetricType(MetricType.L2)
                     .withOutFields(Arrays.asList(REQUEST_ID_FIELD))
                     .withTopK(limit)
                     .withVectors(Collections.singletonList(imageEmbedding))
@@ -553,6 +535,7 @@ public class CaseStorageServiceImpl implements CaseStorageService {
                 log.warn("图片特征向量为空，跳过相似案例检索");
                 return Collections.emptyList();
             }
+            if (!validateVectorDimension(imageEmbedding.size())) return Collections.emptyList();
             
             // 检查向量值是否有效
             if (imageEmbedding == null || imageEmbedding.isEmpty()) {
@@ -574,7 +557,7 @@ public class CaseStorageServiceImpl implements CaseStorageService {
             // 在Milvus中搜索相似的图片特征向量
             SearchParam searchParam = SearchParam.newBuilder()
                     .withCollectionName(COLLECTION_NAME)
-                    .withMetricType(MetricType.IP) // 使用与集合创建时相同的IP度量类型
+                    .withMetricType(MetricType.L2)
                     .withOutFields(Arrays.asList(REQUEST_ID_FIELD))
                     .withTopK(limit)
                     .withVectors(Collections.singletonList(imageEmbedding))
@@ -600,22 +583,9 @@ public class CaseStorageServiceImpl implements CaseStorageService {
                 String requestId = (String) idScore.get(REQUEST_ID_FIELD);
                 Case caseEntity = mongoTemplate.findOne(Query.query(Criteria.where("requestId").is(requestId)), Case.class);
                 if (caseEntity != null) {
-                    // 将内积相似度转换为百分比 (内积越大，相似度越高)
-                    double innerProduct = idScore.getScore();
-                    log.debug("内积值: {}", innerProduct); // 添加调试日志，查看实际内积值
-                    
-                    // 使用线性映射，将内积值映射到[0, 100]范围
-                    // 假设内积值通常在[-1, 1]范围内
-                    // 使用截断方式确保结果在[0, 100]范围内
-                    double similarityScore = Math.max(0, Math.min(100, 50 * (innerProduct + 1)));
-                    
-                    // 只有相似度大于70%的案例才被考虑
-                    if (similarityScore > 70.0) {
-                        log.debug("找到高相似度案例，案例ID: {}, 相似度: {}%", requestId, similarityScore);
-                        similarCasesWithScore.add(new SimilarCaseWithScore(caseEntity, similarityScore));
-                    } else {
-                        log.debug("案例相似度低于阈值，案例ID: {}, 相似度: {}%", requestId, similarityScore);
-                    }
+                    double distance = idScore.getScore();
+                    double rankingScore = 1D / (1D + Math.max(0D, distance));
+                    similarCasesWithScore.add(new SimilarCaseWithScore(caseEntity, distance, rankingScore));
                 } else {
                     log.debug("未找到对应的案例信息，案例ID: {}", requestId);
                 }
@@ -626,6 +596,31 @@ public class CaseStorageServiceImpl implements CaseStorageService {
         } catch (Exception e) {
             log.error("检索相似案例时发生错误", e);
             return Collections.emptyList();
+        }
+    }
+
+    private boolean validateVectorDimension(int actualDimension) {
+        if (actualDimension != EMBEDDING_DIM) {
+            log.error("VECTOR_DIMENSION_MISMATCH: query={}, expected={}", actualDimension, EMBEDDING_DIM);
+            return false;
+        }
+        try {
+            R<DescribeCollectionResponse> response = milvusClient.describeCollection(DescribeCollectionParam.newBuilder()
+                    .withCollectionName(COLLECTION_NAME).build());
+            if (response.getStatus() != R.Status.Success.getCode()) return false;
+            int collectionDimension = response.getData().getSchema().getFieldsList().stream()
+                    .filter(field -> EMBEDDING_FIELD.equals(field.getName()))
+                    .flatMap(field -> field.getTypeParamsList().stream())
+                    .filter(param -> "dim".equals(param.getKey()))
+                    .mapToInt(param -> Integer.parseInt(param.getValue())).findFirst().orElse(0);
+            if (collectionDimension != actualDimension) {
+                log.error("VECTOR_DIMENSION_MISMATCH: query={}, collection={}", actualDimension, collectionDimension);
+                return false;
+            }
+            return true;
+        } catch (Exception error) {
+            log.warn("Milvus collection schema unavailable: {}", error.getClass().getSimpleName());
+            return false;
         }
     }
 }
