@@ -84,18 +84,26 @@ public class AgentRuntime {
                 repository.save(run); return;
             }
             step.setStatus(StepStatus.RUNNING); traceRecorder.record(run, "step.started", Map.of("stepId", step.getId(), "tool", step.getToolName()));
+            Instant startedAt = Instant.now();
             AgentToolCall call = AgentToolCall.builder().id("toolcall-" + UUID.randomUUID()).toolName(step.getToolName()).status(ToolStatus.RUNNING)
-                    .input(toolInput(run)).startedAt(Instant.now()).build();
+                    .input(toolInput(run)).startedAt(startedAt).build();
             run.getToolCalls().add(call);
+            traceRecorder.record(run, "tool.started", Map.of("tool", step.getToolName(), "stepId", step.getId()));
             ToolResult result = toolExecutor.execute(step.getToolName(), AgentToolRequest.builder().runId(run.getRunId()).goal(run.getGoal()).context(run.getContext()).priorOutputs(prior).build());
             call.setStatus(result.getStatus()); call.setOutput(result.getOutput()); call.setErrorCode(result.getErrorCode()); call.setErrorMessage(result.getErrorMessage()); call.setCompletedAt(Instant.now());
+            call.setDurationMs(Duration.between(startedAt, call.getCompletedAt()).toMillis());
             if (result.getOutput() != null) { prior.put(step.getToolName(), result.getOutput()); run.getOutput().put(step.getToolName(), result.getOutput()); }
-            if (result.getEvidence() != null) mergeEvidence(run, result.getEvidence());
+            if (result.getEvidence() != null) {
+                int before = run.getEvidence().size();
+                mergeEvidence(run, result.getEvidence());
+                if (run.getEvidence().size() > before) traceRecorder.record(run, "evidence.added", Map.of("tool", step.getToolName(), "count", run.getEvidence().size() - before));
+            }
             if (result.getMetadata() != null) run.getMetadata().put(step.getToolName(), result.getMetadata());
             if (result.getActions() != null) run.getActions().addAll(result.getActions());
             traceRecorder.record(run, "tool.completed", Map.of("tool", step.getToolName(), "status", result.getStatus().name()));
             if (result.getStatus() == ToolStatus.FAILED) { step.setStatus(StepStatus.FAILED); fail(run, result.getErrorCode(), result.getErrorMessage()); return; }
             step.setStatus(result.getStatus() == ToolStatus.UNAVAILABLE ? StepStatus.SKIPPED : StepStatus.COMPLETED);
+            traceRecorder.record(run, "step.completed", Map.of("stepId", step.getId(), "status", step.getStatus().name()));
             repository.save(run);
         }
         complete(run, prior);
@@ -121,15 +129,22 @@ public class AgentRuntime {
 
     private void executeApprovedAction(AgentRun run, ProposedAction action) {
         transition(run, RunStatus.RUNNING, "run.resumed");
-        ToolResult result = toolExecutor.execute(action.getToolName(), AgentToolRequest.builder().runId(run.getRunId()).goal(run.getGoal()).context(run.getContext()).approvalGranted(true).build());
+        Map<String, Object> attributes = new LinkedHashMap<>();
+        attributes.put("evidenceIds", run.getEvidence().stream().map(DiagnosisEvidenceVO::getId).filter(java.util.Objects::nonNull).collect(java.util.stream.Collectors.toList()));
+        AgentToolRequest request = AgentToolRequest.builder().runId(run.getRunId()).goal(run.getGoal()).context(run.getContext()).approvalGranted(true).attributes(attributes).priorOutputs(run.getOutput()).build();
+        Instant startedAt = Instant.now();
+        ToolResult result = toolExecutor.execute(action.getToolName(), request);
         AgentToolCall call = AgentToolCall.builder().id("toolcall-" + UUID.randomUUID()).toolName(action.getToolName()).status(result.getStatus())
                 .input(toolInput(run)).output(result.getOutput()).errorCode(result.getErrorCode()).errorMessage(result.getErrorMessage())
-                .startedAt(Instant.now()).completedAt(Instant.now()).build();
+                .startedAt(startedAt).completedAt(Instant.now()).durationMs(Duration.between(startedAt, Instant.now()).toMillis()).build();
         run.getToolCalls().add(call);
         traceRecorder.record(run, "tool.completed", Map.of("tool", action.getToolName(), "status", result.getStatus().name(), "approvalGranted", true));
         if (result.getStatus() == ToolStatus.FAILED || result.getStatus() == ToolStatus.UNAVAILABLE) { fail(run, result.getErrorCode(), result.getErrorMessage()); return; }
         run.getSteps().stream().filter(step -> action.getToolName().equals(step.getToolName())).findFirst().ifPresent(step -> step.setStatus(StepStatus.COMPLETED));
         action.setPayload(result.getOutput()); run.getOutput().put("task", result.getOutput());
+        run.getMetadata().put("approvedActionId", action.getId());
+        run.getMetadata().put("approvedBy", "current-user");
+        traceRecorder.record(run, "action.executed", Map.of("actionId", action.getId(), "tool", action.getToolName()));
         complete(run, null);
     }
 
@@ -147,6 +162,10 @@ public class AgentRuntime {
         Map<String, Object> output = new LinkedHashMap<>();
         if (prior != null) output.putAll(prior); else output.putAll(run.getOutput());
         output.put("evidenceCount", run.getEvidence().size());
+        output.put("conclusion", "基于当前农场上下文和已验证证据，建议完成现场复核后执行农事处置。");
+        output.put("confidence", run.getContext() != null && run.getContext().getDiagnosis() != null ? run.getContext().getDiagnosis().getOrDefault("confidence", 0.76) : 0.76);
+        output.put("evidenceIds", run.getEvidence().stream().map(DiagnosisEvidenceVO::getId).filter(java.util.Objects::nonNull).collect(java.util.stream.Collectors.toList()));
+        output.put("recommendations", List.of("检查地块排水与根区湿度", "48 小时内复拍异常叶片", "由专家复核后形成处置任务"));
         output.put("recommendation", "请依据证据完成现场复核");
         run.setOutput(output); transition(run, RunStatus.COMPLETED, "run.completed"); repository.save(run);
     }

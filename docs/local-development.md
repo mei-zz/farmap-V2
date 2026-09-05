@@ -27,9 +27,11 @@
 - Local AI：`GET http://127.0.0.1:8001/health`
 - Backend runtime：`GET http://127.0.0.1:8080/api/runtime/health`
 - Milvus 只读检查：`D:\anaconda\envs\llm\python.exe scripts\validate-milvus-runtime.py`
+- Historical vector store dry-run：`powershell -ExecutionPolicy Bypass -File scripts\init-historical-vector-store.ps1 -DryRun`
+- Historical vector store initialization：`powershell -ExecutionPolicy Bypass -File scripts\init-historical-vector-store.ps1 -Execute`
 - Local AI 完整验证：`D:\anaconda\envs\llm\python.exe scripts\validate-local-ai-runtime.py`
 
-Local AI 只有在 BGE、CLIP 均已加载并完成 512 维 warmup 后才返回 `status=ok`。知识检索在 Local AI 不可用时降级为 lexical；历史视觉检索不可用时标记 `BLOCKED`，诊断的 camera、weather、knowledge 仍继续执行。
+Local AI 只有在 BGE、CLIP 均已加载并完成 512 维 warmup 后才返回 `status=ok`。知识检索在 Local AI 不可用时降级为 lexical。历史向量集合由 Java Milvus SDK 显式初始化为 `farmap_image_vectors_new`（512 维、L2、IVF_FLAT、`nlist=128`）；集合存在但没有真实专家病例时，状态是 `READY_EMPTY`，行数保持 0。
 
 ## Real RAG Mode
 
@@ -39,6 +41,6 @@ Local AI 只有在 BGE、CLIP 均已加载并完成 512 维 warmup 后才返回 
 
 - `Local AI 503/degraded`：确认 BGE 缓存和 CLIP ONNX 存在，查看 `.runtime/local-ai.err.log`。
 - `Milvus BLOCKED`：检查 etcd、MinIO、Milvus 三个容器；不要删除 volumes。
-- `HISTORICAL_VECTOR_DATA_EMPTY`：集合不存在或 rows=0。该状态不是程序故障，不要生成假案例。
+- `HISTORICAL_VECTOR_DATA_EMPTY`：集合存在但 rows=0。该状态不是程序故障，不要生成假案例；Agent HistoricalCaseTool 会返回 `EMPTY` 并继续执行其他工具。
 - 后端数据库连接失败：检查本地 MySQL/MongoDB 是否启动及 `.env` 中的连接变量。
 - 百炼调用失败：只检查 `.env` 是否设置 key/base URL；不要在终端或日志打印真实值。

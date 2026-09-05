@@ -15,8 +15,10 @@ import { useFarmStore, type Crop, type FarmStoreState } from "@/store/farm";
 import { req } from "@/utils/reqeust";
 import { useUserStore } from "@/store/user";
 import { Loader2 } from "lucide-react";
+import { useAIContextStore } from "@/store/aiContext";
 
 export default function Map() {
+    const setAIContext = useAIContextStore((s) => s.setContext);
     // Pass farm status to map
     const farmCenter = useFarmStore((s) => s.center)
         .split(",")
@@ -37,6 +39,10 @@ export default function Map() {
     useEffect(() => {
         fetchFarm(farm);
     }, []);
+
+    useEffect(() => {
+        setAIContext({ currentPage: "/farm/map" });
+    }, [setAIContext]);
 
     // Update the selected farm store
     const changeFarmStore: (newId: number) => void = (newId) => {
@@ -62,6 +68,7 @@ export default function Map() {
                 setInfo("yield");
             }
             setFarmStore(resp.data);
+            setAIContext({ currentFarm: { id: resp.data.id, name: resp.data.name, address: resp.data.address }, currentPage: "/farm/map" });
             // Store to local storage
             setLocalFarmStore(resp.data);
             // Set visible farm modes

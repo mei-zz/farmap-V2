@@ -2,6 +2,7 @@ package com.mei.zhgy.service.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Repository;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,6 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /** Repository boundary keeps the runtime storage-neutral; MySQL migration can replace this bean. */
 @Repository
+@ConditionalOnProperty(name = "farmap.agent.persistence", havingValue = "file", matchIfMissing = true)
 public class InMemoryAgentRunRepository implements AgentRunRepository {
     private final ConcurrentHashMap<String, AgentRun> runs = new ConcurrentHashMap<>();
     private final Path store;

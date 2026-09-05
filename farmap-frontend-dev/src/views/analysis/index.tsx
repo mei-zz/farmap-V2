@@ -15,7 +15,7 @@ import {
   ToolOutlined,
 } from "@ant-design/icons";
 import { Button, Card, Flex, Space, Tabs, Tag, Typography } from "antd";
-import { useNavigate } from "react-router";
+import { useNavigate, useParams } from "react-router";
 import {
   demoAgentSteps,
   demoAgentTools,
@@ -75,6 +75,7 @@ function StatusLabel({ tone }: { tone: ToolTone }) {
 
 export default function AgentWorkspace() {
   const navigate = useNavigate();
+  const { runId: routeRunId } = useParams<{ runId: string }>();
   const setContext = useAIContextStore((state) => state.setContext);
   const aiContext = useAIContextStore((state) => state.context);
   const [runStatus, setRunStatus] = useState<RunStatus>("pending");
@@ -96,9 +97,30 @@ export default function AgentWorkspace() {
       currentPhenology: { stage: demoPrimaryField.growthStage, progress: demoPrimaryField.phenologyProgress },
       selectedDiagnosis: { id: demoDiagnosis.id, title: demoDiagnosis.title, severity: demoDiagnosis.severity, confidence: demoDiagnosis.confidence, summary: demoDiagnosis.summary },
       selectedImages: demoLeafAssets.map((url, index) => ({ id: `a12-camera-${index + 1}`, name: `A-12 Camera-${index + 3}`, url })),
-      currentPage: "analysis",
+      currentPage: `/analysis/${routeRunId || "a12-demo"}`,
     });
-  }, [setContext]);
+  }, [routeRunId, setContext]);
+
+  useEffect(() => {
+    if (agentMode !== "real" || !routeRunId || routeRunId === "a12-demo") return;
+    let cancelled = false;
+    const sync = (next: AgentRun) => {
+      if (cancelled) return;
+      setRealRun(next);
+      const agentContext = next.context;
+      setContext({
+        currentPage: `/analysis/${next.runId}`,
+        currentField: agentContext.fieldId ? { id: agentContext.fieldId, name: agentContext.fieldName || agentContext.fieldId, area: 0, crop: agentContext.crop || "" } : undefined,
+        currentCrop: agentContext.crop ? { name: agentContext.crop, variety: agentContext.variety, growthStage: agentContext.phenologyStage } : undefined,
+        currentLocation: agentContext.location ? { label: agentContext.location, latitude: agentContext.latitude || 0, longitude: agentContext.longitude || 0 } : undefined,
+        selectedDiagnosis: agentContext.diagnosis?.id ? { id: String(agentContext.diagnosis.id), title: String(agentContext.diagnosis.title || "Agent 诊断"), severity: (agentContext.diagnosis.severity as "low" | "medium" | "high") || "medium", confidence: Number(agentContext.diagnosis.confidence || 0), summary: String(agentContext.diagnosis.summary || "") } : undefined,
+      });
+      setCurrentStep(Math.min(demoAgentSteps.length - 1, Math.max(0, next.steps.findIndex((step) => step.status === "RUNNING"))));
+      setRunStatus(next.status === "COMPLETED" ? "completed" : next.status === "FAILED" || next.status === "CANCELLED" ? "failed" : "running");
+    };
+    void pollAgentRun(routeRunId, sync).catch(() => { if (!cancelled) { setRunStatus("failed"); setRuntimeError("Agent Runtime 暂不可用"); } });
+    return () => { cancelled = true; };
+  }, [routeRunId]);
 
   useEffect(() => () => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -117,12 +139,7 @@ export default function AgentWorkspace() {
         const context = toAgentContext({ ...aiContext, selectedImages: demoLeafAssets.map((url, index) => ({ id: `a12-camera-${index + 1}`, name: `A-12 Camera-${index + 3}`, url })) });
         context.imageUrls = await Promise.all(context.imageUrls.map(asDataUrl));
         const created = await createAgentRun("分析 A-12 地块叶片黄化的原因，并生成处理方案", context, "real");
-        await pollAgentRun(created.runId, (next) => {
-          setRealRun(next);
-          setCurrentStep(Math.min(demoAgentSteps.length - 1, Math.max(0, next.steps.findIndex((step) => step.status === "RUNNING"))));
-          if (next.status === "COMPLETED") setRunStatus("completed");
-          else if (next.status === "FAILED" || next.status === "CANCELLED") setRunStatus("failed");
-        });
+        navigate(`/analysis/${created.runId}`);
       } catch (error) {
         setRunStatus("failed");
         setRuntimeError(error instanceof AgentRuntimeUnavailableError ? "Agent Runtime 暂不可用" : "Agent Runtime 暂不可用");
@@ -149,6 +166,7 @@ export default function AgentWorkspace() {
   const completedToolCount = toolTones.filter((tone) => tone !== "pending").length;
   const activeStepTitle = currentStep >= 0 ? demoAgentSteps[currentStep]?.title : "准备分析";
   const historicalCase = demoEvidence.find((evidence) => evidence.category === "历史案例");
+  const realConclusion = realRun && typeof realRun.output.conclusion === "string" ? realRun : null;
 
   const idleContent = (
     <div className="fm-agent-idle">
@@ -167,6 +185,7 @@ export default function AgentWorkspace() {
     <div className="fm-agent-output">
       <Flex align="center" gap={12}><span className="fm-ai-mark">AI</span><div><Title level={4}>FarMap Agent</Title><StatusBadge tone={runStatus === "running" ? "running" : runStatus === "failed" ? "pending" : "completed"} label={runStatus === "running" ? "运行中" : runStatus === "failed" ? "不可用" : "已完成"} /></div></Flex>
       {runtimeError && <div className="fm-agent-runtime-error">{runtimeError}，可继续查看演示结果。</div>}
+      {agentMode === "real" && realConclusion && <Card size="small" style={{ margin: "12px 0" }}><Flex justify="space-between"><b>{String(realConclusion.output.conclusion)}</b><Tag color="blue">置信度 {Math.round(Number(realConclusion.output.confidence || 0) * 100)}%</Tag></Flex><div style={{ marginTop: 8 }}>证据 {realConclusion.evidence.length} 条 · 建议 {Array.isArray(realConclusion.output.recommendations) ? realConclusion.output.recommendations.length : 0} 条 · 运行事件 {realConclusion.traces.length} 条</div><div>{Array.isArray(realConclusion.output.recommendations) ? JSON.stringify(realConclusion.output.recommendations) : "暂无建议"}</div>{realConclusion.actions.map((action) => <Tag key={action.id} color={action.approvalState === "REQUIRED" ? "orange" : "green"}>{action.title} · {action.approvalState}</Tag>)}</Card>}
       <div className="fm-agent-output__message"><p>{runStatus === "running" ? `正在执行：${activeStepTitle}` : runStatus === "failed" ? "Agent Runtime 未完成本次运行。" : "已完成 A-12 地块叶片黄化的多模态分析。"}</p><p>已获取并检索监控图像、气象数据、土壤指标、农业知识和历史案例。</p><b>当前活动：</b><ul><li>叶片存在明显黄化特征</li><li>近 14 天有持续降雨，土壤湿度处于较高水平</li><li>与 B-07 历史案例高度相似</li></ul>{agentMode === "real" && realRun && <div className="fm-agent-real-bindings"><b>Runtime 实时数据</b><span>步骤 {realRun.steps.filter((step) => step.status === "COMPLETED").length}/{realRun.steps.length} · 工具调用 {realRun.toolCalls.length} · 证据 {realRun.evidence.length} · 追踪 {realRun.traces.length}</span><div>{realRun.steps.map((step) => <span key={step.id}>{step.title} · {step.status}</span>)}</div><div>{realRun.toolCalls.map((call) => <span key={call.id}>{call.toolName} · {call.status}</span>)}</div><div>{realRun.evidence.slice(0, 4).map((item) => <span key={item.id}>{item.title}</span>)}</div>{realRun.traces.length > 0 && <span>最近事件：{realRun.traces[realRun.traces.length - 1].type}</span>}{Boolean(realRun.output.diagnosis) && <span>已生成结构化诊断结论</span>}</div>}{runStatus === "running" && <Text type="secondary">正在综合证据并准备下一步输出。</Text>}{agentMode === "real" && realRun?.actions.filter((action) => action.approvalState === "REQUIRED").map((action) => <Button key={action.id} size="small" type="primary" onClick={async () => { const next = await approveAgentAction(realRun.runId, action.id); setRealRun(next); setRunStatus(next.status === "COMPLETED" ? "completed" : "running"); }}>批准创建任务</Button>)}</div>
     </div>
   );

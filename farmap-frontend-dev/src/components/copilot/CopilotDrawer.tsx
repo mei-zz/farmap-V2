@@ -1,8 +1,11 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Button, Divider, Drawer, Empty, Flex, Input, Space, Tag, Typography } from "antd";
 import { DeleteOutlined, RobotOutlined, SendOutlined } from "@ant-design/icons";
 import { useAIContextStore } from "@/store/aiContext";
 import { useCopilotStore } from "@/store/copilot";
+import { useNavigate } from "react-router";
+import { agentMode, createAgentRun } from "@/features/agent/service";
+import { toAgentContext } from "@/features/agent/adapter";
 
 const { Text, Title } = Typography;
 
@@ -15,6 +18,8 @@ export default function CopilotDrawer() {
   const messages = useCopilotStore((state) => state.messages);
   const addMessage = useCopilotStore((state) => state.addMessage);
   const clearMessages = useCopilotStore((state) => state.clearMessages);
+  const navigate = useNavigate();
+  const [sending, setSending] = useState(false);
 
   const contextTags = useMemo(
     () =>
@@ -27,16 +32,29 @@ export default function CopilotDrawer() {
     [context],
   );
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const content = draft.trim();
     if (!content) return;
 
     addMessage({ role: "user", content });
-    addMessage({
-      role: "assistant",
-      content: "已记录这个问题。Agent 与检索链路将在下一阶段接入。",
-    });
     setDraft("");
+    const complex = /(综合分析|深度分析|生成方案|比较多源数据|查找原因|制定计划|处理方案|为什么|原因)/.test(content) || content.length >= 48;
+    if (!complex) {
+      addMessage({ role: "assistant", content: `已结合${context.currentField?.name || "当前地块"}上下文记录：${context.currentWeather?.summary || "天气数据已接入"}。如需跨数据源分析，请让我启动 Agent。` });
+      return;
+    }
+    addMessage({ role: "assistant", content: "这个问题需要综合地块、天气、图像和知识证据，正在准备 Agent 运行…" });
+    setSending(true);
+    try {
+      if (agentMode === "real") {
+        const run = await createAgentRun(content, toAgentContext(context), "real");
+        navigate(`/analysis/${run.runId}`);
+      } else {
+        navigate("/analysis/a12-demo");
+      }
+    } catch {
+      addMessage({ role: "assistant", content: "Agent Runtime 暂不可用，已保留问题；可以稍后重试。" });
+    } finally { setSending(false); }
   };
 
   return (
@@ -105,7 +123,7 @@ export default function CopilotDrawer() {
           onPressEnter={(event) => {
             if (!event.shiftKey) {
               event.preventDefault();
-              handleSend();
+              void handleSend();
             }
           }}
           placeholder="例如：A-12 地块近期需要关注什么？"
@@ -115,10 +133,10 @@ export default function CopilotDrawer() {
           type="primary"
           icon={<SendOutlined />}
           style={{ marginTop: 8 }}
-          onClick={handleSend}
-          disabled={!draft.trim()}
+          onClick={() => void handleSend()}
+          disabled={!draft.trim() || sending}
         >
-          发送（演示）
+          {sending ? "准备 Agent…" : "发送"}
         </Button>
       </div>
     </Drawer>

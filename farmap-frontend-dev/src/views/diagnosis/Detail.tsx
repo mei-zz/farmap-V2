@@ -35,6 +35,7 @@ import {
   demoPrimaryField,
   demoRecommendations,
   demoWeather,
+  demoLeafAssets,
 } from "@/demo";
 import MapContainer from "@/views/dashboard/Map";
 import { useAIContextStore } from "@/store/aiContext";
@@ -43,8 +44,10 @@ import StatusBadge from "@/components/commercial/StatusBadge";
 import EvidenceCard from "@/components/commercial/EvidenceCard";
 import RecommendationCard from "@/components/commercial/RecommendationCard";
 import { toDiagnosisViewModel } from "@/features/diagnosis/adapter";
-import { analyzeDiagnosis, DiagnosisApiError, ragMode } from "@/features/diagnosis/service";
+import { analyzeDiagnosis, DiagnosisApiError, getExpertReview, ragMode, submitExpertReview } from "@/features/diagnosis/service";
 import type { DiagnosisAnalysisResponse } from "@/features/diagnosis/contract";
+import { agentMode, createAgentRun } from "@/features/agent/service";
+import { toAgentContext } from "@/features/agent/adapter";
 
 const { Text, Title } = Typography;
 
@@ -97,9 +100,26 @@ export default function DiagnosisDetail() {
         confidence: demoDiagnosis.confidence,
         summary: demoDiagnosis.summary,
       },
+      selectedImages: demoLeafAssets.map((url, index) => ({ id: `a12-camera-${index + 1}`, name: `A-12 Camera-${index + 3}`, url })),
+      currentLocation: { label: "A-12 地块中心", latitude: 30.051, longitude: 103.832 },
+      selectedDevice: { id: "CAM-A12-03", name: "Camera-03", status: "online", location: "A-12 东侧" },
       currentPage: "/diagnosis/a12-demo",
     });
   }, [setContext]);
+
+  useEffect(() => {
+    void getExpertReview(demoDiagnosis.id).then((review) => setReviewSubmitted(Boolean(review && review.status && review.status !== "PENDING"))).catch(() => undefined);
+  }, []);
+
+  const openAgentAnalysis = async () => {
+    if (agentMode !== "real") { navigate("/analysis/a12-demo"); return; }
+    try {
+      const run = await createAgentRun("分析当前诊断的综合原因并生成处理方案", toAgentContext(context), "real");
+      navigate(`/analysis/${run.runId}`);
+    } catch {
+      navigate("/analysis/a12-demo");
+    }
+  };
 
   useEffect(() => {
     if (ragMode !== "real" || useDemoFallback || realResult) return;
@@ -450,7 +470,7 @@ export default function DiagnosisDetail() {
                 <b>{reviewSubmitted ? "已提交专家复核" : "待专家复核"}</b>
               </div>
             </div>
-            <Button block type="primary" icon={<SendOutlined />} onClick={() => setReviewSubmitted(true)} disabled={reviewSubmitted}>
+            <Button block type="primary" icon={<SendOutlined />} onClick={() => { void submitExpertReview(demoDiagnosis.id, { decision: "IN_REVIEW", aiDiagnosis: displayDiagnosis, evidence: displayEvidence, recommendations: displayRecommendations }).then(() => setReviewSubmitted(true)).catch(() => undefined); }} disabled={reviewSubmitted}>
               提交专家复核
             </Button>
           </Card>
@@ -465,7 +485,7 @@ export default function DiagnosisDetail() {
               <Button icon={<CalendarOutlined />}>创建巡检任务</Button>
               <Button icon={<FolderAddOutlined />}>加入历史案例库</Button>
             </div>
-            <Button className="fm-deep-analysis" block icon={<ToolOutlined />} onClick={() => navigate("/analysis/a12-demo")}>
+            <Button className="fm-deep-analysis" block icon={<ToolOutlined />} onClick={() => void openAgentAnalysis()}>
               查看 Agent 深度分析 <ArrowRightOutlined />
             </Button>
           </Card>
