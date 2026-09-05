@@ -4,6 +4,7 @@ interface ImportMetaEnv {
   readonly VITE_API_BASE_URL?: string;
   readonly VITE_API_URL: string;
   readonly VITE_RAG_MODE?: string;
+  readonly VITE_AGENT_MODE?: string;
   readonly VITE_ENABLE_DEMO_MODE?: string;
 }
 

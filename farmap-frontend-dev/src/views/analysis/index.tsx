@@ -32,12 +32,26 @@ import MapContainer from "@/views/dashboard/Map";
 import { useAIContextStore } from "@/store/aiContext";
 import FieldContextCard from "@/components/commercial/FieldContextCard";
 import StatusBadge from "@/components/commercial/StatusBadge";
+import { agentMode, AgentRuntimeUnavailableError, approveAgentAction, createAgentRun, pollAgentRun } from "@/features/agent/service";
+import { toAgentContext } from "@/features/agent/adapter";
+import type { AgentRun } from "@/features/agent/contract";
 
 const { Text, Title } = Typography;
 type RunStatus = "pending" | "running" | "completed" | "failed";
 type ToolTone = "pending" | "running" | "completed";
 
 const formatElapsed = (seconds: number) => `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`;
+
+async function asDataUrl(url: string): Promise<string> {
+  if (url.startsWith("data:")) return url;
+  const blob = await fetch(url).then((response) => response.blob());
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
 
 function getToolTones(runStatus: RunStatus, currentStep: number): ToolTone[] {
   if (runStatus === "completed") return demoAgentTools.map(() => "completed");
@@ -62,11 +76,14 @@ function StatusLabel({ tone }: { tone: ToolTone }) {
 export default function AgentWorkspace() {
   const navigate = useNavigate();
   const setContext = useAIContextStore((state) => state.setContext);
+  const aiContext = useAIContextStore((state) => state.context);
   const [runStatus, setRunStatus] = useState<RunStatus>("pending");
   const [currentStep, setCurrentStep] = useState(-1);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [activeTab, setActiveTab] = useState("conclusion");
   const [background, setBackground] = useState(false);
+  const [realRun, setRealRun] = useState<AgentRun | null>(null);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const elapsedRef = useRef(0);
 
@@ -78,6 +95,7 @@ export default function AgentWorkspace() {
       currentWeather: { summary: demoWeather.summary, temperature: demoWeather.temperature, precipitation: `未来 24 小时 ${demoWeather.rainfallForecast}`, updatedAt: demoWeather.updatedAt },
       currentPhenology: { stage: demoPrimaryField.growthStage, progress: demoPrimaryField.phenologyProgress },
       selectedDiagnosis: { id: demoDiagnosis.id, title: demoDiagnosis.title, severity: demoDiagnosis.severity, confidence: demoDiagnosis.confidence, summary: demoDiagnosis.summary },
+      selectedImages: demoLeafAssets.map((url, index) => ({ id: `a12-camera-${index + 1}`, name: `A-12 Camera-${index + 3}`, url })),
       currentPage: "analysis",
     });
   }, [setContext]);
@@ -86,13 +104,31 @@ export default function AgentWorkspace() {
     if (timerRef.current) clearInterval(timerRef.current);
   }, []);
 
-  const startRun = () => {
+  const startRun = async () => {
     if (timerRef.current) clearInterval(timerRef.current);
     elapsedRef.current = 0;
     setElapsedSeconds(0);
     setRunStatus("running");
     setCurrentStep(0);
     setBackground(false);
+    setRuntimeError(null);
+    if (agentMode === "real") {
+      try {
+        const context = toAgentContext({ ...aiContext, selectedImages: demoLeafAssets.map((url, index) => ({ id: `a12-camera-${index + 1}`, name: `A-12 Camera-${index + 3}`, url })) });
+        context.imageUrls = await Promise.all(context.imageUrls.map(asDataUrl));
+        const created = await createAgentRun("分析 A-12 地块叶片黄化的原因，并生成处理方案", context, "real");
+        await pollAgentRun(created.runId, (next) => {
+          setRealRun(next);
+          setCurrentStep(Math.min(demoAgentSteps.length - 1, Math.max(0, next.steps.findIndex((step) => step.status === "RUNNING"))));
+          if (next.status === "COMPLETED") setRunStatus("completed");
+          else if (next.status === "FAILED" || next.status === "CANCELLED") setRunStatus("failed");
+        });
+      } catch (error) {
+        setRunStatus("failed");
+        setRuntimeError(error instanceof AgentRuntimeUnavailableError ? "Agent Runtime 暂不可用" : "Agent Runtime 暂不可用");
+      }
+      return;
+    }
     timerRef.current = setInterval(() => {
       elapsedRef.current += 1;
       setElapsedSeconds(elapsedRef.current);
@@ -129,8 +165,9 @@ export default function AgentWorkspace() {
 
   const conclusionContent = runStatus === "pending" ? idleContent : (
     <div className="fm-agent-output">
-      <Flex align="center" gap={12}><span className="fm-ai-mark">AI</span><div><Title level={4}>FarMap Agent</Title><StatusBadge tone={runStatus === "running" ? "running" : "completed"} label={runStatus === "running" ? "运行中" : "已完成"} /></div></Flex>
-      <div className="fm-agent-output__message"><p>{runStatus === "running" ? `正在执行：${activeStepTitle}` : "已完成 A-12 地块叶片黄化的多模态分析。"}</p><p>已获取并检索监控图像、气象数据、土壤指标、农业知识和历史案例。</p><b>当前活动：</b><ul><li>叶片存在明显黄化特征</li><li>近 14 天有持续降雨，土壤湿度处于较高水平</li><li>与 B-07 历史案例高度相似</li></ul>{runStatus === "running" && <Text type="secondary">正在综合证据并准备下一步输出。</Text>}</div>
+      <Flex align="center" gap={12}><span className="fm-ai-mark">AI</span><div><Title level={4}>FarMap Agent</Title><StatusBadge tone={runStatus === "running" ? "running" : runStatus === "failed" ? "pending" : "completed"} label={runStatus === "running" ? "运行中" : runStatus === "failed" ? "不可用" : "已完成"} /></div></Flex>
+      {runtimeError && <div className="fm-agent-runtime-error">{runtimeError}，可继续查看演示结果。</div>}
+      <div className="fm-agent-output__message"><p>{runStatus === "running" ? `正在执行：${activeStepTitle}` : runStatus === "failed" ? "Agent Runtime 未完成本次运行。" : "已完成 A-12 地块叶片黄化的多模态分析。"}</p><p>已获取并检索监控图像、气象数据、土壤指标、农业知识和历史案例。</p><b>当前活动：</b><ul><li>叶片存在明显黄化特征</li><li>近 14 天有持续降雨，土壤湿度处于较高水平</li><li>与 B-07 历史案例高度相似</li></ul>{agentMode === "real" && realRun && <div className="fm-agent-real-bindings"><b>Runtime 实时数据</b><span>步骤 {realRun.steps.filter((step) => step.status === "COMPLETED").length}/{realRun.steps.length} · 工具调用 {realRun.toolCalls.length} · 证据 {realRun.evidence.length} · 追踪 {realRun.traces.length}</span>{Boolean(realRun.output.diagnosis) && <span>已生成结构化诊断结论</span>}</div>}{runStatus === "running" && <Text type="secondary">正在综合证据并准备下一步输出。</Text>}{agentMode === "real" && realRun?.actions.filter((action) => action.approvalState === "REQUIRED").map((action) => <Button key={action.id} size="small" type="primary" onClick={async () => { const next = await approveAgentAction(realRun.runId, action.id); setRealRun(next); setRunStatus(next.status === "COMPLETED" ? "completed" : "running"); }}>批准创建任务</Button>)}</div>
     </div>
   );
 
@@ -146,7 +183,7 @@ export default function AgentWorkspace() {
         <main className="fm-agent-center"><Card className="fm-task-goal" bordered={false}><Title level={4}>任务目标</Title><Flex gap={14}><div className="fm-task-goal__input">分析 A-12 地块叶片黄化的原因，并生成处理方案</div><Button type="primary" icon={<PlayCircleFilled />} onClick={startRun}>开始运行</Button></Flex><div className="fm-task-tags"><Tag>地块诊断</Tag><Tag>风险评估</Tag><Tag>处理方案</Tag><Tag>相似案例检索</Tag><Tag>专家建议</Tag></div></Card><Card className="fm-run-card" bordered={false} title={<Flex justify="space-between" align="center"><span>Agent 运行过程</span><span className="fm-run-state"><i className={runStatus === "running" ? "is-running" : ""} />{runStatus === "pending" ? "等待运行" : runStatus === "running" ? `运行中 · ${formatElapsed(elapsedSeconds)}` : "运行完成"}</span></Flex>}><div className="fm-agent-steps">{demoAgentSteps.map((step, index) => { const tone = runStatus === "completed" || index < currentStep ? "completed" : runStatus === "running" && index === currentStep ? "running" : "pending"; return <div className={`fm-agent-step-group fm-agent-step-group--${tone}`} key={step.id}><div className="fm-agent-step"><span className="fm-agent-step__number">{tone === "completed" ? <CheckCircleFilled /> : index + 1}</span><div><small>STEP {String(index + 1).padStart(2, "0")}</small><b>{step.title}</b><span>{step.description}</span></div><em>{tone === "running" ? "运行中" : tone === "pending" ? "等待中" : step.duration}</em><ArrowRightOutlined /></div>{tone === "running" && <div className="fm-agent-step__workspace"><Flex justify="space-between" align="flex-start" gap={14} wrap><div><div className="fm-agent-workspace__eyebrow">LIVE ACTIVITY</div><Title level={4}>正在分析证据...</Title></div><StatusBadge tone="running" label="多模态分析" /></Flex><div className="fm-agent-checklist"><div className="is-done"><CheckOutlined /> 分析监控图像中的叶片特征</div><div className="is-done"><CheckOutlined /> 分析气象数据</div><div className="is-done"><CheckOutlined /> 对比历史案例</div><div className="is-active"><i /> 综合农业知识</div><div className="is-pending"><i /> 生成诊断结论</div></div><div className="fm-agent-evidence-grid"><div className="fm-agent-evidence-panel fm-agent-evidence-panel--visual"><Flex justify="space-between"><b>Visual Evidence</b><small>3 images</small></Flex><div className="fm-agent-evidence-images">{demoLeafAssets.map((asset, imageIndex) => <div key={asset}><img src={asset} alt={`叶片证据 ${imageIndex + 1}`} /><span>{["Camera-03", "Camera-06", "Camera-08"][imageIndex]}</span></div>)}</div></div><div className="fm-agent-evidence-panel fm-agent-evidence-panel--weather"><Flex justify="space-between"><b>Weather Evidence</b><small>14 days</small></Flex><div className="fm-agent-weather-chart"><span><i style={{ height: "26%" }} /><i style={{ height: "38%" }} /><i style={{ height: "31%" }} /><i style={{ height: "66%" }} /><i style={{ height: "48%" }} /><i style={{ height: "82%" }} /><i style={{ height: "58%" }} /></span><strong>58 mm</strong></div><small>累计降雨 · 过去 14 天</small></div><div className="fm-agent-evidence-panel fm-agent-evidence-panel--cases"><Flex justify="space-between"><b>Similar Cases</b><small>3 cases</small></Flex><div className="fm-similar-cases">{[["B-07", "2025-07-12", historicalCase?.asset], ["C-03", "2025-06-18"], ["A-08", "2024-08-09"]].map(([field, date, asset]) => <div key={field}>{asset ? <img src={asset} alt={`${field} 历史案例`} /> : <span className="fm-case-placeholder">↗</span>}<span><b>{field}</b><small>{date}</small></span><Tag>相似</Tag></div>)}</div></div></div></div>}</div>; })}</div></Card></main>
         <aside className="fm-agent-output-panel"><Card bordered={false}><Tabs activeKey={activeTab} onChange={setActiveTab} items={[{ key: "conclusion", label: "分析结论", children: conclusionContent }, { key: "evidence", label: "证据预览", children: evidencePreview }, { key: "data", label: "数据视图", children: dataView }, { key: "records", label: "运行记录", children: recordsContent }]} /><div className="fm-tool-runs"><Flex justify="space-between" align="center"><Title level={5}>当前使用的工具</Title><Text type="secondary">{completedToolCount}/7</Text></Flex>{demoAgentTools.map((tool, index) => <div key={tool.id}><span className={`fm-tool-run__icon fm-tool-run__icon--${toolTones[index]}`}><ToolOutlined /></span><span><b>{tool.name}</b><small>{tool.description}</small></span><StatusLabel tone={toolTones[index]} /></div>)}</div><div className="fm-run-summary"><div><b>{completedToolCount}/7</b><small>已使用工具</small></div><div><b>{runStatus === "pending" ? "—" : "31"}</b><small>检索证据</small></div><div><b>{runStatus === "pending" ? "—" : formatElapsed(elapsedSeconds || 2)}</b><small>运行时间</small></div></div></Card></aside>
       </div>
-      <Flex className="fm-agent-footer" justify="space-between" align="center"><Text type="secondary"><CloudOutlined /> Demo Agent Run · 数据仅用于产品演示，不会调用真实设备</Text><Space><Button onClick={() => setBackground(true)} disabled={runStatus !== "running"}>在后台继续</Button><Button type="link" icon={<ArrowLeftOutlined />} onClick={() => navigate("/overview")}>返回工作台</Button></Space></Flex>
+      <Flex className="fm-agent-footer" justify="space-between" align="center"><Text type="secondary"><CloudOutlined /> {agentMode === "real" ? "Real Agent Runtime · 只读工具自动执行，写操作需审批" : "Demo Agent Run · 数据仅用于产品演示，不会调用真实设备"}</Text><Space><Button onClick={() => setBackground(true)} disabled={runStatus !== "running"}>在后台继续</Button><Button type="link" icon={<ArrowLeftOutlined />} onClick={() => navigate("/overview")}>返回工作台</Button></Space></Flex>
       {background && <div className="fm-background-toast"><CheckCircleFilled /> Agent 已在后台继续运行 <Button type="link" size="small" onClick={() => setBackground(false)}>知道了</Button></div>}
     </div>
   );
