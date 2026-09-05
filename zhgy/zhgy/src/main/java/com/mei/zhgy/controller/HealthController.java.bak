@@ -1,0 +1,61 @@
+package com.mei.zhgy.controller;
+
+import com.mei.zhgy.result.Result;
+import io.milvus.client.MilvusServiceClient;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.HashMap;
+import java.util.Map;
+
+@Slf4j
+@RestController
+@RequestMapping("/health")
+public class HealthController {
+    
+    @Autowired
+    private MongoTemplate mongoTemplate;
+    
+    @Autowired
+    private MilvusServiceClient milvusClient;
+    
+    /**
+     * 健康检查端点
+     * @return 数据库连接状态
+     */
+    @GetMapping
+    public Result<Map<String, Object>> healthCheck() {
+        Map<String, Object> result = new HashMap<>();
+        
+        // 检查MongoDB连接
+        try {
+            mongoTemplate.getCollectionNames();
+            result.put("mongodb", "connected");
+            log.info("MongoDB连接正常");
+        } catch (Exception e) {
+            result.put("mongodb", "disconnected: " + e.getMessage());
+            log.error("MongoDB连接异常", e);
+        }
+        
+        // 检查Milvus连接
+        try {
+            if (milvusClient != null) {
+                milvusClient.getVersion();
+                result.put("milvus", "connected");
+                log.info("Milvus连接正常");
+            } else {
+                result.put("milvus", "not initialized");
+                log.warn("Milvus客户端未初始化");
+            }
+        } catch (Exception e) {
+            result.put("milvus", "disconnected: " + e.getMessage());
+            log.error("Milvus连接异常", e);
+        }
+        
+        return Result.success(result);
+    }
+}

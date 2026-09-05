@@ -1,0 +1,8 @@
+target
+.git
+.idea
+logs
+uploads
+volumes
+*.jar
+*.bak

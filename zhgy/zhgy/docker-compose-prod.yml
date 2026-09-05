@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  app:
+
+    image: zhgy-app:latest  # 使用现有镜像而不是构建
+
+    build: .
+    container_name: zhgy-app
+    ports:
+      - "8080:8080"
+    environment:
+      # 数据库连接配置 - 请根据您的实际情况修改
+      - SPRING_DATASOURCE_URL=jdbc:mysql://host.docker.internal:3307/zhgy?useSSL=false&serverTimezone=Asia/Shanghai
+      - SPRING_DATASOURCE_URL=jdbc:mysql://host.docker.internal:3307/zhgy?useSSL=false&serverTimezone=UTC
+
+      - SPRING_DATASOURCE_USERNAME=mei
+      - SPRING_DATASOURCE_PASSWORD=mei123456
+      # 高德地图API Key - 请替换为您自己的Key
+      - GAODE_API_KEY=b01a506985cf73980060aeb4e9591e80
+      # JWT配置
+      - ZHGY_JWT_USER_SECRET_KEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      - ZHGY_JWT_USER_TTL=7200000
+    volumes:
+      # 日志文件挂载，便于查看日志
+      - ./logs:/app/logs
+    networks:
+      - zhgy-network
+
+networks:
+  zhgy-network:
+    driver: bridge

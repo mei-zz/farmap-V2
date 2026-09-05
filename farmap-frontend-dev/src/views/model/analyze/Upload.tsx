@@ -10,10 +10,11 @@ import {
 } from "antd";
 import { permanence } from "@/utils/permanence";
 import { req } from "@/utils/reqeust";
+import { useAIContextStore } from "@/store/aiContext";
 import { CloseOutlined, PaperClipOutlined, PlusOutlined } from "@ant-design/icons";
 const token = permanence.token.useToken();
 
-export const getBase64 = (file: File): Promise<string> =>
+const getBase64 = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
@@ -36,6 +37,7 @@ interface Props {
   onFinish: (res: string, type: "normal" | "error") => void;
 }
 export default function Upload(props: Props) {
+  const setAIContext = useAIContextStore((state) => state.setContext);
   // Constants
   const FILE_TYPES = ["image/png", "image/jpeg"];
   const FILE_SIZE = 10 * 1024 * 1024;
@@ -90,6 +92,13 @@ export default function Upload(props: Props) {
         throw new Error(uploadResp.msg || "图片上传失败");
       }
       const uploadedUrls = uploadResp.data;
+      setAIContext({
+        selectedImages: uploadedUrls.map((url, index) => ({
+          id: `uploaded-${index + 1}`,
+          name: fileList[index]?.name ?? `camera-image-${index + 1}`,
+          url,
+        })),
+      });
       setFileList([]);
       props.onProgress(2, "process");
 

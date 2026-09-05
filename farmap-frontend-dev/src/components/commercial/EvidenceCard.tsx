@@ -5,10 +5,13 @@ import type { DemoEvidence } from "@/demo";
 const { Text } = Typography;
 
 export default function EvidenceCard({ evidence, index }: { evidence: DemoEvidence; index: number }) {
+  const rainfall = evidence.category === "气象数据" && typeof evidence.detail.match(/(\d+(?:\.\d+)?)\s*mm/)?.[1] === "string"
+    ? evidence.detail.match(/(\d+(?:\.\d+)?)\s*mm/)?.[1]
+    : "58";
   const visual = evidence.category === "监控图像" || evidence.category === "历史案例" ? (
     <img src={evidence.asset ?? ""} alt={evidence.title} />
   ) : evidence.category === "气象数据" ? (
-    <div className="fm-evidence-visual fm-evidence-visual--weather"><span><i style={{ height: "35%" }} /><i style={{ height: "52%" }} /><i style={{ height: "42%" }} /><i style={{ height: "76%" }} /><i style={{ height: "63%" }} /></span><b>58 mm</b><small>14 天降雨</small></div>
+    <div className="fm-evidence-visual fm-evidence-visual--weather"><span><i style={{ height: "35%" }} /><i style={{ height: "52%" }} /><i style={{ height: "42%" }} /><i style={{ height: "76%" }} /><i style={{ height: "63%" }} /></span><b>{rainfall} mm</b><small>14 天降雨</small></div>
   ) : evidence.category === "土壤数据" ? (
     <div className="fm-evidence-visual fm-evidence-visual--soil"><b>84%</b><small>Soil Sensor</small><span><i /><i /><i /><i /><i /></span></div>
   ) : evidence.category === "农业知识" ? (

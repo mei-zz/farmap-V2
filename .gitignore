@@ -11,6 +11,23 @@
 *.class
 *.jar
 *.onnx
+*.safetensors
+*.pt
+*.pth
+*.gguf
+*.ckpt
+*.bin
+/local-ai-assets/models/*
+
+# Backend runtime state and local build artifacts
+/zhgy/zhgy/.m2/
+/zhgy/zhgy/logs/
+/zhgy/zhgy/volumes/
+/zhgy/zhgy/uploads/
+/zhgy/zhgy/target/
+/zhgy/zhgy/*.jar
+/zhgy/zhgy/*.iml
+/zhgy/zhgy/pom.xml.bak
 .tools/apache-maven*/
 .tools/deploy-venv/
 *.zip
@@ -28,5 +45,8 @@
 /1.png
 /2.png
 /3.png
+/.runtime/
+**/.cache/
+**/.pytest_cache/
 **/qa/
 **/design-qa.md

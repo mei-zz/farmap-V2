@@ -79,5 +79,7 @@ export class Request {
 
 // 本地默认走 8080；生产构建使用同源 /api，避免绑定服务器 IP 或域名。
 const SERVICE_URL =
-  import.meta.env.VITE_API_URL || (import.meta.env.PROD ? "/api" : "http://localhost:8080");
+  import.meta.env.VITE_API_BASE_URL ||
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.PROD ? "/api" : "http://localhost:8080");
 export const req = new Request(SERVICE_URL);
