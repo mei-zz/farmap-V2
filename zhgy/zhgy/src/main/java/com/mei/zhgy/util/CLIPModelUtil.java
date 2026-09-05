@@ -8,6 +8,7 @@ import org.opencv.imgcodecs.Imgcodecs;
 import org.opencv.imgproc.Imgproc;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
@@ -25,6 +26,7 @@ import java.util.Collections;
  */
 @Slf4j
 @Component
+@ConditionalOnProperty(name = "farmap.ai.legacy-java-clip.enabled", havingValue = "true")
 public class CLIPModelUtil {
 
     private OrtEnvironment env;

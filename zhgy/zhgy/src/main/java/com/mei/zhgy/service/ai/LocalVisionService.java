@@ -4,6 +4,7 @@ import com.mei.zhgy.util.CLIPModelUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
@@ -13,6 +14,7 @@ import java.util.List;
 /** 复用项目已有的 CLIP ONNX，不让相似图像检索依赖百炼。 */
 @Slf4j
 @Service
+@ConditionalOnProperty(name = "farmap.ai.legacy-java-clip.enabled", havingValue = "true")
 public class LocalVisionService implements EmbeddingProvider {
     private final CLIPModelUtil clipModelUtil;
 

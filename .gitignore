@@ -45,5 +45,8 @@
 /1.png
 /2.png
 /3.png
+/.runtime/
+**/.cache/
+**/.pytest_cache/
 **/qa/
 **/design-qa.md

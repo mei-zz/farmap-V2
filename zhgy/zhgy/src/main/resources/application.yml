@@ -82,6 +82,8 @@ bailian:
   workspace-id: ${BAILIAN_WORKSPACE_ID:}
 
 farmap:
+  case-ingestion:
+    enabled: ${FARMAP_CASE_INGESTION_ENABLED:false}
   ai:
     router:
       enabled: ${FARMAP_MODEL_ROUTER_ENABLED:true}
@@ -98,6 +100,11 @@ farmap:
       mode: ${RAG_GENERATION_MODE:template}
     local-vision:
       enabled: ${FARMAP_LOCAL_VISION_ENABLED:true}
+    legacy-java-clip:
+      enabled: ${FARMAP_LEGACY_JAVA_CLIP_ENABLED:false}
+    local:
+      base-url: ${LOCAL_AI_BASE_URL:http://127.0.0.1:8001}
+      timeout-ms: ${LOCAL_AI_TIMEOUT_MS:30000}
     retrieval:
       weights:
         camera: ${FARMAP_RETRIEVAL_WEIGHT_CAMERA:1.0}
@@ -106,6 +113,12 @@ farmap:
         historical-case: ${FARMAP_RETRIEVAL_WEIGHT_HISTORICAL:1.1}
         soil: ${FARMAP_RETRIEVAL_WEIGHT_SOIL:1.0}
         spatial: ${FARMAP_RETRIEVAL_WEIGHT_SPATIAL:0.9}
+      knowledge:
+        candidate-count: ${FARMAP_KNOWLEDGE_CANDIDATE_COUNT:8}
+        top-k: ${FARMAP_KNOWLEDGE_TOP_K:3}
+        lexical-weight: ${FARMAP_KNOWLEDGE_LEXICAL_WEIGHT:0.35}
+        semantic-weight: ${FARMAP_KNOWLEDGE_SEMANTIC_WEIGHT:0.55}
+        authority-weight: ${FARMAP_KNOWLEDGE_AUTHORITY_WEIGHT:0.10}
 
 model:
   api:
