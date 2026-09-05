@@ -61,9 +61,10 @@
 
 ## Bailian / Secrets
 
-- 当前 shell 中 `DASHSCOPE_API_KEY` 和兼容的 `BAILIAN_API_KEY` 均为未配置状态；只检查了 SET/UNSET，不读取任何 Key 内容。
+- 当前本地 `.env` 中可用的 API Key 与兼容 OpenAI Base URL 均为 `SET`；只检查了 SET/UNSET，不读取或记录任何 Key/URL 值。
+- 现有别名 `APIKEY` / `BASEURL` 由本地启动脚本在进程内映射为 `BAILIAN_API_KEY` / `BAILIAN_API_BASE_URL`，不改写 `.env`。
 - 未把本地 Key 写入代码、Demo Data、Inventory 或 Git。
-- 三个 Qwen 模型的真实可用性必须在配置 Key 后通过 availability probe 验证；本次不能把未配置 Key 误报成 available。
+- 三个固定 Qwen 模型已通过一次真实 availability probe；结果、结构化调用和多模态调用详见 `docs/runtime-validation-m2.2.md`。
 
 ## Copy Decision
 
