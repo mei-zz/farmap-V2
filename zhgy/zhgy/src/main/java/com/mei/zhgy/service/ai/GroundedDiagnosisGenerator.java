@@ -1,6 +1,10 @@
 package com.mei.zhgy.service.ai;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mei.zhgy.dto.DiagnosisAnalyzeRequest;
 import com.mei.zhgy.vo.DiagnosisAnalysisResponse;
 import com.mei.zhgy.vo.DiagnosisEvidenceVO;
@@ -158,11 +162,37 @@ public class GroundedDiagnosisGenerator {
                 .runId(runId)
                 .taskType(taskType)
                 .systemPrompt("你是 FarMap 的 GroundedDiagnosisGenerator。只使用输入中的 Evidence，不得创造来源或 evidence_id。只返回 JSON，不要输出 Chain-of-Thought、hidden reasoning 或思考过程。每个 Claim 和 Recommendation 必须引用已存在的 evidence_ids。")
-                .userPrompt(instruction + "\nField Context:\n" + toJson(context) + "\nEvidence:\n" + toJson(evidence) + "\nJSON schema:\n" + schema())
+                .userPrompt(instruction + "\nField Context:\n" + toJson(context) + "\nEvidence:\n" + toJson(promptEvidence(evidence)) + "\nJSON schema:\n" + schema())
                 .imageUrls(request.getImageUrls() == null ? new ArrayList<>() : request.getImageUrls())
                 .structuredOutput(true)
                 .context(context)
                 .build();
+    }
+
+    /** Keep image bytes in multimodal content, never duplicate them in text JSON. */
+    private List<Map<String, Object>> promptEvidence(List<DiagnosisEvidenceVO> evidence) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (DiagnosisEvidenceVO item : evidence) {
+            Map<String, Object> normalized = new LinkedHashMap<>();
+            normalized.put("id", item.getId());
+            normalized.put("modality", item.getModality());
+            normalized.put("title", item.getTitle());
+            normalized.put("summary", item.getSummary());
+            normalized.put("score", item.getScore());
+            normalized.put("source", item.getSource());
+            normalized.put("metadata", item.getMetadata());
+            if (item.getPreview() != null) {
+                Map<String, Object> preview = new LinkedHashMap<>();
+                if (item.getPreview().getImageUrl() != null && !item.getPreview().getImageUrl().trim().isEmpty()) {
+                    preview.put("imageAttached", true);
+                }
+                preview.put("chartData", item.getPreview().getChartData());
+                preview.put("textSnippet", item.getPreview().getTextSnippet());
+                normalized.put("preview", preview);
+            }
+            result.add(normalized);
+        }
+        return result;
     }
 
     private DiagnosisAnalysisResponse parse(String content) {
@@ -171,10 +201,80 @@ public class GroundedDiagnosisGenerator {
             if (normalized.startsWith("```")) {
                 normalized = normalized.replaceFirst("^```(?:json)?", "").replaceFirst("```$", "").trim();
             }
-            return objectMapper.readValue(normalized, DiagnosisAnalysisResponse.class);
+            try {
+                return readDiagnosis(normalized);
+            } catch (Exception directParseException) {
+                // Providers may still wrap a valid JSON object in a short preamble or suffix.
+                // Recover only the first balanced JSON object; never treat surrounding text as data.
+                String jsonObject = firstJsonObject(normalized);
+                if (jsonObject == null) throw directParseException;
+                return readDiagnosis(jsonObject);
+            }
         } catch (Exception exception) {
-            throw new ModelCallException("invalid_structured_output", "模型未返回合法结构化诊断", exception);
+            throw new ModelCallException("invalid_structured_output",
+                    "模型未返回合法结构化诊断", exception);
         }
+    }
+
+    private String firstJsonObject(String content) {
+        int start = -1;
+        int depth = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int index = 0; index < content.length(); index++) {
+            char current = content.charAt(index);
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (current == '\\') {
+                    escaped = true;
+                } else if (current == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (current == '"') {
+                inString = true;
+            } else if (current == '{') {
+                if (depth == 0) start = index;
+                depth++;
+            } else if (current == '}' && depth > 0) {
+                depth--;
+                if (depth == 0) return content.substring(start, index + 1);
+            }
+        }
+        return null;
+    }
+
+    private DiagnosisAnalysisResponse readDiagnosis(String json) throws Exception {
+        // The provider may add forward-compatible fields (for example visual_findings).
+        // Unknown fields are ignored at this boundary; required Claim/Recommendation
+        // references are still enforced by EvidenceReferenceValidator immediately after.
+        JsonNode tree = objectMapper.readTree(json);
+        normalizeAlternativeNames(tree);
+        return objectMapper.readerFor(DiagnosisAnalysisResponse.class)
+                .without(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                .readValue(tree.traverse(objectMapper));
+    }
+
+    /** Accept the common provider shorthand: alternatives: ["hypothesis"]. */
+    private void normalizeAlternativeNames(JsonNode root) {
+        if (root == null || !root.isObject()) return;
+        JsonNode diagnosisNode = root.get("diagnosis");
+        if (diagnosisNode == null || !diagnosisNode.isObject()) return;
+        JsonNode alternativesNode = diagnosisNode.get("alternatives");
+        if (alternativesNode == null || !alternativesNode.isArray()) return;
+        ArrayNode normalized = objectMapper.createArrayNode();
+        for (JsonNode item : alternativesNode) {
+            if (item.isTextual()) {
+                ObjectNode alternative = objectMapper.createObjectNode();
+                alternative.put("name", item.asText());
+                normalized.add(alternative);
+            } else {
+                normalized.add(item);
+            }
+        }
+        ((ObjectNode) diagnosisNode).set("alternatives", normalized);
     }
 
     private String toJson(Object value) {

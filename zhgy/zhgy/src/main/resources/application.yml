@@ -6,7 +6,7 @@ spring:
     password: ${SPRING_DATASOURCE_PASSWORD:}
 #    url: jdbc:mysql://localhost:3306/zhgy?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
 #    username: root   #root
-#    password: mei123456   #mei123456
+#    password: ${SPRING_DATASOURCE_PASSWORD:}
   jackson:
     time-zone: Asia/Shanghai
     date-format: yyyy-MM-dd HH:mm:ss
@@ -72,8 +72,12 @@ hunyuan:
 # 阿里云百炼 OpenAI 兼容网关；Key 只从环境变量读取。
 bailian:
   api:
-    key: ${DASHSCOPE_API_KEY:${BAILIAN_API_KEY:}}
-    url: ${BAILIAN_API_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions}
+    key: ${BAILIAN_API_KEY:${DASHSCOPE_API_KEY:${APIKEY:}}}
+    url: ${BAILIAN_API_BASE_URL:${BAILIAN_BASE_URL:${DASHSCOPE_BASE_URL:${OPENAI_COMPATIBLE_BASE_URL:${OPENAI_BASE_URL:${BASEURL:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions}}}}}}
+    connect-timeout-ms: ${BAILIAN_CONNECT_TIMEOUT_MS:10000}
+    read-timeout-ms: ${BAILIAN_READ_TIMEOUT_MS:120000}
+    max-retries: ${BAILIAN_MAX_RETRIES:1}
+    retry-backoff-ms: ${BAILIAN_RETRY_BACKOFF_MS:250}
   region: ${BAILIAN_REGION:beijing}
   workspace-id: ${BAILIAN_WORKSPACE_ID:}
 
@@ -122,3 +126,4 @@ spring.servlet.multipart:
 logging:
   level:
     com.mei.zhgy: debug
+    org.springframework.web.client.RestTemplate: warn

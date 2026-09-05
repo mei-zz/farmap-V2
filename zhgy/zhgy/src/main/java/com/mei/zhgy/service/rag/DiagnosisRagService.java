@@ -26,8 +26,8 @@ import java.util.stream.Collectors;
 /**
  * MVP Multimodal RAG 编排器。
  *
- * <p>当前生成部分是 grounded-template，只使用返回的 Evidence 组装结构化结果；
- * 没有返回模型内部推理，也不会把模板结果标记成 LLM 生成。</p>
+ * <p>真实模式由 GroundedDiagnosisGenerator 负责结构化生成；当模型不可用时，
+ * 才回退到只使用检索 Evidence 的模板结果。两者都不返回模型内部推理。</p>
  */
 @Service
 @Slf4j
@@ -117,6 +117,10 @@ public class DiagnosisRagService {
         } else {
             response = buildGroundedResponse(request, runId, evidence);
         }
+        // Evidence is owned by the retrievers, not by the model response. Keep the
+        // verified server-side set attached to both real and template results.
+        response.setRunId(runId);
+        response.setEvidence(evidence);
         long generationLatency = System.currentTimeMillis() - generationStart;
         long totalLatency = System.currentTimeMillis() - totalStart;
 
@@ -181,7 +185,7 @@ public class DiagnosisRagService {
                 totalLatency,
                 metadata.get("model"),
                 metadata.get("embeddingModel"),
-                "grounded-template-v1");
+                "grounded-diagnosis-v1");
         return response;
     }
 

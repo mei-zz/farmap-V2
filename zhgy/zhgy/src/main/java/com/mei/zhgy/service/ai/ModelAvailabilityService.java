@@ -31,14 +31,22 @@ public class ModelAvailabilityService {
                 long start = System.currentTimeMillis();
                 bailianModelClient.probe(definition.getModel());
                 availabilityRegistry.markAvailable(definition.getModel(), System.currentTimeMillis() - start);
-                item.put("status", "available");
+                item.put("status", "VERIFIED");
             } catch (ModelCallException exception) {
                 availabilityRegistry.markUnavailable(definition.getModel(), exception.getErrorType());
-                item.put("status", "unavailable");
+                item.put("status", verificationStatus(exception.getErrorType()));
                 item.put("errorType", exception.getErrorType());
             }
             results.add(item);
         });
         return results;
+    }
+
+    private String verificationStatus(String errorType) {
+        if ("auth_failed".equals(errorType) || "missing_api_key".equals(errorType)) return "AUTH_FAILED";
+        if ("permission_denied".equals(errorType)) return "PERMISSION_DENIED";
+        if ("model_not_found".equals(errorType)) return "MODEL_NOT_FOUND";
+        if ("timeout".equals(errorType)) return "NETWORK_ERROR";
+        return "UNAVAILABLE";
     }
 }

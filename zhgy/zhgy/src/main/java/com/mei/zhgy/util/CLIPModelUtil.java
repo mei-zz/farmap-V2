@@ -62,7 +62,10 @@ public class CLIPModelUtil {
             // 初始化ONNX Runtime
             env = OrtEnvironment.getEnvironment();
             OrtSession.SessionOptions options = new OrtSession.SessionOptions();
-            options.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
+            // Keep local inference stable on developer machines with limited native memory.
+            options.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.BASIC_OPT);
+            options.setIntraOpNumThreads(1);
+            options.setInterOpNumThreads(1);
 
             // 从输入流加载模型
             try (InputStream is = resource.getInputStream()) {
@@ -74,6 +77,11 @@ public class CLIPModelUtil {
             log.error("CLIP模型初始化失败", e);
             // 不抛出：避免大体积 CLIP ONNX/native 内存导致启动期失败拖垮整个应用；session 保持 null，extractImageEmbedding 会优雅返回 null。
         }
+    }
+
+    /** Exposes readiness without exposing the native session object. */
+    public boolean isReady() {
+        return session != null;
     }
 
 

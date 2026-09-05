@@ -47,23 +47,23 @@ public class JwtTokenInterceptor implements HandlerInterceptor {
         //1、从请求头中获取令牌
         // 先尝试获取authentication header (用于AI模型接口)
         String token = request.getHeader("authentication");
-        log.info("从authentication header获取token: {}", token);
+        log.info("从authentication header获取token: {}", token == null || token.isEmpty() ? "ABSENT" : "PRESENT");
         
         // 如果authentication header不存在，则尝试获取Authorization header (用于其他接口)
         if (token == null || token.isEmpty()) {
             token = request.getHeader("Authorization");
-            log.info("从Authorization header获取token: {}", token);
+            log.info("从Authorization header获取token: {}", token == null || token.isEmpty() ? "ABSENT" : "PRESENT");
         }
         
         // 如果是Bearer格式，需要去掉前缀
         if (token != null && token.startsWith("Bearer ")) {
             token = token.substring(7);
-            log.info("处理Bearer格式token，提取后: {}", token);
+            log.info("处理Bearer格式token，已提取令牌内容");
         }
 
         //2、校验令牌
         try {
-            log.info("开始jwt校验:{}", token);
+            log.info("开始jwt校验，令牌状态: {}", token == null || token.isEmpty() ? "ABSENT" : "PRESENT");
             if (token == null || token.isEmpty()) {
                 log.warn("令牌为空，拒绝访问");
                 response.setStatus(401);

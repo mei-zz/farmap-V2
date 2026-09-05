@@ -2,7 +2,7 @@ package com.mei.zhgy.service.ai;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.beans.factory.annotation.Value;
+import com.mei.zhgy.properties.BailianProperties;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -12,6 +12,7 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.HttpStatusCodeException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.ArrayList;
@@ -26,80 +27,112 @@ import java.util.Map;
 @Component
 public class BailianModelClient {
     private final ObjectMapper objectMapper;
+    private final BailianProperties properties;
     private final RestTemplate restTemplate;
 
-    @Value("${bailian.api.key:${dashscope.api.key:}}")
-    private String apiKey;
-
-    @Value("${bailian.api.url:${dashscope.api.url:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions}}")
-    private String apiUrl;
-
-    @Value("${bailian.region:${BAILIAN_REGION:beijing}}")
-    private String region;
-
-    @Value("${bailian.workspace-id:${BAILIAN_WORKSPACE_ID:}}")
-    private String workspaceId;
-
-    public BailianModelClient(ObjectMapper objectMapper) {
+    public BailianModelClient(ObjectMapper objectMapper, BailianProperties properties) {
         this.objectMapper = objectMapper;
+        this.properties = properties;
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(10000);
-        factory.setReadTimeout(120000);
+        factory.setConnectTimeout(Math.max(1000, properties.getConnectTimeoutMs()));
+        factory.setReadTimeout(Math.max(1000, properties.getReadTimeoutMs()));
         this.restTemplate = new RestTemplate(factory);
     }
 
+    /** Kept for unit-test doubles and small local probes. */
+    public BailianModelClient(ObjectMapper objectMapper) {
+        this(objectMapper, new BailianProperties());
+    }
+
     public boolean isConfigured() {
-        return StringUtils.hasText(apiKey);
+        return StringUtils.hasText(properties.getApiKey());
     }
 
     public String getRegion() {
-        return region;
+        return properties.getRegion();
     }
 
     public String getWorkspaceId() {
-        return StringUtils.hasText(workspaceId) ? workspaceId : null;
+        return StringUtils.hasText(properties.getWorkspaceId()) ? properties.getWorkspaceId() : null;
     }
 
     public String getApiUrl() {
-        return apiUrl;
+        return properties.getChatCompletionsUrl();
     }
 
     public ModelCallResult call(String model, ModelCallRequest request, ModelRole role) {
+        return callInternal(model, request, role, true);
+    }
+
+    private ModelCallResult callInternal(String model, ModelCallRequest request, ModelRole role, boolean allowRetry) {
         long start = System.currentTimeMillis();
         if (!isConfigured()) {
-            throw new ModelCallException("missing_api_key", "DASHSCOPE_API_KEY 未配置");
+            throw new ModelCallException("missing_api_key", "BAILIAN_API_KEY / DASHSCOPE_API_KEY 未配置");
         }
-        try {
-            Map<String, Object> body = new LinkedHashMap<>();
-            body.put("model", model);
-            body.put("messages", buildMessages(request));
-            body.put("temperature", 0.1);
-            body.put("max_tokens", 1800);
-            if (model.contains("thinking")) {
-                body.put("enable_thinking", true);
-            }
-            if (request.isStructuredOutput()) {
-                body.put("response_format", Collections.singletonMap("type", "json_object"));
-            }
+        int maxRetries = allowRetry ? properties.getMaxRetries() : 0;
+        for (int attempt = 0; ; attempt++) {
+            try {
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("model", model);
+                body.put("messages", buildMessages(request));
+                body.put("temperature", 0.1);
+                body.put("max_tokens", 1800);
+                if (model.contains("thinking")) {
+                    body.put("enable_thinking", true);
+                }
+                if (request.isStructuredOutput()) {
+                    body.put("response_format", Collections.singletonMap("type", "json_object"));
+                }
 
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.setBearerAuth(apiKey);
-            ResponseEntity<String> response = restTemplate.exchange(
-                    apiUrl,
-                    HttpMethod.POST,
-                    new HttpEntity<>(body, headers),
-                    String.class);
-            if (!response.getStatusCode().is2xxSuccessful()) {
-                throw new ModelCallException(classifyStatus(response.getStatusCodeValue()), "百炼模型调用失败，HTTP " + response.getStatusCodeValue());
+                HttpHeaders headers = new HttpHeaders();
+                headers.setContentType(MediaType.APPLICATION_JSON);
+                headers.setBearerAuth(properties.getApiKey());
+                ResponseEntity<String> response = restTemplate.exchange(
+                        properties.getChatCompletionsUrl(),
+                        HttpMethod.POST,
+                        new HttpEntity<>(body, headers),
+                        String.class);
+                if (!response.getStatusCode().is2xxSuccessful()) {
+                    throw new ModelCallException(classifyStatus(response.getStatusCodeValue()), "百炼模型调用失败，HTTP " + response.getStatusCodeValue());
+                }
+                return parseResponse(model, role, response.getBody(), System.currentTimeMillis() - start);
+            } catch (HttpStatusCodeException exception) {
+                ModelCallException failure = new ModelCallException(classifyStatus(exception.getRawStatusCode()), "百炼模型调用失败，HTTP " + exception.getRawStatusCode(), exception);
+                if (attempt < maxRetries && isRetryable(failure.getErrorType())) {
+                    backoff(attempt);
+                    continue;
+                }
+                throw failure;
+            } catch (ResourceAccessException exception) {
+                ModelCallException failure = new ModelCallException("timeout", "百炼模型请求超时或网络不可达", exception);
+                if (attempt < maxRetries) {
+                    backoff(attempt);
+                    continue;
+                }
+                throw failure;
+            } catch (ModelCallException exception) {
+                throw exception;
+            } catch (Exception exception) {
+                throw new ModelCallException("provider_error", "百炼模型调用异常", exception);
             }
-            return parseResponse(model, role, response.getBody(), System.currentTimeMillis() - start);
-        } catch (HttpStatusCodeException exception) {
-            throw new ModelCallException(classifyStatus(exception.getRawStatusCode()), "百炼模型调用失败，HTTP " + exception.getRawStatusCode(), exception);
-        } catch (ModelCallException exception) {
-            throw exception;
-        } catch (Exception exception) {
-            throw new ModelCallException("provider_error", "百炼模型调用异常", exception);
+        }
+    }
+
+    private boolean isRetryable(String errorType) {
+        return "rate_limited".equals(errorType)
+                || "provider_unavailable".equals(errorType)
+                || "provider_error".equals(errorType)
+                || "timeout".equals(errorType);
+    }
+
+    private void backoff(int attempt) {
+        long delay = Math.min(properties.getRetryBackoffMs() * (1L << Math.min(attempt, 4)), 5000);
+        if (delay <= 0) return;
+        try {
+            Thread.sleep(delay);
+        } catch (InterruptedException interruptedException) {
+            Thread.currentThread().interrupt();
+            throw new ModelCallException("timeout", "百炼模型重试被中断", interruptedException);
         }
     }
 
@@ -198,7 +231,8 @@ public class BailianModelClient {
     }
 
     private String classifyStatus(int status) {
-        if (status == 401 || status == 403) return "permission_denied";
+        if (status == 401) return "auth_failed";
+        if (status == 403) return "permission_denied";
         if (status == 404) return "model_not_found";
         if (status == 429) return "rate_limited";
         if (status >= 500) return "provider_unavailable";
@@ -210,8 +244,9 @@ public class BailianModelClient {
                 .taskType(AiTaskType.COPILOT)
                 .systemPrompt("Return only the requested JSON object. Do not include hidden reasoning.")
                 .userPrompt("Return {\"ok\":true,\"model\":\"" + model + "\"}.")
-                .structuredOutput(true)
+                // Availability must test auth/model/network with the smallest provider-compatible request.
+                .structuredOutput(false)
                 .build();
-        return call(model, request, ModelRole.DEFAULT_MODEL);
+        return callInternal(model, request, ModelRole.DEFAULT_MODEL, false);
     }
 }

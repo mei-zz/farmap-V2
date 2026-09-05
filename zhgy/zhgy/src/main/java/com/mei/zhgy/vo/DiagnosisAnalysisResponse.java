@@ -1,6 +1,7 @@
 package com.mei.zhgy.vo;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -35,6 +36,7 @@ public class DiagnosisAnalysisResponse {
     @AllArgsConstructor
     public static class Diagnosis {
         private String title;
+        @JsonAlias("riskLevel")
         @JsonProperty("risk_level")
         private String riskLevel;
         private Double confidence;
