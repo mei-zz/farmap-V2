@@ -1,8 +1,8 @@
 # FarMap Milestone 2.2 Runtime Validation
 
-验证日期：2026-09-05  
-分支：`feature/multimodal-rag`  
-范围：真实百炼模型、真实多模态诊断链路、本地 Embedding、检索可用性与安全边界。  
+验证日期：2026-09-05
+分支：`feature/multimodal-rag`
+范围：真实百炼模型、真实多模态诊断链路、本地 Embedding、检索可用性与安全边界。
 明确不包含：Agent Runtime、完整 RAG 基础设施启动、数据库迁移。
 
 ## A. Git、环境与 Secret Preflight
