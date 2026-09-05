@@ -9,7 +9,7 @@
 | Asset | Type | Original Path / Endpoint | Framework | Size / Status | FarMap Use | Reuse Decision |
 | --- | --- | --- | --- | --- | --- | --- |
 | CLIP image encoder | Visual embedding | `D:\前后端项目\farmap\zhgy\zhgy\src\main\resources\models\clip-image-encoder.onnx` | ONNX Runtime / Java | 335.5 MB / available | Historical Case Retriever、相似图像检索 | REUSE（已在项目内） |
-| BAAI bge-small-zh-v1.5 | Text embedding candidate | `C:\Users\Administrator\.cache\huggingface\hub\models--BAAI--bge-small-zh-v1.5` | Hugging Face cache / `llm` | 91.4 MB 权重 / offline probe dimension 512 | 中文农业知识向量化 | DEFER（已在 `llm` 离线验证，Python adapter 尚未随 Spring 自动启动） |
+| BAAI bge-small-zh-v1.5 | Text embedding candidate | `C:\Users\Administrator\.cache\huggingface\hub\models--BAAI--bge-small-zh-v1.5` | Hugging Face cache / `llm` | 91.4 MB 权重 / offline probe dimension 512 | 中文农业知识向量化 | DEFER（已在 `llm` 离线加载；缓存缺少完整 SentenceTransformer 配置，探测采用通用 mean pooling，尚非生产 adapter） |
 | facebook/dinov2-small | Vision embedding candidate | `C:\Users\Administrator\.cache\huggingface\hub\models--facebook--dinov2-small` | Hugging Face cache | 84.2 MB 权重 / available | 视觉相似度实验 | DEFER（当前服务仍以项目 CLIP 为主） |
 | bert-base-chinese | Text encoder candidate | `C:\Users\Administrator\.cache\huggingface\hub\models--bert-base-chinese` | Hugging Face cache | 392.5 MB 权重 / available | 中文文本基线 | DEFER（避免重复复制） |
 | Anaconda `llm` | Python runtime | `D:\anaconda\envs\llm` | Conda / Python 3.10.15 | available | 本地 AI / Embedding 运行环境 | REUSE（按用户要求使用） |
@@ -67,4 +67,4 @@
 
 ## Copy Decision
 
-本轮没有复制 Hugging Face cache 模型：项目已有 CLIP ONNX，BGE/DINO/BERT 当前没有与 FarMap 服务匹配的运行适配器，复制会产生重复副本。外部资产路径保留在本文件，后续运行时可通过配置引用。
+本轮没有复制 Hugging Face cache 模型：项目已有 CLIP ONNX，BGE/DINO/BERT 当前没有与 FarMap 服务匹配的生产运行适配器，复制会产生重复副本。BGE 已在 `llm` 环境完成离线加载探测，但探测使用通用 mean pooling，仅作为候选验证。外部资产路径保留在本文件，后续运行时可通过配置引用。
