@@ -4,9 +4,7 @@ import com.mei.zhgy.result.Result;
 import com.mei.zhgy.service.ai.LocalAiClient;
 import com.mei.zhgy.service.agent.AgentRuntime;
 import com.mei.zhgy.service.operations.OperationsTaskService;
-import io.milvus.client.MilvusServiceClient;
-import io.milvus.param.R;
-import io.milvus.param.collection.HasCollectionParam;
+import com.mei.zhgy.service.historical.HistoricalVectorStoreInitializer;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,18 +18,18 @@ import java.util.Map;
 @RequestMapping("/api/runtime")
 public class RuntimeHealthController {
     private final LocalAiClient localAi;
-    private final MilvusServiceClient milvus;
     private final AgentRuntime agentRuntime;
     private final OperationsTaskService operations;
+    private final HistoricalVectorStoreInitializer historicalVectorStore;
     @Value("${milvus.host:127.0.0.1}") private String milvusHost;
     @Value("${milvus.port:19530}") private int milvusPort;
 
     @Autowired
-    public RuntimeHealthController(LocalAiClient localAi, MilvusServiceClient milvus, AgentRuntime agentRuntime, OperationsTaskService operations) {
+    public RuntimeHealthController(LocalAiClient localAi, AgentRuntime agentRuntime, OperationsTaskService operations, HistoricalVectorStoreInitializer historicalVectorStore) {
         this.localAi = localAi;
-        this.milvus = milvus;
         this.agentRuntime = agentRuntime;
         this.operations = operations;
+        this.historicalVectorStore = historicalVectorStore;
     }
 
     @GetMapping("/health")
@@ -50,14 +48,24 @@ public class RuntimeHealthController {
         vector.put("endpoint", milvusHost + ":" + milvusPort);
         vector.put("collection", "farmap_image_vectors_new");
         try {
-            R<Boolean> exists = milvus.hasCollection(HasCollectionParam.newBuilder().withCollectionName("farmap_image_vectors_new").build());
-            boolean available = exists.getStatus() == R.Status.Success.getCode() && Boolean.TRUE.equals(exists.getData());
-            vector.put("status", "VERIFIED");
-            vector.put("collectionExists", available);
-            output.put("historical", available ? "REAL" : "BLOCKED");
+            Map<String, Object> store = historicalVectorStore.initialize(false);
+            vector.putAll(store);
+            vector.put("status", "READY".equals(store.get("status")) ? "READY" : store.get("status"));
+            output.put("historical", "READY".equals(store.get("status"))
+                    ? (Long.valueOf(0L).equals(store.get("rowCount")) ? "EMPTY" : "READY")
+                    : "UNAVAILABLE");
+            output.put("historicalVectorStore", store.get("status"));
+            output.put("historicalCases", store.getOrDefault("rowCount", 0L));
+            output.put("historicalRetriever", "READY".equals(store.get("status"))
+                    ? (Long.valueOf(0L).equals(store.get("rowCount")) ? "READY_EMPTY" : "READY")
+                    : "UNAVAILABLE");
         } catch (Exception error) {
-            vector.put("status", "BLOCKED");
-            output.put("historical", "BLOCKED");
+            vector.put("status", "UNAVAILABLE");
+            vector.put("error", error.getMessage());
+            output.put("historical", "UNAVAILABLE");
+            output.put("historicalVectorStore", "UNAVAILABLE");
+            output.put("historicalCases", 0L);
+            output.put("historicalRetriever", "UNAVAILABLE");
         }
         output.put("milvus", vector);
         output.put("knowledge", "LOCAL");

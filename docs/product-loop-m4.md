@@ -30,11 +30,11 @@ Writes remain approval-gated. `TaskTool` delegates to the single `OperationsTask
 
 ## I. Historical Cases
 
-`HistoricalCaseIngestionService` accepts only expert-confirmed cases with images, expert diagnosis and outcome, embeds with the existing Local CLIP provider, validates 512 dimensions and is idempotent. `scripts/bootstrap-historical-case-collection.py` is dry-run by default and safely plans/creates `farmap_image_vectors_new` with 512-d L2 IVF_FLAT (`nlist=128`), never dropping an existing collection. Current verified state is collection absent and zero real historical candidates.
+`HistoricalCaseIngestionService` accepts only expert-confirmed cases with images, expert diagnosis and outcome, embeds with the existing Local CLIP provider, validates 512 dimensions and is idempotent. The Java `HistoricalVectorStoreInitializer` and `scripts/init-historical-vector-store.ps1` safely create or validate `farmap_image_vectors_new` with 512-d L2 IVF_FLAT (`nlist=128`), never dropping an existing collection. The verified local state is collection READY, row count 0, and retriever READY_EMPTY.
 
 ## J–L. E2E Checks
 
-`scripts/validate-product-loop.py` passed the A-12 Agent → approval → Operations backlink → Expert CONFIRMED → historical dry-run loop. The Expert CORRECTED transition and before/after payload were also exercised. `scripts/validate-agent-runtime.py` passed the pre-approval write boundary check. Copilot and page-context paths are covered by the frontend build and adapter/runtime tests.
+`scripts/validate-product-loop.py` passed the A-12 Agent → approval → Operations backlink → Expert CONFIRMED → historical empty-state loop. The Expert CORRECTED transition and before/after payload were also exercised. `scripts/validate-agent-runtime.py` passed the pre-approval write boundary check. The Java initializer connected to Milvus, created the missing collection, validated it idempotently, loaded it, and reported row count 0.
 
 ## M. Persistence
 
@@ -42,7 +42,7 @@ The local E2E used file persistence. With `FARMAP_AGENT_PERSISTENCE=mysql`, the 
 
 ## N. Tests
 
-Frontend `pnpm build` passed. Backend Maven tests passed: 39 tests, 0 failures, 2 skipped in the default file mode; the MySQL persistence test also passed with the supplied credentials. Named Milestone 4 tests are present, including PageContextAdapter, Copilot escalation, diagnosis link, Operations integration, approval audit, expert review, historical ingestion and MySQL persistence.
+Frontend `pnpm build` passed. Backend Maven tests passed: 47 tests, 0 failures, 3 skipped in the default file mode; the MySQL persistence test also passed with the supplied credentials. Named Milestone 4 tests cover PageContextAdapter, Copilot escalation, diagnosis link, Operations integration, approval audit, expert review, historical ingestion, vector-store initialization/schema, empty retriever/tool behavior and MySQL persistence.
 
 ## O. Remaining Demo Data
 
@@ -50,6 +50,6 @@ The A-12 visual workspace and historical cards remain explicitly demo-labelled. 
 
 ## P. Remaining Limitations
 
-The target Milvus collection is still absent in this workspace, and the Python bootstrap cannot execute because `pymilvus` is unavailable and package installation is blocked by the local package mirror. No historical vector or fabricated B-07 case was inserted. No deployment was performed.
+The historical collection is intentionally empty because there are no real expert-confirmed cases. No historical vector or fabricated B-07 case was inserted. No deployment was performed.
 
-**FARMAP CORE PRODUCT LOOP NOT READY**
+**FARMAP CORE PRODUCT LOOP READY**

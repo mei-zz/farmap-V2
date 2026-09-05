@@ -4,6 +4,7 @@ import com.mei.zhgy.dto.DiagnosisAnalyzeRequest;
 import com.mei.zhgy.service.ai.GroundedDiagnosisGenerator;
 import com.mei.zhgy.service.ai.ModelCallException;
 import com.mei.zhgy.service.ai.EvidenceReferenceValidator;
+import com.mei.zhgy.service.historical.HistoricalVectorStoreInitializer;
 import com.mei.zhgy.vo.DiagnosisAnalysisResponse;
 import com.mei.zhgy.vo.DiagnosisEvidenceVO;
 import lombok.extern.slf4j.Slf4j;
@@ -35,6 +36,7 @@ public class DiagnosisRagService {
     private final List<DiagnosisRetriever> retrievers;
     private final EvidenceFusionService evidenceFusionService;
     private final GroundedDiagnosisGenerator groundedDiagnosisGenerator;
+    private final HistoricalVectorStoreInitializer historicalVectorStore;
 
     @Value("${farmap.ai.generation.mode:template}")
     private String generationMode;
@@ -42,16 +44,24 @@ public class DiagnosisRagService {
     @Value("${milvus.port:19530}") private int milvusPort = 19530;
 
     public DiagnosisRagService(List<DiagnosisRetriever> retrievers, EvidenceFusionService evidenceFusionService) {
-        this(retrievers, evidenceFusionService, null);
+        this(retrievers, evidenceFusionService, null, null);
+    }
+
+    public DiagnosisRagService(List<DiagnosisRetriever> retrievers,
+                               EvidenceFusionService evidenceFusionService,
+                               GroundedDiagnosisGenerator groundedDiagnosisGenerator) {
+        this(retrievers, evidenceFusionService, groundedDiagnosisGenerator, null);
     }
 
     @Autowired
     public DiagnosisRagService(List<DiagnosisRetriever> retrievers,
                                EvidenceFusionService evidenceFusionService,
-                               GroundedDiagnosisGenerator groundedDiagnosisGenerator) {
+                               GroundedDiagnosisGenerator groundedDiagnosisGenerator,
+                               HistoricalVectorStoreInitializer historicalVectorStore) {
         this.retrievers = retrievers;
         this.evidenceFusionService = evidenceFusionService;
         this.groundedDiagnosisGenerator = groundedDiagnosisGenerator;
+        this.historicalVectorStore = historicalVectorStore;
     }
 
     public DiagnosisAnalysisResponse analyze(DiagnosisAnalyzeRequest request, Long userId) {
@@ -81,7 +91,7 @@ public class DiagnosisRagService {
                 item.put("count", retrieved.size());
                 item.put("latencyMs", System.currentTimeMillis() - start);
                 item.put("topK", request.getTopK() == null ? 5 : request.getTopK());
-                if (retrieved.isEmpty() && "historical_case".equals(retriever.modality())) item.put("status", "BLOCKED");
+                if (retrieved.isEmpty() && "historical_case".equals(retriever.modality())) item.put("status", historicalEmptyStatus());
                 retrieverSummary.put(retriever.modality(), item);
             } catch (RuntimeException exception) {
                 log.warn("Retriever {} 执行失败，runId={}: {}", retriever.modality(), runId, exception.getMessage());
@@ -156,10 +166,12 @@ public class DiagnosisRagService {
         metadata.put("imageEmbeddingModel", firstModalityMetadata(evidence, "camera", "embeddingModel", "not-invoked"));
         metadata.put("textEmbeddingDimension", firstModalityMetadata(evidence, "knowledge", "embeddingDimension", 512));
         metadata.put("imageEmbeddingDimension", firstModalityMetadata(evidence, "camera", "embeddingDimension", 0));
-        metadata.put("historicalRetriever", historicalStatus(retrieverSummary));
+        String historicalState = historicalStatus(retrieverSummary);
+        metadata.put("historicalRetriever", historicalState);
         metadata.put("milvusEndpoint", milvusHost + ":" + milvusPort);
         metadata.put("milvusCollection", "farmap_image_vectors_new");
-        metadata.put("milvusStatus", "BLOCKED".equals(historicalStatus(retrieverSummary)) ? "VERIFIED_EMPTY" : "REAL");
+        metadata.put("milvusStatus", "READY".equals(historicalState) || "READY_EMPTY".equals(historicalState)
+                ? "READY" : "UNAVAILABLE");
         metadata.put("runTimestamp", Instant.now().toString());
         metadata.put("fieldId", request.getFieldId());
         metadata.put("farmId", request.getFarmId());
@@ -228,8 +240,22 @@ public class DiagnosisRagService {
     private String historicalStatus(Map<String, Object> summary) {
         Object value = summary.get("historical_case");
         if (!(value instanceof Map)) return "DISABLED";
+        Object status = ((Map<String, Object>) value).get("status");
+        if ("EMPTY".equals(status)) return "READY_EMPTY";
+        if ("UNAVAILABLE".equals(status) || "failed".equals(status)) return "UNAVAILABLE";
         Object count = ((Map<String, Object>) value).get("count");
-        return count instanceof Number && ((Number) count).intValue() > 0 ? "REAL" : "BLOCKED";
+        return count instanceof Number && ((Number) count).intValue() > 0 ? "READY" : "READY_EMPTY";
+    }
+
+    private String historicalEmptyStatus() {
+        if (historicalVectorStore == null) return "UNAVAILABLE";
+        try {
+            Map<String, Object> state = historicalVectorStore.initialize(false);
+            if (!"READY".equals(state.get("status"))) return "UNAVAILABLE";
+            return Long.valueOf(0L).equals(state.get("rowCount")) ? "EMPTY" : "READY";
+        } catch (Exception error) {
+            return "UNAVAILABLE";
+        }
     }
 
     private void validateRequest(DiagnosisAnalyzeRequest request) {
