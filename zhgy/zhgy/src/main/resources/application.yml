@@ -1,0 +1,124 @@
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://mysql:3306/zhgy?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
+    username: ${SPRING_DATASOURCE_USERNAME:zhgy}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+#    url: jdbc:mysql://localhost:3306/zhgy?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+#    username: root   #root
+#    password: mei123456   #mei123456
+  jackson:
+    time-zone: Asia/Shanghai
+    date-format: yyyy-MM-dd HH:mm:ss
+  data:
+    mongodb:
+      # 条件化启用MongoDB自动配置
+      auto-index-creation: false
+      host: ${SPRING_DATA_MONGODB_HOST:mongo}
+      port: ${SPRING_DATA_MONGODB_PORT:27017}
+      database: ${SPRING_DATA_MONGODB_DATABASE:zhgy}
+      username: ${SPRING_DATA_MONGODB_USERNAME:root}
+      password: ${SPRING_DATA_MONGODB_PASSWORD:}
+
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+  mapper-locations: classpath:mapper/*.xml
+
+jwt:
+  user:
+    secret-key: zhgy
+    ttl: 3600000  #3600000
+
+milvus:
+  host: ${MILVUS_HOST:milvus}
+  port: ${MILVUS_PORT:19530}
+
+
+server:
+  port: ${SERVER_PORT:8080}
+
+zhgy:
+  jwt:
+    admin-secret-key: mei
+    admin-ttl: 7200000 #7200000
+    admin-token-name: token
+    # >=32
+    user-secret-key: ${ZHGY_JWT_USER_SECRET_KEY:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+    user-ttl: ${ZHGY_JWT_USER_TTL:7200000}
+    user-token-name: authentication
+  upload:
+    dir: ${ZHGY_UPLOAD_DIR:/app/uploads}
+    base-url: ${ZHGY_UPLOAD_BASE_URL:http://backend:8080/uploads}
+
+# 高德地图API配置
+gaode:
+  api:
+    key: ${GAODE_API_KEY:}
+
+# 条件化配置，仅在需要时启用MongoDB和Milvus
+spring.autoconfigure.exclude:
+  - org.springframework.boot.autoconfigure.data.mongo.MongoDataAutoConfiguration
+  - org.springframework.boot.autoconfigure.mongo.MongoAutoConfiguration
+  - org.springframework.boot.autoconfigure.mongo.embedded.EmbeddedMongoAutoConfiguration
+
+# 腾讯混元API配置
+hunyuan:
+  api:
+    key: ${HUNYUAN_API_KEY:}
+    url: https://api.hunyuan.cloud.tencent.com/v1/chat/completions
+    text-model: ${HUNYUAN_TEXT_MODEL:hunyuan-a13b}
+
+# 阿里云百炼 OpenAI 兼容网关；Key 只从环境变量读取。
+bailian:
+  api:
+    key: ${DASHSCOPE_API_KEY:${BAILIAN_API_KEY:}}
+    url: ${BAILIAN_API_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions}
+  region: ${BAILIAN_REGION:beijing}
+  workspace-id: ${BAILIAN_WORKSPACE_ID:}
+
+farmap:
+  ai:
+    router:
+      enabled: ${FARMAP_MODEL_ROUTER_ENABLED:true}
+      default-model: ${FARMAP_DEFAULT_MODEL:qwen3.6-plus}
+      multimodal-model: ${FARMAP_MULTIMODAL_MODEL:qwen3-vl-32b-thinking}
+      expert-model: ${FARMAP_EXPERT_MODEL:qwen3-vl-235b-a22b-thinking}
+      expert-escalation:
+        confidence-threshold: ${FARMAP_ESCALATION_CONFIDENCE:0.65}
+        retrieval-quality-threshold: ${FARMAP_ESCALATION_RETRIEVAL_QUALITY:0.55}
+        image-count-threshold: ${FARMAP_ESCALATION_IMAGE_COUNT:4}
+        evidence-conflict: ${FARMAP_ESCALATION_EVIDENCE_CONFLICT:true}
+        high-risk: ${FARMAP_ESCALATION_HIGH_RISK:true}
+    generation:
+      mode: ${RAG_GENERATION_MODE:template}
+    local-vision:
+      enabled: ${FARMAP_LOCAL_VISION_ENABLED:true}
+    retrieval:
+      weights:
+        camera: ${FARMAP_RETRIEVAL_WEIGHT_CAMERA:1.0}
+        weather: ${FARMAP_RETRIEVAL_WEIGHT_WEATHER:0.95}
+        knowledge: ${FARMAP_RETRIEVAL_WEIGHT_KNOWLEDGE:1.0}
+        historical-case: ${FARMAP_RETRIEVAL_WEIGHT_HISTORICAL:1.1}
+        soil: ${FARMAP_RETRIEVAL_WEIGHT_SOIL:1.0}
+        spatial: ${FARMAP_RETRIEVAL_WEIGHT_SPATIAL:0.9}
+
+model:
+  api:
+    url: ${MODEL_API_URL:http://tree-analyzer:5000/analyze}
+    key: ${MODEL_API_KEY:}
+
+hikyun:
+  access-key: ${HIKYUN_ACCESS_KEY:}
+  secret-key: ${HIKYUN_SECRET_KEY:}
+  product-code: ${HIKYUN_PRODUCT_CODE:}
+  project-id: ${HIKYUN_PROJECT_ID:}
+
+spring.servlet.multipart:
+  max-file-size: 10MB
+  max-request-size: 50MB
+
+# 日志配置
+logging:
+  level:
+    com.mei.zhgy: debug
