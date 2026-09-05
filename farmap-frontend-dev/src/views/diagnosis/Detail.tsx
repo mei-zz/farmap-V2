@@ -48,6 +48,13 @@ import type { DiagnosisAnalysisResponse } from "@/features/diagnosis/contract";
 
 const { Text, Title } = Typography;
 
+function modelLabel(model?: string) {
+  if (model === "qwen3.6-plus") return "Qwen3.6-Plus";
+  if (model === "qwen3-vl-32b-thinking") return "Qwen3-VL-32B Thinking";
+  if (model === "qwen3-vl-235b-a22b-thinking") return "Qwen3-VL-235B Thinking";
+  return model || "未调用";
+}
+
 export default function DiagnosisDetail() {
   const navigate = useNavigate();
   const setContext = useAIContextStore((state) => state.setContext);
@@ -305,6 +312,22 @@ export default function DiagnosisDetail() {
   );
   const technicalContent = (
     <Card bordered={false} title="技术详情" className="fm-tab-card">
+      {realResult && (
+        <div className="fm-input-card" style={{ marginBottom: 16 }}>
+          <Flex justify="space-between" align="center" wrap gap={8}>
+            <Title level={5} style={{ margin: 0 }}>Model Routing</Title>
+            <Tag color={realResult.metadata.escalated ? "orange" : "blue"}>
+              {realResult.metadata.escalated ? "已升级" : "自动路由"}
+            </Tag>
+          </Flex>
+          <div><span>Primary Model</span><b>{modelLabel(realResult.metadata.primaryModel || realResult.metadata.model)}</b></div>
+          <div><span>Selected Model</span><b>{modelLabel(realResult.metadata.selectedModel || realResult.metadata.model)}</b></div>
+          <div><span>Route</span><b>{realResult.metadata.routingReason || "task_policy"}</b></div>
+          {realResult.metadata.escalatedModel && <div><span>Escalated to</span><b>{modelLabel(realResult.metadata.escalatedModel)}</b></div>}
+          {realResult.metadata.fallbackChain?.length ? <div><span>Fallback</span><b>{realResult.metadata.fallbackChain.map(modelLabel).join(" → ")}</b></div> : null}
+          <div><span>Tokens</span><b>{realResult.metadata.totalTokens ?? "—"}</b></div>
+        </div>
+      )}
       <div className="fm-technical-list">
         {demoAgentTools.map((tool, index) => (
           <div key={tool.id}>

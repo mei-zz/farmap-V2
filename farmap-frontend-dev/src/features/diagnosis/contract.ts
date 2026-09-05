@@ -62,6 +62,8 @@ export type DiagnosisAnalysisRequest = {
   };
   query?: string;
   topK?: number;
+  enabledModalities?: EvidenceModality[];
+  modelPolicy?: "default" | "force_qwen36" | "force_vl32" | "force_vl235";
 };
 
 export type DiagnosisResult = {
@@ -78,6 +80,7 @@ export type DiagnosisResult = {
 export type DiagnosisAnalysisResponse = {
   run_id: string;
   diagnosis: DiagnosisResult;
+  visual_findings?: string[];
   claims: DiagnosisClaim[];
   evidence: DiagnosisEvidence[];
   recommendations: DiagnosisRecommendation[];
@@ -86,6 +89,16 @@ export type DiagnosisAnalysisResponse = {
     mode: "real";
     generationMode?: string;
     model?: string;
+    selectedModel?: string;
+    primaryModel?: string;
+    escalatedModel?: string;
+    routingReason?: string;
+    escalated?: boolean;
+    fallbackChain?: string[];
+    inputTokens?: number;
+    outputTokens?: number;
+    thinkingTokens?: number;
+    totalTokens?: number;
     embeddingModel?: string;
     retrievalLatencyMs?: number;
     generationLatencyMs?: number;
