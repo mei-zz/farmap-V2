@@ -11,6 +11,13 @@
 *.class
 *.jar
 *.onnx
+*.safetensors
+*.pt
+*.pth
+*.gguf
+*.ckpt
+*.bin
+/local-ai-assets/models/*
 .tools/apache-maven*/
 .tools/deploy-venv/
 *.zip
