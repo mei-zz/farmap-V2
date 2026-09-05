@@ -1,6 +1,8 @@
 param(
     [ValidateSet("real", "mock")]
-    [string]$RagMode = "real"
+    [string]$RagMode = "real",
+    [ValidateSet("real", "mock")]
+    [string]$AgentMode = "real"
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,6 +25,7 @@ if (Test-Path -LiteralPath $envFile -PathType Leaf) {
 }
 
 $env:VITE_RAG_MODE = $RagMode
+$env:VITE_AGENT_MODE = $AgentMode
 Push-Location $frontendRoot
 try {
     & pnpm dev
