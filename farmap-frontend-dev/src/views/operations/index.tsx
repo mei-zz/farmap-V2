@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import GuidanceBox from "./GuidanceBox";
 import type { Guidance } from "./GuidanceBox";
 
-import { Flex, Card } from "antd";
+import { Flex, Card, List, Tag, Typography } from "antd";
 import { useFarmStore } from "@/store/farm";
 import { req, Request } from "@/utils/reqeust";
 import {
@@ -14,6 +14,7 @@ import {
   ShopOutlined,
 } from "@ant-design/icons";
 import { permanence } from "@/utils/permanence";
+import { useNavigate } from "react-router";
 
 type GuidanceSet = {
   body: Guidance[];
@@ -27,7 +28,9 @@ type GuidanceResult = {
   msg: null;
   data: GuidanceSet;
 };
+type AgentTask = { taskId: string; title: string; fieldId?: string; diagnosisId?: string; agentRunId?: string; status: string; priority?: string; source?: string; createdAt?: string; evidenceIds?: string[] | string };
 export default function Operations() {
+  const navigate = useNavigate();
   // Request token
   const token = permanence.token.useToken();
 
@@ -43,6 +46,7 @@ export default function Operations() {
     park: [],
     pest: [],
   });
+  const [agentTasks, setAgentTasks] = useState<AgentTask[]>([]);
   const getErrorTips = (msg: string): GuidanceSet => ({
     body: [{ id: 0, text: msg, isFormula: false }],
     fertile: [{ id: 0, text: msg, isFormula: false }],
@@ -68,6 +72,11 @@ export default function Operations() {
         setGuideList(getErrorTips(" / " + msg));
       });
   }, []);
+  useEffect(() => {
+    req.get<{ code: number; data?: { items?: AgentTask[] } }>("/api/operations/tasks", { Authorization: `Bearer ${token}` })
+      .then((res) => setAgentTasks(res.data?.items || []))
+      .catch(() => setAgentTasks([]));
+  }, [token]);
   return (
     <Flex gap="0.5rem" className="resp-operations__content">
       <div
@@ -82,6 +91,9 @@ export default function Operations() {
         <GuidanceBox list={guideList.pest} type="病虫管理" iconClass={BugOutlined} />
         <GuidanceBox list={guideList.park} type="清园操作" iconClass={ShopOutlined} />
       </div>
+      <Card title="Agent 任务" style={{ flex: "1 0 420px" }} bordered={false}>
+        {agentTasks.length === 0 ? <Typography.Text type="secondary">审批后的 Agent 农事任务会出现在这里。</Typography.Text> : <List dataSource={agentTasks} renderItem={(task) => <List.Item actions={task.agentRunId ? [<a key="run" onClick={() => navigate(`/analysis/${task.agentRunId}`)}>查看 Agent 运行</a>] : []}><List.Item.Meta title={task.title} description={`${task.fieldId || "当前地块"} · ${task.createdAt || "刚刚"} · ${task.source || "operations"} · evidence ${Array.isArray(task.evidenceIds) ? task.evidenceIds.length : 0}`} /><Flex gap={6}><Tag color={task.priority === "HIGH" ? "red" : "blue"}>{task.priority || "NORMAL"}</Tag><Tag>{task.status}</Tag></Flex></List.Item>} />}
+      </Card>
       <Card
         title={
           <>

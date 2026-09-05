@@ -23,4 +23,5 @@ public class AgentToolCall {
     private String errorMessage;
     private Instant startedAt;
     private Instant completedAt;
+    private Long durationMs;
 }

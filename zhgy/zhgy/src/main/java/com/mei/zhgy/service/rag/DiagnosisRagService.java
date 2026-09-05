@@ -145,6 +145,7 @@ public class DiagnosisRagService {
 
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("mode", "real");
+        metadata.put("status", "AI_INITIAL");
         metadata.put("generationMode", generationFallbackReason == null
                 ? (generationResult == null ? "grounded-template" : "qwen")
                 : "template-fallback");

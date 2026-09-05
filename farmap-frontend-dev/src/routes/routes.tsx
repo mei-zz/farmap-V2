@@ -214,6 +214,10 @@ const productRoutes: RouteObject[] = [
     element: protect(AgentWorkspace, allRoles),
   },
   {
+    path: "analysis/:runId",
+    element: protect(AgentWorkspace, allRoles),
+  },
+  {
     path: "operations",
     children: [
       {

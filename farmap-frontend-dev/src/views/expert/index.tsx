@@ -1,4 +1,4 @@
-import { Card, Divider, Flex } from "antd";
+import { Card, Divider, Flex, List, Tag, Typography } from "antd";
 
 import { useEffect, useState } from "react";
 import { req } from "@/utils/reqeust";
@@ -16,6 +16,7 @@ export default function Expert() {
   // Expert pending cases
   const [pendingCases, setPendingCases] = useState<PendingCase[]>([]);
   const [listLoading, setListLoading] = useState(false);
+  const [reviewStates, setReviewStates] = useState<Array<{ diagnosisId: string; status: string; reviewer?: string; reviewedAt?: string }>>([]);
 
   // Selection & details
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
@@ -43,6 +44,12 @@ export default function Expert() {
     fecthList().finally(() => {
       setListLoading(false);
     });
+  }, []);
+
+  useEffect(() => {
+    req.get<{ data: Array<{ diagnosisId: string; status: string; reviewer?: string; reviewedAt?: string }> }>("/api/expert-review", { Authorization: `Bearer ${token}` })
+      .then((response) => setReviewStates(response.data || []))
+      .catch(() => setReviewStates([]));
   }, []);
 
   useEffect(() => {
@@ -123,6 +130,7 @@ export default function Expert() {
               </div>
             ))
           )}
+          {reviewStates.length > 0 && <div style={{ padding: "12px 8px" }}><Typography.Text strong>Agent 诊断复核 / 历史候选</Typography.Text><List size="small" dataSource={reviewStates} renderItem={(review) => <List.Item><span>{review.diagnosisId}</span><Flex gap={4}><Tag color={review.status === "CORRECTED" ? "orange" : review.status === "CONFIRMED" ? "green" : "blue"}>{review.status}</Tag>{review.status === "CONFIRMED" && <Tag color="cyan">历史候选</Tag>}</Flex></List.Item>} /></div>}
         </div>
       </Card>
       <Flex style={{ flexGrow: 1 }}>

@@ -28,8 +28,8 @@ def main():
     created = request("POST", "/api/agent/runs", payload)
     run_id = created["runId"]
     run = None
-    for _ in range(20):
-        time.sleep(0.2)
+    for _ in range(600):
+        time.sleep(0.25)
         run = request("GET", "/api/agent/runs/" + run_id)
         if run["status"] in ("WAITING_FOR_APPROVAL", "COMPLETED", "FAILED"):
             break

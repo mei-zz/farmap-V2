@@ -24,7 +24,7 @@ export type AgentContext = {
 
 export type AgentPlanStep = { id: string; title: string; description: string; toolName: string; readOnly: boolean; dependsOn: string[]; status: AgentStepStatus };
 export type AgentPlan = { steps: AgentPlanStep[]; maxSteps: number; maxToolCalls: number; timeoutMs: number; plannerModel?: string; schemaVersion?: string };
-export type AgentToolCall = { id: string; toolName: string; status: AgentToolStatus; input?: Record<string, unknown>; output?: Record<string, unknown>; errorCode?: string; errorMessage?: string; startedAt?: string; completedAt?: string };
+export type AgentToolCall = { id: string; toolName: string; status: AgentToolStatus; input?: Record<string, unknown>; output?: Record<string, unknown>; errorCode?: string; errorMessage?: string; startedAt?: string; completedAt?: string; durationMs?: number };
 export type AgentEvidence = { id: string; modality: string; title: string; summary: string; score?: number; source?: Record<string, unknown>; preview?: Record<string, unknown>; metadata?: Record<string, unknown> };
 export type AgentAction = { id: string; type: string; title: string; detail: string; toolName: string; approvalRequired: boolean; approvalState: AgentApprovalState; payload?: Record<string, unknown> };
 export type AgentEvent = { sequence: number; timestamp: string; type: string; payload: Record<string, unknown> };

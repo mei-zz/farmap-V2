@@ -8,6 +8,7 @@ import MonitorListView from "./list/MonitorListView";
 import { req } from "@/utils/reqeust";
 import { permanence } from "@/utils/permanence";
 import PredictPic from "./PredictPic";
+import { useAIContextStore } from "@/store/aiContext";
 
 interface AccessTokenResponse {
   data: {
@@ -17,6 +18,8 @@ interface AccessTokenResponse {
 }
 
 export default function index() {
+  const setAIContext = useAIContextStore((state) => state.setContext);
+  useEffect(() => { setAIContext({ currentPage: "/farm/devices" }); }, [setAIContext]);
   // Get the user's access token
   const localAccessToken = permanence.accessToken.useAccessToken();
   const [accessToken, setAccessToken] = useState<string>("");
@@ -40,6 +43,7 @@ export default function index() {
   const [selectedVideo, setSelectedVideo] = useState<string>(""); // this is the request url for video
   const getSelectVideoUrl = (url: string): void => {
     setSelectedVideo(url);
+    setAIContext({ selectedDevice: { id: url || "camera-selected", name: "当前摄像头", status: "online" } });
   };
 
   return (

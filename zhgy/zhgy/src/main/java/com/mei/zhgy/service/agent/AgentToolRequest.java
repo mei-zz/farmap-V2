@@ -18,4 +18,5 @@ public class AgentToolRequest {
     private AgentContext context;
     private boolean approvalGranted;
     @Builder.Default private Map<String, Object> priorOutputs = new LinkedHashMap<>();
+    @Builder.Default private Map<String, Object> attributes = new LinkedHashMap<>();
 }

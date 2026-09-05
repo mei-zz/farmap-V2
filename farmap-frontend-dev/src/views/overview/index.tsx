@@ -37,6 +37,10 @@ export default function Overview() {
       currentWeather: { summary: demoWeather.summary, temperature: demoWeather.temperature, precipitation: `未来 24 小时 ${demoWeather.rainfallForecast}`, updatedAt: demoWeather.updatedAt },
       currentPhenology: { stage: demoPrimaryField.growthStage, progress: demoPrimaryField.phenologyProgress },
       selectedDiagnosis: { id: demoDiagnosis.id, title: demoDiagnosis.title, severity: demoDiagnosis.severity, confidence: demoDiagnosis.confidence, summary: demoDiagnosis.summary },
+      currentLocation: { label: "A-12 地块中心", latitude: 30.051, longitude: 103.832 },
+      selectedDevice: { id: "CAM-A12-03", name: "Camera-03", status: "online", location: "A-12 东侧" },
+      selectedImages: [],
+      currentPage: "/overview",
     });
   }, [setContext]);
 
