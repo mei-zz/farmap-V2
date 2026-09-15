@@ -1,0 +1,274 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Diagram>
+  <ID>JAVA</ID>
+  <OriginalElement>E:/zhgy/zhgy/src</OriginalElement>
+  <nodes>
+    <node x="3576.0" y="4930.5">com.mei.zhgy.entity.UserRequest</node>
+    <node x="3027.5" y="4930.5">com.mei.zhgy.entity.InitialResult</node>
+    <node x="3245.5" y="1279.0">com.mei.zhgy.constant.MessageConstant</node>
+    <node x="3641.5" y="-760.5">com.mei.zhgy.service.FarmLocationService</node>
+    <node x="2956.0" y="714.5">com.mei.zhgy.dto.UpdateModelListRequest</node>
+    <node x="3731.5" y="-1060.5">com.mei.zhgy.mapper.InitialResultMapper</node>
+    <node x="2764.0" y="1158.5">com.mei.zhgy.vo.ModelVO</node>
+    <node x="3248.0" y="3047.5">com.mei.zhgy.service.CaseStorageService</node>
+    <node x="2400.0" y="822.5">com.mei.zhgy.interceptor.JwtTokenInterceptor</node>
+    <node x="2739.5" y="4395.5">com.mei.zhgy.service.AIModelService</node>
+    <node x="-72.0" y="6199.5">com.mei.zhgy.exception.AccountNotFoundException</node>
+    <node x="2721.5" y="2974.5">com.mei.zhgy.result.NoPageResult</node>
+    <node x="3593.0" y="-1261.0">com.mei.zhgy.constant.PasswordConstant</node>
+    <node x="3441.0" y="-1097.5">com.mei.zhgy.context.BaseContext</node>
+    <node x="3368.5" y="362.5">com.mei.zhgy.controller.AIModelController</node>
+    <node x="2646.0" y="8134.5">com.mei.zhgy.dto.AIModelRequest</node>
+    <node x="2575.0" y="3578.5">com.mei.zhgy.dto.ChangePasswordDTO</node>
+    <node x="2916.0" y="374.5">com.mei.zhgy.service.impl.MapService</node>
+    <node x="3377.0" y="1835.5">com.mei.zhgy.service.AccumulatedTemperatureService</node>
+    <node x="2689.0" y="-532.5">com.mei.zhgy.mapper.UserMapper</node>
+    <node x="3093.0" y="-61.5">com.mei.zhgy.scheduled.WeatherDataScheduledTask</node>
+    <node x="2283.5" y="4154.5">com.mei.zhgy.entity.Model</node>
+    <node x="2934.5" y="8231.5">com.mei.zhgy.exception.AddressBookBusinessException</node>
+    <node x="2281.5" y="-760.5">com.mei.zhgy.service.WeatherService</node>
+    <node x="3257.0" y="2386.5">com.mei.zhgy.ZhgyApplication</node>
+    <node x="2108.0" y="1279.5">com.mei.zhgy.mapper.GuidanceMapper</node>
+    <node x="2684.0" y="-85.5">com.mei.zhgy.util.FileUtil</node>
+    <node x="2158.0" y="5134.5">com.mei.zhgy.dto.DeleteUserDTO</node>
+    <node x="3315.5" y="-1261.0">com.mei.zhgy.ZhgyApplicationTests</node>
+    <node x="2882.0" y="1654.5">com.mei.zhgy.vo.GuidanceResponseVO</node>
+    <node x="2229.0" y="2806.5">com.mei.zhgy.vo.PendingRevisionCaseVO</node>
+    <node x="2419.0" y="302.5">com.mei.zhgy.vo.WeatherIntroResponseVO</node>
+    <node x="2148.5" y="-581.5">com.mei.zhgy.dto.UserLoginDTO</node>
+    <node x="2351.5" y="5694.5">com.mei.zhgy.entity.Case</node>
+    <node x="2165.5" y="-61.5">com.mei.zhgy.controller.ModelController</node>
+    <node x="3127.5" y="-1448.5">com.mei.zhgy.service.MsgListService</node>
+    <node x="2013.5" y="4346.5">com.mei.zhgy.vo.MapFarmVO</node>
+    <node x="1984.5" y="278.5">com.mei.zhgy.vo.ChangePasswordResponse</node>
+    <node x="2790.0" y="6211.5">com.mei.zhgy.exception.LoginFailedException</node>
+    <node x="2668.0" y="2218.5">com.mei.zhgy.vo.FarmLocationVO</node>
+    <node x="1824.0" y="-145.5">com.mei.zhgy.dto.DeleteModelRequest</node>
+    <node x="1383.5" y="-121.5">com.mei.zhgy.vo.DeleteUserResponse</node>
+    <node x="2024.0" y="-773.0">com.mei.zhgy.constant.JwtClaimsConstant</node>
+    <node x="2202.0" y="8219.5">com.mei.zhgy.exception.UserNotLoginException</node>
+    <node x="1791.5" y="5002.5">com.mei.zhgy.entity.FarmRecord</node>
+    <node x="1836.5" y="-569.5">com.mei.zhgy.config.MilvusConfig</node>
+    <node x="1860.5" y="751.5">com.mei.zhgy.mapper.ExpertMapper</node>
+    <node x="1622.0" y="-797.5">com.mei.zhgy.controller.HealthController</node>
+    <node x="2993.5" y="-1248.5">com.mei.zhgy.mapper.CropDiagnosisMapper</node>
+    <node x="2774.0" y="-1048.5">com.mei.zhgy.mapper.FarmRecordMapper</node>
+    <node x="1546.0" y="1266.5">com.mei.zhgy.controller.WeatherController</node>
+    <node x="412.0" y="-37.5">com.mei.zhgy.service.impl.KnowledgeBaseServiceImpl</node>
+    <node x="2857.0" y="3638.5">com.mei.zhgy.service.impl.AccumulatedTemperatureServiceImpl</node>
+    <node x="1541.5" y="362.5">com.mei.zhgy.service.impl.WeatherServiceImpl</node>
+    <node x="1291.5" y="714.5">com.mei.zhgy.vo.AccumulatedTemperatureVO</node>
+    <node x="1876.5" y="5778.5">com.mei.zhgy.vo.MapTreeVO</node>
+    <node x="1317.0" y="5062.5">com.mei.zhgy.dto.UserRegisterDTO</node>
+    <node x="-312.0" y="6814.5">com.mei.zhgy.entity.CropDiagnosis</node>
+    <node x="1118.5" y="1158.5">com.mei.zhgy.entity.FarmLocation</node>
+    <node x="1319.5" y="8219.5">com.mei.zhgy.exception.PasswordErrorException</node>
+    <node x="1648.5" y="7870.5">com.mei.zhgy.entity.Farm</node>
+    <node x="1181.5" y="4358.5">com.mei.zhgy.result.PageResult</node>
+    <node x="1668.0" y="2962.5">com.mei.zhgy.service.impl.GuidanceServiceImpl</node>
+    <node x="1487.0" y="4322.5">com.mei.zhgy.service.impl.UserServiceImpl</node>
+    <node x="2148.5" y="2182.5">com.mei.zhgy.util.CLIPModelUtil</node>
+    <node x="692.5" y="798.5">com.mei.zhgy.controller.ExpertController</node>
+    <node x="1210.0" y="-832.5">com.mei.zhgy.mapper.ModelMapper</node>
+    <node x="2600.5" y="-1285.5">com.mei.zhgy.controller.FarmRecordController</node>
+    <node x="2479.5" y="-1073.0">com.mei.zhgy.constant.StatusConstant</node>
+    <node x="2229.0" y="-1297.5">com.mei.zhgy.scheduled.ConsensusCaseStorageScheduler</node>
+    <node x="1473.5" y="3494.5">com.mei.zhgy.dto.MapTreeDTO</node>
+    <node x="1987.0" y="3615.5">com.mei.zhgy.service.UserService</node>
+    <node x="2051.0" y="-1097.5">com.mei.zhgy.scheduled.ConsensusCaseProcessorTask</node>
+    <node x="1463.5" y="5994.5">com.mei.zhgy.vo.UserLoginVO</node>
+    <node x="1025.0" y="-508.5">com.mei.zhgy.mapper.UserRequestMapper</node>
+    <node x="31.5" y="3010.5">com.mei.zhgy.service.impl.ModelServiceImpl</node>
+    <node x="1931.5" y="1835.5">com.mei.zhgy.service.ModelService</node>
+    <node x="1291.5" y="2902.5">com.mei.zhgy.dto.UpdateGuidanceDTO</node>
+    <node x="414.5" y="1230.5">com.mei.zhgy.util.DataInsertUtil</node>
+    <node x="204.0" y="678.5">com.mei.zhgy.vo.GuidanceVO</node>
+    <node x="3083.0" y="-485.5">com.mei.zhgy.service.impl.CropDiagnosisServiceImpl</node>
+    <node x="994.5" y="374.5">com.mei.zhgy.util.AccumulatedTemperatureDataGenerator</node>
+    <node x="820.0" y="-121.5">com.mei.zhgy.vo.AdminCheckResponse</node>
+    <node x="1620.0" y="2194.5">com.mei.zhgy.vo.UserLoginResponseVO</node>
+    <node x="1690.0" y="-1097.5">com.mei.zhgy.config.WebMvcConfiguration</node>
+    <node x="-22.0" y="1194.5">com.mei.zhgy.dto.CreateModelListRequest</node>
+    <node x="958.5" y="4930.5">com.mei.zhgy.config.MongoConfig</node>
+    <node x="1181.5" y="6018.5">com.mei.zhgy.result.Result</node>
+    <node x="2610.5" y="5219.5">com.mei.zhgy.exception.BaseException</node>
+    <node x="1369.5" y="1690.5">com.mei.zhgy.vo.CaseDetailVO</node>
+    <node x="2916.0" y="-760.5">com.mei.zhgy.service.MapService</node>
+    <node x="739.5" y="-785.0">com.mei.zhgy.utils.JwtUtil</node>
+    <node x="950.5" y="7966.5">com.mei.zhgy.vo.GaodeWeatherResponse</node>
+    <node x="3248.0" y="4202.5">com.mei.zhgy.service.impl.CaseStorageServiceImpl</node>
+    <node x="1865.5" y="-1248.5">com.mei.zhgy.service.CropDiagnosisService</node>
+    <node x="660.5" y="4154.5">com.mei.zhgy.entity.Guidance</node>
+    <node x="81.5" y="4334.5">com.mei.zhgy.service.impl.ExpertServiceImpl</node>
+    <node x="785.5" y="5910.5">com.mei.zhgy.entity.ExpertRevision</node>
+    <node x="490.0" y="5002.5">com.mei.zhgy.entity.User</node>
+    <node x="1241.5" y="2290.5">com.mei.zhgy.dto.MsgListDTO</node>
+    <node x="1547.5" y="-1248.5">com.mei.zhgy.service.DataInitializationService</node>
+    <node x="629.0" y="278.5">com.mei.zhgy.vo.GetAllUsersResponse</node>
+    <node x="624.5" y="8231.5">com.mei.zhgy.exception.PasswordEditFailedException</node>
+    <node x="311.0" y="5958.5">com.mei.zhgy.vo.RevisionHistoryVO</node>
+    <node x="901.5" y="3663.5">com.mei.zhgy.service.ExpertService</node>
+    <node x="3641.5" y="-37.5">com.mei.zhgy.service.impl.FarmLocationServiceImpl</node>
+    <node x="582.5" y="-545.5">com.mei.zhgy.dto.ImageAnalyzeDTO</node>
+    <node x="688.5" y="1762.5">com.mei.zhgy.service.WeatherApiService</node>
+    <node x="-173.5" y="738.5">com.mei.zhgy.dto.SignupRequest</node>
+    <node x="3127.5" y="-1073.5">com.mei.zhgy.service.impl.MsgListService</node>
+    <node x="415.5" y="-1048.5">com.mei.zhgy.service.FarmRecordService</node>
+    <node x="539.5" y="2278.5">com.mei.zhgy.vo.SignupResponse</node>
+    <node x="2328.0" y="1811.5">com.mei.zhgy.service.GuidanceService</node>
+    <node x="281.5" y="-760.5">com.mei.zhgy.mapper.WeatherMapper</node>
+    <node x="17.0" y="1835.5">com.mei.zhgy.mapper.AccumulatedTemperatureMapper</node>
+    <node x="96.5" y="8158.5">com.mei.zhgy.controller.MapController</node>
+    <node x="1412.0" y="-460.5">com.mei.zhgy.service.KnowledgeBaseService</node>
+    <node x="262.5" y="-1285.5">com.mei.zhgy.controller.MsgListController</node>
+    <node x="124.0" y="-1061.0">com.mei.zhgy.controller.CropDiagnosisController</node>
+    <node x="669.5" y="2806.5">com.mei.zhgy.entity.AccumulatedTemperature</node>
+    <node x="-112.0" y="4966.5">com.mei.zhgy.entity.Weather</node>
+    <node x="-119.5" y="-1260.5">com.mei.zhgy.mapper.MapMapper</node>
+    <node x="227.5" y="3566.5">com.mei.zhgy.controller.UserController</node>
+    <node x="3119.5" y="5946.5">com.mei.zhgy.service.impl.AIModelServiceImpl</node>
+    <node x="-208.5" y="3422.5">com.mei.zhgy.entity.MsgList</node>
+    <node x="-311.5" y="1194.5">com.mei.zhgy.dto.ExpertRevisionDTO</node>
+    <node x="87.5" y="-532.5">com.mei.zhgy.mapper.FarmMapper</node>
+    <node x="-308.0" y="2326.5">com.mei.zhgy.controller.GuidanceController</node>
+    <node x="-84.5" y="-773.5">com.mei.zhgy.service.impl.FarmRecordService</node>
+    <node x="261.0" y="254.5">com.mei.zhgy.properties.JwtProperties</node>
+    <node x="-318.5" y="-460.5">com.mei.zhgy.mapper.FarmLocationMapper</node>
+    <node x="-306.5" y="-1048.5">com.mei.zhgy.mapper.MsgListMapper</node>
+  </nodes>
+  <notes />
+  <edges>
+    <edge source="com.mei.zhgy.service.impl.GuidanceServiceImpl" target="com.mei.zhgy.service.GuidanceService" relationship="REALIZATION">
+      <point x="0.0" y="-140.5" />
+      <point x="1926.0" y="2783.0" />
+      <point x="2586.0" y="2783.0" />
+      <point x="0.0" y="91.5" />
+    </edge>
+    <edge source="com.mei.zhgy.service.impl.AccumulatedTemperatureServiceImpl" target="com.mei.zhgy.service.AccumulatedTemperatureService" relationship="REALIZATION">
+      <point x="0.0" y="-104.5" />
+      <point x="3166.0" y="3023.0" />
+      <point x="3686.0" y="3023.0" />
+      <point x="0.0" y="67.5" />
+    </edge>
+    <edge source="com.mei.zhgy.exception.UserNotLoginException" target="com.mei.zhgy.exception.BaseException" relationship="GENERALIZATION">
+      <point x="0.0" y="-43.5" />
+      <point x="2326.0" y="5403.0" />
+      <point x="2706.0" y="5403.0" />
+      <point x="0.0" y="43.5" />
+    </edge>
+    <edge source="com.mei.zhgy.exception.AddressBookBusinessException" target="com.mei.zhgy.exception.BaseException" relationship="GENERALIZATION">
+      <point x="0.0" y="-31.5" />
+      <point x="3086.0" y="5683.0" />
+      <point x="2326.0" y="5683.0" />
+      <point x="2326.0" y="5403.0" />
+      <point x="2706.0" y="5403.0" />
+      <point x="0.0" y="43.5" />
+    </edge>
+    <edge source="com.mei.zhgy.service.impl.MsgListService" target="com.mei.zhgy.service.MsgListService" relationship="REALIZATION">
+      <point x="0.0" y="-56.5" />
+      <point x="0.0" y="31.5" />
+    </edge>
+    <edge source="com.mei.zhgy.service.impl.FarmLocationServiceImpl" target="com.mei.zhgy.service.FarmLocationService" relationship="REALIZATION">
+      <point x="0.0" y="-80.5" />
+      <point x="0.0" y="43.5" />
+    </edge>
+    <edge source="com.mei.zhgy.exception.PasswordErrorException" target="com.mei.zhgy.exception.BaseException" relationship="GENERALIZATION">
+      <point x="0.0" y="-43.5" />
+      <point x="1446.0" y="5683.0" />
+      <point x="2326.0" y="5683.0" />
+      <point x="2326.0" y="5403.0" />
+      <point x="2706.0" y="5403.0" />
+      <point x="0.0" y="43.5" />
+    </edge>
+    <edge source="com.mei.zhgy.service.impl.ExpertServiceImpl" target="com.mei.zhgy.service.ExpertService" relationship="REALIZATION">
+      <point x="0.0" y="-188.5" />
+      <point x="346.0" y="4143.0" />
+      <point x="1166.0" y="4143.0" />
+      <point x="0.0" y="79.5" />
+    </edge>
+    <edge source="com.mei.zhgy.service.impl.WeatherServiceImpl" target="com.mei.zhgy.service.WeatherService" relationship="REALIZATION">
+      <point x="0.0" y="-80.5" />
+      <point x="1746.0" y="-157.0" />
+      <point x="2486.0" y="-157.0" />
+      <point x="0.0" y="43.5" />
+    </edge>
+    <edge source="com.mei.zhgy.service.impl.CropDiagnosisServiceImpl" target="com.mei.zhgy.service.CropDiagnosisService" relationship="REALIZATION">
+      <point x="0.0" y="-68.5" />
+      <point x="3246.0" y="-797.0" />
+      <point x="2026.0" y="-797.0" />
+      <point x="0.0" y="31.5" />
+    </edge>
+    <edge source="com.mei.zhgy.service.impl.ModelServiceImpl" target="com.mei.zhgy.service.ModelService" relationship="REALIZATION">
+      <point x="0.0" y="-92.5" />
+      <point x="206.0" y="2763.0" />
+      <point x="2106.0" y="2763.0" />
+      <point x="0.0" y="67.5" />
+    </edge>
+    <edge source="com.mei.zhgy.service.impl.CaseStorageServiceImpl" target="com.mei.zhgy.service.CaseStorageService" relationship="REALIZATION">
+      <point x="0.0" y="-320.5" />
+      <point x="0.0" y="55.5" />
+    </edge>
+    <edge source="com.mei.zhgy.exception.PasswordEditFailedException" target="com.mei.zhgy.exception.BaseException" relationship="GENERALIZATION">
+      <point x="0.0" y="-31.5" />
+      <point x="766.0" y="5683.0" />
+      <point x="2326.0" y="5683.0" />
+      <point x="2326.0" y="5403.0" />
+      <point x="2706.0" y="5403.0" />
+      <point x="0.0" y="43.5" />
+    </edge>
+    <edge source="com.mei.zhgy.service.impl.FarmRecordService" target="com.mei.zhgy.service.FarmRecordService" relationship="REALIZATION">
+      <point x="0.0" y="-56.5" />
+      <point x="66.0" y="-797.0" />
+      <point x="566.0" y="-797.0" />
+      <point x="0.0" y="31.5" />
+    </edge>
+    <edge source="com.mei.zhgy.service.impl.KnowledgeBaseServiceImpl" target="com.mei.zhgy.service.KnowledgeBaseService" relationship="REALIZATION">
+      <point x="0.0" y="-80.5" />
+      <point x="586.0" y="-137.0" />
+      <point x="1586.0" y="-137.0" />
+      <point x="0.0" y="43.5" />
+    </edge>
+    <edge source="com.mei.zhgy.exception.LoginFailedException" target="com.mei.zhgy.exception.BaseException" relationship="GENERALIZATION">
+      <point x="0.0" y="-31.5" />
+      <point x="2906.0" y="5683.0" />
+      <point x="2326.0" y="5683.0" />
+      <point x="2326.0" y="5403.0" />
+      <point x="2706.0" y="5403.0" />
+      <point x="0.0" y="43.5" />
+    </edge>
+    <edge source="com.mei.zhgy.service.impl.MapService" target="com.mei.zhgy.service.MapService" relationship="REALIZATION">
+      <point x="0.0" y="-68.5" />
+      <point x="0.0" y="43.5" />
+    </edge>
+    <edge source="com.mei.zhgy.exception.AccountNotFoundException" target="com.mei.zhgy.exception.BaseException" relationship="GENERALIZATION">
+      <point x="0.0" y="-43.5" />
+      <point x="66.0" y="5683.0" />
+      <point x="2326.0" y="5683.0" />
+      <point x="2326.0" y="5403.0" />
+      <point x="2706.0" y="5403.0" />
+      <point x="0.0" y="43.5" />
+    </edge>
+    <edge source="com.mei.zhgy.service.impl.UserServiceImpl" target="com.mei.zhgy.service.UserService" relationship="REALIZATION">
+      <point x="0.0" y="-200.5" />
+      <point x="1706.0" y="4283.0" />
+      <point x="2206.0" y="4283.0" />
+      <point x="0.0" y="127.5" />
+    </edge>
+    <edge source="com.mei.zhgy.service.impl.AIModelServiceImpl" target="com.mei.zhgy.service.AIModelService" relationship="REALIZATION">
+      <point x="0.0" y="-296.5" />
+      <point x="3346.0" y="5663.0" />
+      <point x="2966.0" y="5663.0" />
+      <point x="0.0" y="127.5" />
+    </edge>
+  </edges>
+  <settings layout="Hierarchic Compact" zoom="0.9297816151636953" showDependencies="false" x="1882.235095133521" y="-978.7797066342399" />
+  <SelectedNodes />
+  <Categories>
+    <Category>Constructors</Category>
+    <Category>Fields</Category>
+    <Category>Methods</Category>
+  </Categories>
+  <SCOPE>All</SCOPE>
+  <VISIBILITY>private</VISIBILITY>
+</Diagram>
+

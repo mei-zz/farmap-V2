@@ -1,0 +1,30 @@
+{
+  "generatedAt": "2026-09-05",
+  "policy": "metadata-only; do not copy or download weights without an explicit adapter and reuse decision",
+  "assets": [
+    {
+      "modelName": "BAAI/bge-small-zh-v1.5",
+      "originalPath": "C:\\Users\\Administrator\\.cache\\huggingface\\hub\\models--BAAI--bge-small-zh-v1.5",
+      "size": "91.4 MB weight snapshot",
+      "usage": "Chinese agricultural knowledge embedding candidate",
+      "status": "available-in-cache",
+      "reuseDecision": "DEFER"
+    },
+    {
+      "modelName": "facebook/dinov2-small",
+      "originalPath": "C:\\Users\\Administrator\\.cache\\huggingface\\hub\\models--facebook--dinov2-small",
+      "size": "84.2 MB weight snapshot",
+      "usage": "Visual embedding candidate",
+      "status": "available-in-cache",
+      "reuseDecision": "DEFER"
+    },
+    {
+      "modelName": "bert-base-chinese",
+      "originalPath": "C:\\Users\\Administrator\\.cache\\huggingface\\hub\\models--bert-base-chinese",
+      "size": "392.5 MB weight snapshot",
+      "usage": "Chinese text baseline candidate",
+      "status": "available-in-cache",
+      "reuseDecision": "DEFER"
+    }
+  ]
+}

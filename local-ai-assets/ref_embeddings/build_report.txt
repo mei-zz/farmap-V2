@@ -1,0 +1,79 @@
+FarMap 参考图多模态向量构建报告
+started_at=2026-09-13T21:36:05+08:00
+finished_at=2026-09-13T21:36:50+08:00
+embedding_model=tongyi-embedding-vision-plus-2026-03-06
+dimension=1152
+image_res_level=2
+endpoint_host=llm-i8hhyk6mk02gd37e.cn-beijing.maas.aliyuncs.com
+endpoint_path_not_recorded=yes
+
+一、端点烟测
+smoke_image=whitening_mid_01.jpg, resized=False
+smoke endpoint=llm-i8hhyk6mk02gd37e.cn-beijing.maas.aliyuncs.com, result=PASS, image_dim=1152, text_dim=1152, image_attempts=1, text_attempts=1, cosine=0.150693, elapsed_ms=1375
+
+二、输入与处理结果
+record_count_scanned=90
+image_success_count=90
+failure_count=0
+PHENOLOGY scanned=48, success=48
+DISEASE scanned=42, success=42
+PHENOLOGY_counts=budding:6/6, dormancy:6/6, flowering:6/6, fruit_development:6/6, fruiting:12/12, germination:6/6, ripening:6/6
+DISEASE_counts=bacterial_spot:6/6, brown_rot:12/12, pocket_disease:12/12, pox_virus:6/6, rust:6/6
+
+三、向量校验
+shape=(90, 1152), dtype=float32, finite=True, all_norms_close=True
+raw_l2_norm_min=0.999535, raw_l2_norm_max=1.000452
+normalized_l2_min=1.000000, normalized_l2_max=1.000000
+
+四、探针文本 Top5
+probe_1 expected=DISEASE/brown_rot, attempts=1, top1_hit=True, top2_hit=True, top5=plum-dis-brown_rot-11:0.2616; plum-dis-pocket_disease-04:0.2611; plum-dis-bacterial_spot-02:0.2540; plum-dis-brown_rot-06:0.2533; plum-dis-brown_rot-05:0.2522
+probe_2 expected=DISEASE/bacterial_spot, attempts=1, top1_hit=False, top2_hit=False, top5=plum-dis-rust-01:0.2207; plum-dis-rust-05:0.2114; plum-dis-bacterial_spot-05:0.2062; plum-dis-brown_rot-07:0.1960; plum-dis-pox_virus-03:0.1873
+probe_3 expected=DISEASE/pocket_disease, attempts=1, top1_hit=True, top2_hit=True, top5=plum-dis-pocket_disease-04:0.2574; plum-dis-brown_rot-04:0.2342; plum-dis-brown_rot-05:0.2290; plum-dis-brown_rot-02:0.2213; plum-dis-brown_rot-01:0.2190
+probe_4 expected=PHENOLOGY/flowering, attempts=1, top1_hit=True, top2_hit=True, top5=plum-pheno-flowering-06:0.2377; plum-pheno-fruiting-05:0.2263; plum-pheno-flowering-01:0.2236; plum-pheno-fruiting-03:0.2229; plum-pheno-flowering-02:0.2225
+probe_5 expected=PHENOLOGY/dormancy, attempts=1, top1_hit=True, top2_hit=True, top5=plum-pheno-dormancy-05:0.2009; plum-pheno-dormancy-01:0.1960; plum-pheno-dormancy-04:0.1773; plum-pheno-dormancy-02:0.1734; plum-pheno-germination-02:0.1730
+probe_6 expected=PHENOLOGY/fruit_development, attempts=1, top1_hit=False, top2_hit=False, top5=plum-dis-pocket_disease-02:0.2260; plum-dis-brown_rot-08:0.2197; plum-dis-pocket_disease-09:0.2110; plum-pheno-ripening-05:0.2085; plum-pheno-ripening-01:0.1994
+probe_top1_hits=4/6
+probe_top2_hits=4/6
+probe_top1_minimum_5_of_6=不通过
+probe_top2_minimum_5_of_6=不通过
+
+五、组内/组间余弦相似度
+PHENOLOGY within_mean=0.652444, within_pairs=156, between_mean=0.532439, between_pairs=972
+DISEASE within_mean=0.613549, within_pairs=177, between_mean=0.442692, between_pairs=684
+
+六、失败与异常
+failure_count=0
+anomaly_count=0
+
+七、源目录完整性
+phenology_root=D:\前后端项目\farmap\plum_phenology
+phenology_file_count_before=51
+phenology_file_count_after=51
+phenology_count_unchanged=True
+phenology_content_unchanged=True
+phenology_metadata_unchanged=True
+disease_root=D:\前后端项目\farmap\plum_disease
+disease_file_count_before=42
+disease_file_count_after=42
+disease_count_unchanged=True
+disease_content_unchanged=True
+disease_metadata_unchanged=True
+
+八、任务边界
+negative_img_excluded=yes
+lora_data_excluded=yes
+milvus_or_database_write=no
+business_code_modified=no
+only_output_directory_written=yes
+api_key_in_report=no
+
+九、验收自检
+8 个参考图类别均已扫描且达到预期数量: 通过
+所有向量构建成功，无失败: 通过
+NPY 向量 shape/dtype/有限值/归一化通过: 通过
+manifest 与向量逐行对齐: 通过
+文本探针 Top1 至少命中 5/6: 不通过
+文本探针 Top2 至少命中 5/6: 不通过
+源目录文件数处理前后不变: 通过
+源目录内容未改变: 通过
+未写入 selected_reference 以外的位置: 通过

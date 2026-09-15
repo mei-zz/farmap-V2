@@ -1,0 +1,48 @@
+{
+  "version": "v1",
+  "source": "curated://agri-stage-knowledge-v1",
+  "domains": ["PEST_DISEASE", "FERTILIZER_WATER", "FARM_OPERATION", "TABOO", "DISASTER"],
+  "policy": "先补 GAP；DISASTER 可由 agri_signal_rule 继续扩展；未标记 SEEDED 的格子不得由模型猜补。",
+  "crops": [
+    {"cropCode":"plum","cropLabel":"脆李","stages":[
+      {"stageCode":"dormancy","seededDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO"],"gapDomains":["DISASTER"]},
+      {"stageCode":"germination","seededDomains":[],"gapDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"]},
+      {"stageCode":"budding","seededDomains":[],"gapDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"]},
+      {"stageCode":"flowering","seededDomains":[],"gapDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"]},
+      {"stageCode":"leafing","seededDomains":[],"gapDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"]},
+      {"stageCode":"fruiting","seededDomains":[],"gapDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"]},
+      {"stageCode":"fruit_development","seededDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"],"gapDomains":[]},
+      {"stageCode":"ripening","seededDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO"],"gapDomains":["DISASTER"]},
+      {"stageCode":"harvest","seededDomains":[],"gapDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"]},
+      {"stageCode":"post_harvest","seededDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"],"gapDomains":[]}
+    ]},
+    {"cropCode":"citrus","cropLabel":"柑橘","stages":[
+      {"stageCode":"bud_differentiation","seededDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO"],"gapDomains":["DISASTER"]},
+      {"stageCode":"germination","seededDomains":[],"gapDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"]},
+      {"stageCode":"budding","seededDomains":[],"gapDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"]},
+      {"stageCode":"flowering","seededDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO"],"gapDomains":["DISASTER"]},
+      {"stageCode":"fruiting","seededDomains":[],"gapDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"]},
+      {"stageCode":"fruit_development","seededDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"],"gapDomains":[]},
+      {"stageCode":"ripening","seededDomains":[],"gapDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"]},
+      {"stageCode":"harvest","seededDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO"],"gapDomains":["DISASTER"]}
+    ]},
+    {"cropCode":"rice","cropLabel":"水稻","stages":[
+      {"stageCode":"sowing","seededDomains":[],"gapDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"]},
+      {"stageCode":"transplanting","seededDomains":[],"gapDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"]},
+      {"stageCode":"tillering","seededDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO"],"gapDomains":["DISASTER"]},
+      {"stageCode":"jointing_booting","seededDomains":[],"gapDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"]},
+      {"stageCode":"heading_flowering","seededDomains":[],"gapDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"]},
+      {"stageCode":"filling","seededDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO"],"gapDomains":["DISASTER"]},
+      {"stageCode":"harvest","seededDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO"],"gapDomains":["DISASTER"]}
+    ]},
+    {"cropCode":"rice_late","cropLabel":"晚稻/再生稻","note":"rice_late 是水稻的独立物候历变体，不能与 rice 共用日期窗口。","stages":[
+      {"stageCode":"sowing","seededDomains":[],"gapDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"]},
+      {"stageCode":"transplanting","seededDomains":[],"gapDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"]},
+      {"stageCode":"tillering","seededDomains":[],"gapDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"]},
+      {"stageCode":"jointing_booting","seededDomains":[],"gapDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"]},
+      {"stageCode":"heading_flowering","seededDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO"],"gapDomains":["DISASTER"]},
+      {"stageCode":"filling","seededDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO"],"gapDomains":["DISASTER"]},
+      {"stageCode":"harvest","seededDomains":[],"gapDomains":["PEST_DISEASE","FERTILIZER_WATER","FARM_OPERATION","TABOO","DISASTER"]}
+    ]}
+  ]
+}

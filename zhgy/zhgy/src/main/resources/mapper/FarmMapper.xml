@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.mei.zhgy.mapper.FarmMapper">
+
+    <resultMap id="FarmCropResultMap" type="com.mei.zhgy.vo.FarmCropVO">
+        <id column="id" property="id"/>
+        <result column="longitude" property="longitude"/>
+        <result column="latitude" property="latitude"/>
+        <association property="info" javaType="com.mei.zhgy.vo.CropInfoVO">
+            <result column="diseases" property="diseases"/>
+            <result column="rate" property="rate"/>
+            <result column="img" property="url"/>  <!-- 数据库中是img字段，映射到url属性 -->
+            <result column="yield" property="yield"/>
+            <result column="phenology" property="phenology"/>
+            <result column="growth" property="growth"/>
+            <result column="impact" property="impact"/>
+            <result column="disease" property="disease"/>
+            <result column="potassium" property="potassium"/>
+            <result column="phosphorus" property="phosphorus"/>
+            <result column="nitrogen" property="nitrogen"/>
+        </association>
+    </resultMap>
+
+    <select id="getCropsByFarmId" resultMap="FarmCropResultMap">
+        SELECT id, longitude, latitude, date, yield, volume AS size, rate, diseases, img,
+               phenology, growth, impact, disease, potassium, phosphorus, nitrogen
+        FROM crops
+        WHERE farm_id = #{farmId}
+    </select>
+
+</mapper>

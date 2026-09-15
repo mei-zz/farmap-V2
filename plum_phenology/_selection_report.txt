@@ -1,0 +1,92 @@
+FarMap 脆李物候期参考图确定性筛选报告
+================================================
+源目录: D:\前后端项目\farmap\plum_disease\image
+输出目录: D:\前后端项目\farmap\plum_disease\selected_reference\phenology
+筛选规则: 全文件名正则 fullmatch，TARGET_PER_VIGOR=2，编号整数升序 + 组内均匀采样
+
+一、源目录完整性
+处理前文件数（递归统计）: 10721
+处理后文件数（递归统计）: 10721
+文件数是否相等: 是
+源文件相对路径集合是否不变: 是
+源文件大小/修改时间是否不变: 是
+
+二、筛选统计
+正则匹配候选总数: 9288
+正则排除文件总数: 1433
+被正则排除的前 10 个文件名样例:
+  - 10029811_peach_leaf_yellow.jpg
+  - 10252066_peach_leaf_yellow.jpg
+  - 110019225_peach_leaf_yellow.jpg
+  - 11105983_peach_leaf_yellow.jpg
+  - 11112722_peach_leaf_yellow.jpg
+  - 116631563_peach_leaf_yellow.jpg
+  - 129028497_peach_leaf_yellow.jpg
+  - 133140911_peach_leaf_yellow.jpg
+  - 151958442_peach_leaf_yellow.jpg
+  - 152541293_peach_leaf_yellow.jpg
+
+三、dHash 近重复过滤
+已成功 import PIL/Pillow，执行 dHash 近重复过滤
+dHash 丢弃近重复数: 502
+无法读取图像数: 0
+
+四、按阶段统计
+early_budding（萌动期） -> 01_early_budding_萌动期
+  候选总数: 800；分项: strong=220, mid=332, weak=248
+  选中数: 6；分项: strong=2, mid=2, weak=2
+  选中新文件: early_budding_strong_01.jpg, early_budding_strong_02.jpg, early_budding_mid_01.jpg, early_budding_mid_02.jpg, early_budding_weak_01.jpg, early_budding_weak_02.jpg
+whitening（露白期） -> 02_whitening_露白期
+  候选总数: 1004；分项: strong=368, mid=348, weak=288
+  选中数: 6；分项: strong=2, mid=2, weak=2
+  选中新文件: whitening_strong_01.jpg, whitening_strong_02.jpg, whitening_mid_01.jpg, whitening_mid_02.jpg, whitening_weak_01.jpg, whitening_weak_02.jpg
+flowering（花期） -> 03_flowering_花期
+  候选总数: 1808；分项: strong=752, mid=640, weak=416
+  选中数: 6；分项: strong=2, mid=2, weak=2
+  选中新文件: flowering_strong_01.jpg, flowering_strong_02.jpg, flowering_mid_01.jpg, flowering_mid_02.jpg, flowering_weak_01.jpg, flowering_weak_02.jpg
+endflowering（谢花期） -> 04_endflowering_谢花期
+  候选总数: 1576；分项: strong=668, mid=456, weak=452
+  选中数: 6；分项: strong=2, mid=2, weak=2
+  选中新文件: endflowering_strong_01.jpg, endflowering_strong_02.jpg, endflowering_mid_01.jpg, endflowering_mid_02.jpg, endflowering_weak_01.jpg, endflowering_weak_02.jpg
+young_fruit（幼果期） -> 05_young_fruit_幼果期
+  候选总数: 1200；分项: strong=420, mid=364, weak=416
+  选中数: 6；分项: strong=2, mid=2, weak=2
+  选中新文件: young_fruit_strong_01.jpg, young_fruit_strong_02.jpg, young_fruit_mid_01.jpg, young_fruit_mid_02.jpg, young_fruit_weak_01.jpg, young_fruit_weak_02.jpg
+fruit_enlargement（果实膨大期） -> 06_fruit_enlargement_果实膨大期
+  候选总数: 1204；分项: strong=444, mid=380, weak=380
+  选中数: 6；分项: strong=2, mid=2, weak=2
+  选中新文件: fruit_enlargement_strong_01.jpg, fruit_enlargement_strong_02.jpg, fruit_enlargement_mid_01.jpg, fruit_enlargement_mid_02.jpg, fruit_enlargement_weak_01.jpg, fruit_enlargement_weak_02.jpg
+fruit_ripening（果实成熟期） -> 07_fruit_ripening_果实成熟期
+  候选总数: 1140；分项: strong=432, mid=292, weak=416
+  选中数: 6；分项: strong=2, mid=2, weak=2
+  选中新文件: fruit_ripening_strong_01.jpg, fruit_ripening_strong_02.jpg, fruit_ripening_mid_01.jpg, fruit_ripening_mid_02.jpg, fruit_ripening_weak_01.jpg, fruit_ripening_weak_02.jpg
+dormancy（休眠期） -> 08_dormancy_休眠期
+  候选总数: 556；分项: strong=292, mid=44, weak=220
+  选中数: 6；分项: strong=2, mid=2, weak=2
+  选中新文件: dormancy_strong_01.jpg, dormancy_strong_02.jpg, dormancy_mid_01.jpg, dormancy_mid_02.jpg, dormancy_weak_01.jpg, dormancy_weak_02.jpg
+合计选中数: 48（预期约 48 张）
+实际创建阶段文件夹数: 8
+各阶段文件数: 01_early_budding_萌动期=6, 02_whitening_露白期=6, 03_flowering_花期=6, 04_endflowering_谢花期=6, 05_young_fruit_幼果期=6, 06_fruit_enlargement_果实膨大期=6, 07_fruit_ripening_果实成熟期=6, 08_dormancy_休眠期=6
+
+五、异常
+无法读取图像: 0
+复制失败: 0
+扩展名异常（非 jpg/jpeg/png 的不匹配文件）: 0
+编号/命名异常（已有物候前缀+树势但未通过完整正则）: 0
+候选不足 TARGET_PER_VIGOR 的组合: 0
+全选中集 dHash 近重复并列数: 0
+
+六、交付文件
+- _manifest_物候图.csv: 48 行图片记录
+- _candidates_候选池.csv: 8738 行未选候选记录
+- _selection_report.txt
+
+七、验收自检
+通过：1) 8 个子文件夹存在，每个 4–6 张，且 strong/mid/weak 尽量齐全
+通过：2) 所有新文件名符合规范，且无负样本/不规则文件混入
+通过：3) 不存在近重复并列（已做 dHash）
+通过：4) manifest 行数 = 实际复制文件数，逐行可找到目标文件
+通过：5) 源 image 目录文件数处理前后完全一致
+通过：6) 除 selected_reference 外没有在其他位置写文件
+
+写入边界自检: 本次脚本仅创建/写入 selected_reference\phenology 及其 8 个阶段子目录；未写入源 image 或项目其他位置。

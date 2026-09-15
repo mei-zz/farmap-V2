@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mei.zhgy.mapper.MapMapper">
+    <select id="selectTree" parameterType="com.mei.zhgy.dto.MapTreeDTO" resultType="com.mei.zhgy.vo.MapTreeVO">
+        <choose>
+            <when test="cropFarmChoice == 0 and canopyYieldPestChoice == 0">
+                SELECT tree_height, tree_width, tree_volume, leaf_transmittance, tree_img
+                FROM tree where tree_height between #{slideMin} and #{slideMax}
+            </when>
+
+            <when test="cropFarmChoice == 0 and canopyYieldPestChoice == 1">
+                SELECT tree_yield, tree_fruit
+                FROM tree where tree_yield BETWEEN #{slideMin} AND #{slideMax}
+            </when>
+
+            <when test="cropFarmChoice == 0 and canopyYieldPestChoice == 2">
+                SELECT pest_rate, pest_types, severity
+                FROM tree where pest_rate BETWEEN #{slideMin} AND #{slideMax}
+            </when>
+
+            <when test="cropFarmChoice == 1">
+                <!-- 恢复 farm 分支 -->
+                SELECT tree_id, tree_name, farm_id, farm_name
+                FROM farm where
+                <where>
+                    <if test="slideMin != null and slideMax != null">
+                        farm_area BETWEEN #{slideMin} AND #{slideMax}
+                    </if>
+                </where>
+            </when>
+        </choose>
+    </select>
+
+
+</mapper>

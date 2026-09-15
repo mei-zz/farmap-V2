@@ -1,0 +1,164 @@
+# FarMap model-related configuration. Secrets remain environment-only.
+hunyuan:
+  api:
+    key: ${HUNYUAN_API_KEY:}
+    url: https://api.hunyuan.cloud.tencent.com/v1/chat/completions
+    text-model: ${HUNYUAN_TEXT_MODEL:hunyuan-a13b}
+
+bailian:
+  api:
+    key: ${BAILIAN_API_KEY:${DASHSCOPE_API_KEY:${APIKEY:}}}
+    url: ${BAILIAN_API_BASE_URL:${BAILIAN_BASE_URL:${DASHSCOPE_BASE_URL:${OPENAI_COMPATIBLE_BASE_URL:${OPENAI_BASE_URL:${BASEURL:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions}}}}}}
+    connect-timeout-ms: ${BAILIAN_CONNECT_TIMEOUT_MS:10000}
+    read-timeout-ms: ${BAILIAN_READ_TIMEOUT_MS:90000}
+    max-retries: ${BAILIAN_MAX_RETRIES:0}
+    retry-backoff-ms: ${BAILIAN_RETRY_BACKOFF_MS:250}
+  region: ${BAILIAN_REGION:beijing}
+  workspace-id: ${BAILIAN_WORKSPACE_ID:}
+
+farmap:
+  agent:
+    planner:
+      model-enabled: ${FARMAP_AGENT_PLANNER_MODEL_ENABLED:true}
+  knowledge:
+    embedding:
+      provider: ${FARMAP_KNOWLEDGE_EMBEDDING_PROVIDER:local_bge}
+      model: ${FARMAP_KNOWLEDGE_EMBEDDING_MODEL:qwen3.7-text-embedding-flash}
+      dimension: ${FARMAP_KNOWLEDGE_EMBEDDING_DIMENSION:1024}
+      batch-size: ${FARMAP_KNOWLEDGE_EMBED_BATCH_SIZE:10}
+    rerank:
+      model: ${FARMAP_KNOWLEDGE_RERANK_MODEL:gte-rerank-v2}
+      candidate-top-n: ${FARMAP_KNOWLEDGE_CANDIDATE_TOP_N:20}
+      final-top-k: ${FARMAP_KNOWLEDGE_FINAL_TOP_K:5}
+  ai:
+    router:
+      enabled: ${FARMAP_MODEL_ROUTER_ENABLED:true}
+      # The dated default is preserved as the final fallback when the pool is
+      # disabled, empty, not applicable, or fully unavailable.
+      default-model: ${FARMAP_DEFAULT_MODEL:qwen-plus-2025-07-28}
+      fast-model: ${FARMAP_FAST_MODEL:deepseek-r1-distill-qwen-7b}
+      multimodal-model: ${FARMAP_MULTIMODAL_MODEL:qwen3-vl-32b-thinking}
+      expert-model: ${FARMAP_EXPERT_MODEL:qwen3-vl-32b-thinking}
+      max-candidates: ${FARMAP_MODEL_MAX_CANDIDATES:5}
+      expert-escalation:
+        confidence-threshold: ${FARMAP_ESCALATION_CONFIDENCE:0.65}
+        retrieval-quality-threshold: ${FARMAP_ESCALATION_RETRIEVAL_QUALITY:0.55}
+        image-count-threshold: ${FARMAP_ESCALATION_IMAGE_COUNT:4}
+        evidence-conflict: ${FARMAP_ESCALATION_EVIDENCE_CONFLICT:true}
+        high-risk: ${FARMAP_ESCALATION_HIGH_RISK:true}
+      intent:
+        enabled: ${FARMAP_INTENT_ROUTER_ENABLED:true}
+        shadow-mode: ${FARMAP_INTENT_SHADOW_MODE:true}
+        routing-mode: ${FARMAP_INTENT_ROUTING_MODE:primary}
+        primary-weight: ${FARMAP_INTENT_PRIMARY_WEIGHT:0.70}
+        takeover-threshold: ${FARMAP_INTENT_TAKEOVER_THRESHOLD:0.70}
+        escalate-threshold: ${FARMAP_INTENT_ESCALATE_THRESHOLD:0.55}
+        primary-model: ${FARMAP_INTENT_PRIMARY_MODEL:tongyi-intent-detect-v3}
+        flash-pool:
+          - ${FARMAP_INTENT_FLASH_01:tongyi-xiaomi-analysis-flash}
+          - ${FARMAP_INTENT_FLASH_02:qwen-turbo}
+          - ${FARMAP_INTENT_FLASH_03:qwen-flash}
+          - ${FARMAP_INTENT_FLASH_04:qwen-flash-2025-07-28}
+          - ${FARMAP_INTENT_FLASH_05:qwen3.5-flash}
+          - ${FARMAP_INTENT_FLASH_06:qwen3.5-flash-2026-02-23}
+          - ${FARMAP_INTENT_FLASH_07:qwen3.6-flash}
+          - ${FARMAP_INTENT_FLASH_08:qwen3.6-flash-2026-04-16}
+          - ${FARMAP_INTENT_FLASH_09:qwen3.7-flash}
+          - ${FARMAP_INTENT_FLASH_10:qwen3.7-flash-2026-07-15}
+          - ${FARMAP_INTENT_FLASH_11:deepseek-v4-flash}
+          - ${FARMAP_INTENT_FLASH_12:deepseek-v4.1-flash}
+        strong-pool:
+          - ${FARMAP_INTENT_STRONG_01:qwen3-8b}
+          - ${FARMAP_INTENT_STRONG_02:qwen3-14b}
+          - ${FARMAP_INTENT_STRONG_03:qwen3.5-27b}
+          - ${FARMAP_INTENT_STRONG_04:qwen3.6-27b}
+          - ${FARMAP_INTENT_STRONG_05:qwen3.8-27b}
+          - ${FARMAP_INTENT_STRONG_06:qwen3-30b-a3b}
+          - ${FARMAP_INTENT_STRONG_07:qwen3-30b-a3b-instruct-2507}
+        connect-timeout-ms: ${FARMAP_INTENT_CONNECT_TIMEOUT_MS:1000}
+        read-timeout-ms: ${FARMAP_INTENT_READ_TIMEOUT_MS:1700}
+        total-timeout-ms: ${FARMAP_INTENT_TOTAL_TIMEOUT_MS:1800}
+        max-tokens: ${FARMAP_INTENT_MAX_TOKENS:300}
+        cache-size: ${FARMAP_INTENT_CACHE_SIZE:512}
+        context-max-chars: ${FARMAP_INTENT_CONTEXT_MAX_CHARS:512}
+        max-concurrent-calls: ${FARMAP_INTENT_MAX_CONCURRENT_CALLS:4}
+        queue-capacity: ${FARMAP_INTENT_QUEUE_CAPACITY:16}
+        recent-sample-capacity: ${FARMAP_INTENT_RECENT_SAMPLE_CAPACITY:200}
+      answer-pool:
+        # The pool contains models confirmed present by the entitlement smoke;
+        # FARMAP_ANSWER_POOL_ENABLED=false remains the immediate rollback.
+        enabled: ${FARMAP_ANSWER_POOL_ENABLED:true}
+        selection-strategy: ${FARMAP_ANSWER_POOL_SELECTION_STRATEGY:random}
+        apply-task-types:
+          - COPILOT
+          - FIELD_SUMMARY
+          - EVIDENCE_SYNTHESIS
+          - GROUNDED_GENERATION
+          - FUTURE_AGENT_TOOL_DECISION
+        same-pool-fallback-n: ${FARMAP_ANSWER_POOL_SAME_POOL_FALLBACK_N:3}
+        skip-unavailable: ${FARMAP_ANSWER_POOL_SKIP_UNAVAILABLE:true}
+        models:
+          - ${FARMAP_ANSWER_POOL_01:glm-5}
+          - ${FARMAP_ANSWER_POOL_02:glm-5.1}
+          - ${FARMAP_ANSWER_POOL_03:glm-5.2}
+          - ${FARMAP_ANSWER_POOL_06:glm-4.7}
+          - ${FARMAP_ANSWER_POOL_07:qwen-max}
+          - ${FARMAP_ANSWER_POOL_08:qwen3-max-preview}
+          - ${FARMAP_ANSWER_POOL_09:qwen3-max-2025-09-23}
+          - ${FARMAP_ANSWER_POOL_10:qwen3-max}
+          - ${FARMAP_ANSWER_POOL_11:qwen3-max-2026-01-23}
+          - ${FARMAP_ANSWER_POOL_12:qwen3.6-max-preview}
+          - ${FARMAP_ANSWER_POOL_13:qwen3.7-max}
+          - ${FARMAP_ANSWER_POOL_16:qwen3.7-max-2026-05-20}
+          - ${FARMAP_ANSWER_POOL_17:qwen3.7-max-2026-06-08}
+          - ${FARMAP_ANSWER_POOL_18:qwen3.8-max-0902}
+          - ${FARMAP_ANSWER_POOL_19:qwen-plus}
+          - ${FARMAP_ANSWER_POOL_20:qwen-plus-latest}
+          - ${FARMAP_ANSWER_POOL_21:qwen-plus-0112}
+          - ${FARMAP_ANSWER_POOL_22:qwen-plus-1220}
+          - ${FARMAP_ANSWER_POOL_23:qwen-plus-2025-01-25}
+          - ${FARMAP_ANSWER_POOL_24:qwen-plus-2025-04-28}
+          - ${FARMAP_ANSWER_POOL_25:qwen-plus-2025-07-14}
+          - ${FARMAP_ANSWER_POOL_26:qwen-plus-2025-07-28}
+          - ${FARMAP_ANSWER_POOL_27:qwen-plus-2025-09-11}
+          - ${FARMAP_ANSWER_POOL_28:qwen-plus-2025-12-01}
+          - ${FARMAP_ANSWER_POOL_29:qwen3.5-plus}
+          - ${FARMAP_ANSWER_POOL_30:qwen3.5-plus-2026-02-15}
+          - ${FARMAP_ANSWER_POOL_31:qwen3.5-plus-2026-04-20}
+          - ${FARMAP_ANSWER_POOL_32:qwen3.6-plus}
+          - ${FARMAP_ANSWER_POOL_33:qwen3.6-plus-2026-04-02}
+          - ${FARMAP_ANSWER_POOL_34:qwen3.7-plus-2026-05-26}
+          - ${FARMAP_ANSWER_POOL_35:qwen3-235b-a22b}
+          - ${FARMAP_ANSWER_POOL_36:qwen3-235b-a22b-instruct-2507}
+          - ${FARMAP_ANSWER_POOL_37:qwen3.5-122b-a10b}
+          - ${FARMAP_ANSWER_POOL_38:qwen3.5-397b-a17b}
+          - ${FARMAP_ANSWER_POOL_39:qwen3.5-35b-a3b}
+          - ${FARMAP_ANSWER_POOL_40:qwen3.6-35b-a3b}
+          - ${FARMAP_ANSWER_POOL_42:qwen3-next-80b-a3b-instruct}
+          - ${FARMAP_ANSWER_POOL_43:deepseek-v3}
+          - ${FARMAP_ANSWER_POOL_44:deepseek-v3.1}
+          - ${FARMAP_ANSWER_POOL_45:deepseek-v3.2}
+          - ${FARMAP_ANSWER_POOL_46:deepseek-v3.2-exp}
+          - ${FARMAP_ANSWER_POOL_47:deepseek-v4-pro-0813}
+          - ${FARMAP_ANSWER_POOL_48:kimi-k2.5}
+          - ${FARMAP_ANSWER_POOL_49:kimi-k2.6}
+          - ${FARMAP_ANSWER_POOL_50:Moonshot-Kimi-K2-Instruct}
+    generation:
+      mode: ${RAG_GENERATION_MODE:template}
+      evidence-synthesis-enabled: ${FARMAP_EVIDENCE_SYNTHESIS_ENABLED:false}
+      global-max-output-tokens: ${FARMAP_AI_GLOBAL_MAX_OUTPUT_TOKENS:8192}
+      copilot-max-output-tokens: ${FARMAP_COPILOT_MAX_OUTPUT_TOKENS:2048}
+      diagnosis-max-output-tokens: ${FARMAP_DIAGNOSIS_MAX_OUTPUT_TOKENS:3072}
+    local-vision:
+      enabled: ${FARMAP_LOCAL_VISION_ENABLED:true}
+    legacy-java-clip:
+      enabled: ${FARMAP_LEGACY_JAVA_CLIP_ENABLED:false}
+    local:
+      base-url: ${LOCAL_AI_BASE_URL:http://127.0.0.1:8001}
+      timeout-ms: ${LOCAL_AI_TIMEOUT_MS:30000}
+
+model:
+  api:
+    url: ${MODEL_API_URL:http://tree-analyzer:5000/analyze}
+    v1-url: ${MODEL_API_V1_URL:http://tree-analyzer:5000/v1/vision/analyze}
+    key: ${MODEL_API_KEY:}

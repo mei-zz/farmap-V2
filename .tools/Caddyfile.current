@@ -1,0 +1,55 @@
+# The Caddyfile is an easy way to configure your Caddy web server.
+#
+# Unless the file starts with a global options block, the first
+# uncommented line is always the address of your site.
+#
+# To use your own domain name (with automatic HTTPS), first make
+# sure your domain's A/AAAA DNS records are properly pointed to
+# this machine's public IP, then replace ":80" below with your
+# domain name.
+
+#:80 {
+	# Set this path to your site's directory.
+#	root * /usr/share/caddy
+
+	# Enable the static file server.
+#	file_server
+
+	# Another common task is to set up a reverse proxy:
+	# reverse_proxy localhost:8080
+
+	# Or serve a PHP site through php-fpm:
+	# php_fastcgi localhost:9000
+#}
+
+# Refer to the Caddy docs for more information:
+# https://caddyserver.com/docs/caddyfile
+newpadm.archivemodel.cn {
+	reverse_proxy localhost:23003
+}
+api.newpadm.archivemodel.cn {
+	reverse_proxy localhost:23002 
+}
+monitor.archivemodel.cn {
+	reverse_proxy localhost:23005
+}
+api.platform.archivemodel.cn {
+	reverse_proxy localhost:23012
+}
+chat.archivemodel.cn {
+	reverse_proxy localhost:23004
+}
+monitorv2.archivemodel.cn {
+	reverse_proxy localhost:23006
+}
+platform.archivemodel.cn {
+	reverse_proxy localhost:23013
+}
+
+map.archivemodel.cn {
+	reverse_proxy 127.0.0.1:24080
+}
+
+http://175.27.171.40 {
+	reverse_proxy 127.0.0.1:24080
+}

@@ -1,0 +1,408 @@
+{
+  "audit": {
+    "name": "FarMap Commercial MVP Phase A",
+    "date": "2026-09-06",
+    "phaseDecision": "GO",
+    "commercialMvpReadiness": "NO-GO",
+    "scope": "Reality audit only; no business code or data mutation",
+    "classification": [
+      "REAL",
+      "PACKAGED",
+      "DEMO",
+      "TEST_FIXTURE",
+      "UNAVAILABLE"
+    ]
+  },
+  "services": [
+    {
+      "name": "spring-boot-control-plane",
+      "location": "zhgy/zhgy",
+      "framework": "Spring Boot 2.6.13",
+      "port": 8080,
+      "status": "UNAVAILABLE"
+    },
+    {
+      "name": "legacy-tree-analyzer",
+      "location": "zhgy",
+      "framework": "Flask 2.3.2 + Gunicorn",
+      "port": 5000,
+      "status": "UNAVAILABLE",
+      "routes": [
+        "GET /",
+        "GET /health",
+        "POST /analyze"
+      ]
+    },
+    {
+      "name": "local-ai-embedding",
+      "location": "local-ai",
+      "framework": "FastAPI + Uvicorn",
+      "port": 8001,
+      "status": "UNAVAILABLE",
+      "routes": [
+        "GET /health",
+        "POST /embedding/text",
+        "POST /embedding/image"
+      ]
+    },
+    {
+      "name": "mysql",
+      "endpoint": "localhost:3306",
+      "database": "zhgy",
+      "status": "REAL"
+    },
+    {
+      "name": "mongodb",
+      "endpoint": "127.0.0.1:27017",
+      "database": "zhgy",
+      "status": "REAL_EMPTY",
+      "collections": 0,
+      "objects": 0
+    },
+    {
+      "name": "milvus",
+      "endpoint": "127.0.0.1:19530",
+      "collection": "farmap_image_vectors_new",
+      "status": "READY_EMPTY",
+      "rows": 0,
+      "dimension": 512,
+      "index": "IVF_FLAT/L2/nlist=128"
+    }
+  ],
+  "dataSources": [
+    {
+      "name": "farm",
+      "source": "MySQL zhgy.farm",
+      "classification": "REAL",
+      "rows": 3,
+      "role": "farm master data"
+    },
+    {
+      "name": "farmlocation",
+      "source": "MySQL zhgy.farmlocation",
+      "classification": "REAL",
+      "rows": 68,
+      "role": "farm location points"
+    },
+    {
+      "name": "location",
+      "source": "MySQL zhgy.location",
+      "classification": "REAL",
+      "rows": 989,
+      "role": "legacy location data"
+    },
+    {
+      "name": "crops",
+      "source": "MySQL zhgy.crops",
+      "classification": "REAL",
+      "rows": 510,
+      "role": "crop observations"
+    },
+    {
+      "name": "agrirecord",
+      "source": "MySQL zhgy.agrirecord",
+      "classification": "REAL",
+      "rows": 12,
+      "role": "farm records/image refs"
+    },
+    {
+      "name": "weather",
+      "source": "MySQL zhgy.weather",
+      "classification": "REAL",
+      "rows": 24,
+      "role": "monthly text"
+    },
+    {
+      "name": "accumulated_temperature",
+      "source": "MySQL zhgy.accumulated_temperature",
+      "classification": "REAL",
+      "rows": 582,
+      "role": "temperature time series"
+    },
+    {
+      "name": "user_requests",
+      "source": "MySQL zhgy.user_requests",
+      "classification": "REAL",
+      "rows": 167,
+      "role": "image request persistence"
+    },
+    {
+      "name": "initial_results",
+      "source": "MySQL zhgy.initial_results",
+      "classification": "REAL",
+      "rows": 27,
+      "role": "legacy AI snapshots"
+    },
+    {
+      "name": "knowledge_packaged",
+      "source": "classpath knowledge/orchard_management.txt",
+      "classification": "PACKAGED",
+      "bytes": 3059,
+      "role": "curated orchard knowledge"
+    },
+    {
+      "name": "frontend_demo",
+      "source": "farmap-frontend-dev/src/demo",
+      "classification": "DEMO",
+      "role": "UI/Agent fallback"
+    },
+    {
+      "name": "evaluation_fixtures",
+      "source": "zhgy/zhgy/src/test/resources/evaluation",
+      "classification": "TEST_FIXTURE",
+      "role": "evaluation data"
+    },
+    {
+      "name": "historical_cases_mongo",
+      "source": "Mongo zhgy",
+      "classification": "UNAVAILABLE",
+      "rows": 0,
+      "role": "legacy expert cases"
+    },
+    {
+      "name": "historical_vectors",
+      "source": "Milvus farmap_image_vectors_new",
+      "classification": "READY_EMPTY",
+      "rows": 0,
+      "role": "historical image retrieval"
+    }
+  ],
+  "models": [
+    {
+      "name": "hunyuan-vision",
+      "implementation": [
+        "zhgy/hunyuan_vision.py",
+        "AIModelServiceImpl"
+      ],
+      "classification": "EXTERNAL_UNVERIFIED",
+      "requirement": "HUNYUAN_API_KEY"
+    },
+    {
+      "name": "bailian-qwen",
+      "implementation": "BailianModelClient/ModelGateway",
+      "classification": "EXTERNAL_UNVERIFIED",
+      "requirement": "BAILIAN_API_KEY or DASHSCOPE_API_KEY"
+    },
+    {
+      "name": "BAAI/bge-small-zh-v1.5",
+      "implementation": "local-ai + LocalBgeEmbeddingProvider",
+      "classification": "PACKAGED",
+      "dimension": 512,
+      "runtime": "not listening"
+    },
+    {
+      "name": "CLIP ONNX",
+      "implementation": "local-ai + LocalClipEmbeddingProvider",
+      "classification": "PACKAGED",
+      "dimension": 512,
+      "assetBytes": 351829041,
+      "runtime": "not listening"
+    },
+    {
+      "name": "Whisper/ASR",
+      "classification": "UNAVAILABLE"
+    },
+    {
+      "name": "Satellite/NDVI model",
+      "classification": "UNAVAILABLE"
+    }
+  ],
+  "databases": [
+    {
+      "name": "MySQL",
+      "classification": "REAL",
+      "endpoint": "localhost:3306",
+      "database": "zhgy",
+      "role": "commercial control plane"
+    },
+    {
+      "name": "MongoDB",
+      "classification": "REAL_EMPTY",
+      "endpoint": "127.0.0.1:27017",
+      "database": "zhgy",
+      "role": "legacy Case storage"
+    },
+    {
+      "name": "Milvus",
+      "classification": "READY_EMPTY",
+      "endpoint": "127.0.0.1:19530",
+      "collection": "farmap_image_vectors_new",
+      "rows": 0,
+      "dimension": 512,
+      "index": "IVF_FLAT/L2/nlist=128"
+    }
+  ],
+  "frontendInputs": [
+    {
+      "name": "farmSelection",
+      "source": "AIContext/Farm Store/Layout",
+      "classification": "PARTIAL",
+      "issue": "Overview still uses demoFarm"
+    },
+    {
+      "name": "fieldSelection",
+      "source": "AIContext/overview/diagnosis",
+      "classification": "DEMO_PARTIAL",
+      "issue": "no stable Field master contract"
+    },
+    {
+      "name": "imageUpload",
+      "route": "POST /ai-model/upload",
+      "classification": "REAL",
+      "issue": "no camera registry/capture identity"
+    },
+    {
+      "name": "diagnosisRequest",
+      "route": "POST /diagnosis/analyze",
+      "classification": "REAL_PARTIAL",
+      "issue": "weather/context caller-provided"
+    },
+    {
+      "name": "agentContext",
+      "route": "POST /api/agent/runs",
+      "classification": "PARTIAL",
+      "issue": "facts not fully server-reassembled"
+    },
+    {
+      "name": "knowledgeUpload",
+      "classification": "UNAVAILABLE",
+      "issue": "no multipart ingestion"
+    },
+    {
+      "name": "voice",
+      "source": "browser SpeechRecognition",
+      "classification": "PARTIAL",
+      "issue": "no server ASR"
+    }
+  ],
+  "integrationGaps": [
+    {
+      "id": "P0-PYTHON-CONTRACT",
+      "priority": "P0",
+      "gap": "Legacy Python vision lacks versioned Farm/Field/Evidence contract",
+      "targetPhase": "B"
+    },
+    {
+      "id": "P0-DUPLICATE-MODEL-PATHS",
+      "priority": "P0",
+      "gap": "Java direct Hunyuan, Flask Hunyuan and Bailian/Qwen coexist",
+      "targetPhase": "B/E"
+    },
+    {
+      "id": "P0-FIELD-IDENTITY",
+      "priority": "P0",
+      "gap": "No normalized Field aggregate or server context assembly",
+      "targetPhase": "C"
+    },
+    {
+      "id": "P0-KNOWLEDGE-INGESTION",
+      "priority": "P0",
+      "gap": "No file upload/parsing/chunk/embedding/index job",
+      "targetPhase": "D"
+    },
+    {
+      "id": "P0-DEMO-OVERVIEW",
+      "priority": "P0",
+      "gap": "Overview directly uses demo ViewModel",
+      "targetPhase": "C/G"
+    },
+    {
+      "id": "P0-HISTORICAL-EMPTY",
+      "priority": "P0",
+      "gap": "Mongo cases, Candidates and Milvus rows empty",
+      "targetPhase": "G"
+    },
+    {
+      "id": "P0-RUNTIME-GATE",
+      "priority": "P0",
+      "gap": "No verified Java+Python E2E runtime gate",
+      "targetPhase": "B/G"
+    },
+    {
+      "id": "P0-LEGACY-PYTHON-SECURITY",
+      "priority": "P0",
+      "gap": "Placeholder API key and arbitrary image URL/SSRF risk",
+      "targetPhase": "B"
+    },
+    {
+      "id": "P1-CAMERA-REGISTRY",
+      "priority": "P1",
+      "gap": "No camera/device/capture event model",
+      "targetPhase": "C"
+    },
+    {
+      "id": "P1-WEATHER-SOURCE",
+      "priority": "P1",
+      "gap": "Diagnosis trusts caller weather; generated historical data exists",
+      "targetPhase": "C"
+    },
+    {
+      "id": "P1-SOIL-SATELLITE",
+      "priority": "P1",
+      "gap": "Soil and satellite context-only/demo",
+      "targetPhase": "C"
+    },
+    {
+      "id": "P1-MONGO-OWNERSHIP",
+      "priority": "P1",
+      "gap": "Legacy Mongo Case has no canonical ownership decision",
+      "targetPhase": "G"
+    },
+    {
+      "id": "P1-MIGRATION-RUNNER",
+      "priority": "P1",
+      "gap": "Formal migration runner not a release gate",
+      "targetPhase": "G"
+    },
+    {
+      "id": "P2-OBSERVABILITY",
+      "priority": "P2",
+      "gap": "Need unified trace/freshness/cost/capability metrics",
+      "targetPhase": "B/G"
+    },
+    {
+      "id": "P2-CONTRACT-VERSIONING",
+      "priority": "P2",
+      "gap": "Need shared DTO/schema registry and deprecation policy",
+      "targetPhase": "B/E"
+    }
+  ],
+  "architecture": {
+    "controlPlane": "Spring Boot owns auth, Farm/Field context, persistence, product loop, approvals, operations and audit",
+    "intelligencePlane": "Python owns multimodal model calls, embedding and optional ASR; no business writes or identity generation",
+    "dataPlane": [
+      "MySQL canonical business facts",
+      "object storage/upload references",
+      "Milvus versioned vector indexes",
+      "Mongo only if HistoricalCase metadata ownership is explicitly retained"
+    ],
+    "contextRule": "server assembles and authorizes context from IDs; frontend supplies intent and references only",
+    "failureRule": "UNAVAILABLE != EMPTY != STALE; fail closed on persistence/model dependency failures",
+    "nextPhase": "Phase B — Python Contract & Runtime"
+  },
+  "runtimeChecks": {
+    "mysql": "CONNECTED_READ_ONLY",
+    "mongo": "CONNECTED_READ_ONLY_EMPTY",
+    "milvus": "CONNECTED_READ_ONLY_READY_EMPTY",
+    "pythonLegacy5000": "NOT_LISTENING",
+    "pythonLocalAi8001": "NOT_LISTENING",
+    "springBoot8080": "NOT_LISTENING"
+  },
+  "secretHandling": {
+    "policy": "No secret values copied to inventory or audit",
+    "envNamesOnly": [
+      "MYSQL_PASSWORD",
+      "MYSQL_ROOT_PASSWORD",
+      "SPRING_DATASOURCE_PASSWORD",
+      "SPRING_DATA_MONGODB_PASSWORD",
+      "HUNYUAN_API_KEY",
+      "MODEL_API_KEY",
+      "BAILIAN_API_KEY",
+      "DASHSCOPE_API_KEY",
+      "GAODE_API_KEY",
+      "HIKYUN_ACCESS_KEY",
+      "HIKYUN_SECRET_KEY",
+      "JWT_SECRET"
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "datasetName": "FarMap AI Engine Evaluation Dataset",
+  "datasetVersion": "farmap-eval-v1.1",
+  "baselineDatasetVersion": "farmap-eval-v1",
+  "description": "Phase 1.1 deterministic evidence sufficiency and unsupported write prevention cases.",
+  "agentCases": [
+    {"caseId":"agent-evidence-no-evidence-011","scenario":"NO_EVIDENCE_WRITE","expectedDecision":"INSUFFICIENT","expectedAllowWrite":false,"expectedTerminalState":"COMPLETED"},
+    {"caseId":"agent-evidence-valid-012","scenario":"VALID_EVIDENCE_WRITE","expectedDecision":"SUFFICIENT","expectedAllowWrite":true,"expectedTerminalState":"WAITING_FOR_APPROVAL"},
+    {"caseId":"agent-evidence-recommendation-supported-013","scenario":"RECOMMENDATION_SUPPORTED","recommendationId":"fixture-recommendation-013","recommendationEvidenceIds":["fixture-evidence-013"],"expectedDecision":"SUFFICIENT","expectedAllowWrite":true,"expectedTerminalState":"WAITING_FOR_APPROVAL"},
+    {"caseId":"agent-evidence-recommendation-unsupported-014","scenario":"RECOMMENDATION_UNSUPPORTED","recommendationId":"fixture-recommendation-014","recommendationEvidenceIds":["other-evidence-014"],"expectedDecision":"INSUFFICIENT","expectedAllowWrite":false,"expectedTerminalState":"COMPLETED"},
+    {"caseId":"agent-evidence-unavailable-015","scenario":"UNAVAILABLE_DEPENDENCY","expectedDecision":"INSUFFICIENT","expectedAllowWrite":false,"expectedTerminalState":"COMPLETED"},
+    {"caseId":"agent-evidence-empty-016","scenario":"EMPTY_RESULT","expectedDecision":"INSUFFICIENT","expectedAllowWrite":false,"expectedTerminalState":"COMPLETED"},
+    {"caseId":"agent-evidence-invalid-id-017","scenario":"INVALID_EVIDENCE_ID","expectedDecision":"INSUFFICIENT","expectedAllowWrite":false,"expectedTerminalState":"BLOCKED"},
+    {"caseId":"agent-evidence-diagnosis-level-018","scenario":"DIAGNOSIS_LEVEL_SUPPORTED","expectedDecision":"SUFFICIENT","expectedAllowWrite":true,"expectedTerminalState":"WAITING_FOR_APPROVAL"}
+  ]
+}

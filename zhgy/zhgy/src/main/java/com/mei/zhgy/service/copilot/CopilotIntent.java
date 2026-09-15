@@ -1,0 +1,23 @@
+package com.mei.zhgy.service.copilot;
+
+/** Finite, server-owned intent vocabulary for the FarMap Copilot. */
+public enum CopilotIntent {
+    GENERAL_QA,
+    FARM_STATUS_QUERY,
+    FIELD_STATUS_QUERY,
+    PRIORITIES_QUERY,
+    HISTORICAL_CASE_QUERY,
+    DIAGNOSIS_QUERY,
+    DIAGNOSIS_REQUEST,
+    RECOMMENDATION_QUERY,
+    ACTION_REQUEST,
+    OPERATIONS_STATUS_QUERY,
+    OUTCOME_QUERY,
+    KNOWLEDGE_QUERY,
+    NAVIGATION_REQUEST,
+    MEMORY_WRITE_REQUEST,
+    MEMORY_QUERY,
+    MEMORY_FORGET_REQUEST,
+    CLARIFICATION_REQUIRED,
+    UNSUPPORTED
+}

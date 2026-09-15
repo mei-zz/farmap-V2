@@ -1,0 +1,38 @@
+{
+  "datasetName": "FarMap AI Engine Evaluation Dataset",
+  "datasetVersion": "farmap-eval-v1",
+  "description": "Deterministic, synthetic and test-only cases for Agent, multimodal retrieval, grounding and product-loop safety.",
+  "agentCases": [
+    {"caseId":"agent-read-context-001","scenario":"READ_ONLY","tools":["field-context"],"expectedRequiredTools":["field-context"],"expectedTerminalState":"COMPLETED","approvalExpected":false,"statusExpectation":"COMPLETED","tags":["read-only","context"]},
+    {"caseId":"agent-multi-tool-002","scenario":"MULTI_TOOL","tools":["field-context","weather"],"expectedRequiredTools":["field-context","weather"],"expectedTerminalState":"COMPLETED","approvalExpected":false,"statusExpectation":"COMPLETED","tags":["multi-tool"]},
+    {"caseId":"agent-camera-003","scenario":"CAMERA","tools":["camera"],"expectedRequiredTools":["camera"],"expectedTerminalState":"COMPLETED","approvalExpected":false,"statusExpectation":"COMPLETED","tags":["camera"]},
+    {"caseId":"agent-empty-004","scenario":"EMPTY","tools":["empty-tool"],"expectedRequiredTools":["empty-tool"],"expectedTerminalState":"COMPLETED","approvalExpected":false,"statusExpectation":"EMPTY","tags":["empty-is-not-unavailable"]},
+    {"caseId":"agent-unavailable-005","scenario":"UNAVAILABLE","tools":["unavailable-tool"],"expectedRequiredTools":["unavailable-tool"],"expectedTerminalState":"COMPLETED","approvalExpected":false,"statusExpectation":"UNAVAILABLE","tags":["dependency"]},
+    {"caseId":"agent-error-006","scenario":"ERROR","tools":["error-tool"],"expectedRequiredTools":["error-tool"],"expectedTerminalState":"FAILED","approvalExpected":false,"statusExpectation":"FAILED","tags":["error"]},
+    {"caseId":"agent-approval-007","scenario":"WRITE_APPROVAL","tools":["task"],"expectedRequiredTools":["task"],"expectedTerminalState":"WAITING_FOR_APPROVAL","approvalExpected":true,"statusExpectation":"NOT_EXECUTED","tags":["write","approval"]},
+    {"caseId":"agent-grounded-action-008","scenario":"GROUNDED_WRITE","tools":["evidence-tool","task"],"expectedRequiredTools":["evidence-tool","task"],"expectedEvidenceIds":["fixture-evidence-001"],"expectedActionType":"operations_task","expectedTerminalState":"WAITING_FOR_APPROVAL","approvalExpected":true,"statusExpectation":"NOT_EXECUTED","tags":["grounding","approval"]},
+    {"caseId":"agent-optional-recommendation-009","scenario":"OPTIONAL_RECOMMENDATION","tools":["task"],"expectedRequiredTools":["task"],"expectedTerminalState":"WAITING_FOR_APPROVAL","approvalExpected":true,"recommendationOptional":true,"tags":["provenance","optional-recommendation"]},
+    {"caseId":"agent-stable-provenance-010","scenario":"STABLE_PROVENANCE","tools":["task"],"expectedRequiredTools":["task"],"expectedTerminalState":"WAITING_FOR_APPROVAL","approvalExpected":true,"expectedDiagnosisId":"fixture-diagnosis-010","expectedRecommendationId":"fixture-recommendation-010","tags":["stable-id","provenance"]}
+  ],
+  "ragCases": [
+    {"caseId":"rag-camera-001","retriever":"camera","expectedRelevantIds":["camera_1"],"requiredModalities":["camera"],"tags":["visual"]},
+    {"caseId":"rag-weather-002","retriever":"weather","expectedRelevantIds":["weather_14d"],"requiredModalities":["weather"],"tags":["temporal"]},
+    {"caseId":"rag-knowledge-003","retriever":"knowledge","expectedIdPrefixes":["knowledge-"],"requiredModalities":["knowledge"],"tags":["knowledge","provenance"]},
+    {"caseId":"rag-spatial-004","retriever":"spatial","expectedRelevantIds":["spatial_1"],"requiredModalities":["spatial"],"tags":["gis"]},
+    {"caseId":"rag-soil-005","retriever":"soil","expectedRelevantIds":["soil_1"],"requiredModalities":["soil"],"tags":["sensor"]},
+    {"caseId":"rag-satellite-006","retriever":"satellite","expectedRelevantIds":["satellite_1"],"requiredModalities":["satellite"],"tags":["remote-sensing"]},
+    {"caseId":"rag-multimodal-007","retriever":"multimodal","expectedIdPrefixes":["camera_","weather_","knowledge-"],"requiredModalities":["camera","weather","knowledge"],"tags":["multimodal"]},
+    {"caseId":"rag-disabled-knowledge-008","retriever":"knowledge","disabled":true,"expectedNoEvidence":true,"tags":["disabled"]},
+    {"caseId":"rag-historical-empty-009","retriever":"historical","expectedNoEvidence":true,"tags":["READY_EMPTY"]},
+    {"caseId":"rag-knowledge-missing-010","retriever":"knowledge","missingContext":true,"expectedIdPrefixes":["knowledge-"],"requiredModalities":["knowledge"],"tags":["missing-context"]},
+    {"caseId":"rag-knowledge-irrelevant-011","retriever":"knowledge","query":"不存在的病害术语","expectedNoEvidence":true,"tags":["irrelevant-query"]},
+    {"caseId":"rag-provenance-012","retriever":"knowledge","expectedIdPrefixes":["knowledge-"],"requiredModalities":["knowledge"],"requireKnowledgeProvenance":true,"tags":["source-document-version"]}
+  ],
+  "endToEndCases": [
+    {"caseId":"e2e-strong-evidence-001","scenario":"STRONG_EVIDENCE","expected":"grounded_diagnosis_and_recommendation"},
+    {"caseId":"e2e-insufficient-evidence-002","scenario":"INSUFFICIENT_EVIDENCE","expected":"uncertain_no_unsupported_action"},
+    {"caseId":"e2e-dependency-unavailable-003","scenario":"DEPENDENCY_UNAVAILABLE","expected":"explicit_degraded_status"},
+    {"caseId":"e2e-recommendation-approval-004","scenario":"RECOMMENDATION_APPROVAL","expected":"waiting_for_approval"},
+    {"caseId":"e2e-failure-correction-005","scenario":"FAILURE_CORRECTION","expected":"supervision_signal_available"}
+  ]
+}

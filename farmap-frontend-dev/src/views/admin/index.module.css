@@ -1,0 +1,9 @@
+.user__container {
+    flex-direction: column;
+}
+
+@media (min-width: 1000px) {
+    .user__container {
+        flex-direction: row;
+    }
+}
