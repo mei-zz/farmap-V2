@@ -34,6 +34,10 @@ public class CopilotRouteService {
     }
 
     public CopilotRouteResult route(CopilotRouteRequest request, Long userId) {
+        return route(request, userId, false);
+    }
+
+    public CopilotRouteResult route(CopilotRouteRequest request, Long userId, boolean hasUserImages) {
         String traceId = "trace-" + UUID.randomUUID();
         CopilotRouteRequest safeRequest = request == null ? new CopilotRouteRequest() : request;
         CopilotConversationService.ConversationHandle conversation = conversations == null ? null : conversations.begin(safeRequest, userId);
@@ -41,15 +45,22 @@ public class CopilotRouteService {
         CopilotIntentRouter.HybridContext hybridContext = new CopilotIntentRouter.HybridContext(
                 recentConversation(conversation == null ? null : conversation.snapshot()),
                 safeRequest.getPageContext(), null);
-        CopilotIntentRouter.HybridClassification hybrid = router.classifyHybrid(safeRequest.getMessage(), hybridContext);
+        boolean pendingActionConfirmation = conversation != null
+                && isPendingActionConfirmation(conversation.snapshot(), safeRequest.getMessage());
+        String effectiveMessage = pendingActionConfirmation
+                ? pendingActionMessage(conversation.snapshot(), safeRequest.getMessage())
+                : safeRequest.getMessage();
+        CopilotRouteRequest routingRequest = pendingActionConfirmation
+                ? copyWithMessage(safeRequest, effectiveMessage) : safeRequest;
+        CopilotIntentRouter.HybridClassification hybrid = router.classifyHybrid(effectiveMessage, hybridContext, hasUserImages);
         CopilotIntentRouter.Classification classification = hybrid.finalClassification();
         CopilotIntent intent = classification.intent();
         boolean pendingContinuation = conversation != null && pendingRecommendationContinuation(conversation.snapshot(), safeRequest.getMessage());
-        if (pendingContinuation) intent = CopilotIntent.ACTION_REQUEST;
+        if (pendingContinuation || pendingActionConfirmation) intent = CopilotIntent.ACTION_REQUEST;
 
-        if (intent == CopilotIntent.UNSUPPORTED) return persist(conversation, safeRequest, withIntentDiagnostics(result(traceId, intent, CopilotResolutionStatus.UNSUPPORTED, null, null, false, "当前请求不属于 FarMap Copilot 支持范围。", "REJECT", classification.safeRoute(), classification.confidence()), hybrid));
+        if (intent == CopilotIntent.UNSUPPORTED) return persist(conversation, safeRequest, withIntentDiagnostics(result(traceId, intent, CopilotResolutionStatus.UNSUPPORTED, null, null, false, "当前请求不属于 FarMap Copilot 支持范围。", "REJECT", classification.safeRoute(), classification.confidence()), hybrid, safeRequest.getMessage(), effectiveMessage, hasUserImages));
         if (intent == CopilotIntent.CLARIFICATION_REQUIRED || (!pendingContinuation && router.belowThreshold(classification.confidence()))) {
-            return persist(conversation, safeRequest, withIntentDiagnostics(result(traceId, CopilotIntent.CLARIFICATION_REQUIRED, CopilotResolutionStatus.CLARIFICATION_REQUIRED, null, null, true, "请明确要查询的对象或希望执行的动作。", "CLARIFY_CONTEXT", classification.safeRoute(), classification.confidence()), hybrid));
+            return persist(conversation, safeRequest, withIntentDiagnostics(result(traceId, CopilotIntent.CLARIFICATION_REQUIRED, CopilotResolutionStatus.CLARIFICATION_REQUIRED, null, null, true, "请明确要查询的对象或希望执行的动作。", "CLARIFY_CONTEXT", classification.safeRoute(), classification.confidence()), hybrid, safeRequest.getMessage(), effectiveMessage, hasUserImages));
         }
 
         CopilotStableContext session = conversation == null
@@ -58,7 +69,8 @@ public class CopilotRouteService {
         if (longTermMemory != null && isMemoryIntent(intent)) {
             CopilotStableContext active = mergeStable(safeRequest, session);
             CopilotMemoryDecision decision = memoryDecision(intent, safeRequest, active, userId);
-            CopilotRouteResult memoryResult = withIntentDiagnostics(memoryResult(traceId, intent, active, decision, classification.confidence()), hybrid);
+            CopilotRouteResult memoryResult = withIntentDiagnostics(memoryResult(traceId, intent, active, decision, classification.confidence()), hybrid,
+                    safeRequest.getMessage(), effectiveMessage, hasUserImages);
             CopilotRouteResult persisted = persist(conversation, safeRequest, memoryResult);
             if (persisted.getResolutionStatus() == CopilotResolutionStatus.RESOLVED && decision.accepted()) {
                 if (intent == CopilotIntent.MEMORY_WRITE_REQUEST && decision.candidate() != null) {
@@ -73,7 +85,7 @@ public class CopilotRouteService {
             }
             return persisted;
         }
-        CopilotContextResolver.Resolution resolution = resolver.resolve(safeRequest, safeRequest.getPageContext(), session, intent, userId);
+        CopilotContextResolver.Resolution resolution = resolver.resolve(routingRequest, routingRequest.getPageContext(), session, intent, userId);
         // Keep the intent-to-capability contract visible even while context is
         // incomplete; execution remains impossible until resolution is RESOLVED.
         CopilotCapability capability = capability(intent);
@@ -81,7 +93,8 @@ public class CopilotRouteService {
         String question = resolution.question();
         String nextAction = nextAction(intent, resolution.status());
         if (resolution.status() == CopilotResolutionStatus.RESOLVED && conversation == null) sessions.update(safeRequest.getSessionId(), resolution.context(), intent);
-        CopilotRouteResult routed = withIntentDiagnostics(result(traceId, intent, resolution.status(), resolution.context(), capability, clarification, question, nextAction, classification.safeRoute(), classification.confidence()), hybrid);
+        CopilotRouteResult routed = withIntentDiagnostics(result(traceId, intent, resolution.status(), resolution.context(), capability, clarification, question, nextAction, classification.safeRoute(), classification.confidence()), hybrid,
+                safeRequest.getMessage(), effectiveMessage, hasUserImages);
         if (longTermMemory != null) routed.setRelevantLongTermMemories(longTermMemory.retrieve(userId, mergeStable(safeRequest, session), safeRequest.getPageContext()).stream().map(CopilotMemoryView::from).toList());
         return persist(conversation, safeRequest, routed);
     }
@@ -92,8 +105,20 @@ public class CopilotRouteService {
         return result;
     }
 
-    private CopilotRouteResult withIntentDiagnostics(CopilotRouteResult result, CopilotIntentRouter.HybridClassification hybrid) {
+    private CopilotRouteResult withIntentDiagnostics(CopilotRouteResult result,
+                                                     CopilotIntentRouter.HybridClassification hybrid,
+                                                     String originalQuery,
+                                                     String normalizedSource,
+                                                     boolean hasUserImages) {
         if (result == null || hybrid == null) return result;
+        result.setOriginalQuery(originalQuery);
+        result.setNormalizedQuery(CopilotQueryNormalizer.forMatching(normalizedSource));
+        result.setMediaNeed(CopilotMediaPolicy.decide(normalizedSource, result.getIntent(), hasUserImages));
+        boolean directAction = result.getIntent() == CopilotIntent.ACTION_REQUEST
+                && (result.getResolvedContext() == null || blank(result.getResolvedContext().getRecommendationId()));
+        if (directAction && normalizedSource != null && !normalizedSource.isBlank()) {
+            result.setRequestedAction(normalizedSource.trim());
+        }
         if (hybrid.rule() != null) result.setRuleIntent(hybrid.rule().intent());
         result.setFinalIntent(result.getIntent());
         if (hybrid.finalClassification() != null && hybrid.finalClassification() != hybrid.rule()) {
@@ -114,7 +139,9 @@ public class CopilotRouteService {
     private String recentConversation(CopilotConversationSnapshot snapshot) {
         if (snapshot == null || snapshot.getRecentTurns() == null || snapshot.getRecentTurns().isEmpty()) return "";
         StringBuilder output = new StringBuilder();
-        List<CopilotConversationTurn> turns = snapshot.getRecentTurns();
+        List<CopilotConversationTurn> turns = snapshot.getRecentTurns().stream()
+                .filter(CopilotConversationTurnPolicy::isVisibleConversationTurn)
+                .toList();
         int from = Math.max(0, turns.size() - 4);
         for (int i = from; i < turns.size(); i++) {
             CopilotConversationTurn turn = turns.get(i);
@@ -133,6 +160,39 @@ public class CopilotRouteService {
         if (snapshot == null || snapshot.getPendingClarification() == null || !"RECOMMENDATION".equals(snapshot.getPendingClarification().getType()) || message == null) return false;
         String normalized = message.toLowerCase(java.util.Locale.ROOT);
         return message.contains("第一条") || normalized.contains("first recommendation") || normalized.matches(".*\\bfirst\\b.*");
+    }
+
+    private boolean isPendingActionConfirmation(CopilotConversationSnapshot snapshot, String message) {
+        if (snapshot == null || snapshot.getPendingClarification() == null
+                || !"ACTION".equals(snapshot.getPendingClarification().getType())) return false;
+        String normalized = message == null ? "" : message.trim().toLowerCase(Locale.ROOT)
+                .replaceAll("[\\s，。！？!?、]+", "");
+        return normalized.matches("^(对|对的|是|是的|确认|确认执行|好|好的|可以|就这样|没问题|yes|ok|okay|confirm)$");
+    }
+
+    private String pendingActionMessage(CopilotConversationSnapshot snapshot, String fallback) {
+        if (snapshot != null && snapshot.getRecentTurns() != null) {
+            for (int index = snapshot.getRecentTurns().size() - 1; index >= 0; index--) {
+                CopilotConversationTurn turn = snapshot.getRecentTurns().get(index);
+                if (turn != null && "USER".equalsIgnoreCase(turn.getRole())
+                        && turn.getIntent() == CopilotIntent.ACTION_REQUEST
+                        && turn.getMessage() != null && !turn.getMessage().isBlank()) return turn.getMessage();
+            }
+        }
+        return fallback;
+    }
+
+    /** Copy only the public routing fields; the persisted turn keeps the real user message. */
+    private CopilotRouteRequest copyWithMessage(CopilotRouteRequest source, String message) {
+        CopilotRouteRequest copy = new CopilotRouteRequest();
+        copy.setMessage(message);
+        copy.setSessionId(source.getSessionId()); copy.setConversationId(source.getConversationId());
+        copy.setClientMessageId(source.getClientMessageId()); copy.setContextVersion(source.getContextVersion());
+        copy.setUseConversationContext(source.getUseConversationContext()); copy.setPageContext(source.getPageContext());
+        copy.setFarmId(source.getFarmId()); copy.setFieldId(source.getFieldId()); copy.setDiagnosisId(source.getDiagnosisId());
+        copy.setRecommendationId(source.getRecommendationId()); copy.setRunId(source.getRunId()); copy.setActionId(source.getActionId());
+        copy.setTaskId(source.getTaskId()); copy.setOutcomeId(source.getOutcomeId());
+        return copy;
     }
 
     private boolean isMemoryIntent(CopilotIntent intent) { return intent == CopilotIntent.MEMORY_WRITE_REQUEST || intent == CopilotIntent.MEMORY_QUERY || intent == CopilotIntent.MEMORY_FORGET_REQUEST; }
@@ -161,6 +221,8 @@ public class CopilotRouteService {
     }
 
     private String first(String... values) { for (String value : values) if (value != null && !value.isBlank()) return value.trim(); return null; }
+
+    private boolean blank(String value) { return value == null || value.isBlank(); }
 
     private CopilotRouteResult result(String traceId, CopilotIntent intent, CopilotResolutionStatus status, CopilotStableContext context,
                                       CopilotCapability capability, boolean clarification, String question, String nextAction,

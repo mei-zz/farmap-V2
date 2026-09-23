@@ -12,7 +12,7 @@ public class ModelRoutingPolicy {
     @Value("${farmap.ai.router.default-model:qwen-plus-2025-07-28}")
     private String defaultModel = ModelCapabilityRegistry.QWEN_PLUS_DATED;
 
-    @Value("${farmap.ai.router.fast-model:deepseek-r1-distill-qwen-7b}")
+    @Value("${farmap.ai.router.fast-model:qwen-flash}")
     private String fastModel = ModelCapabilityRegistry.DEEPSEEK_R1_DISTILL_QWEN_7B;
 
     @Value("${farmap.ai.router.multimodal-model:qwen3-vl-32b-thinking}")

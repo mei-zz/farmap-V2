@@ -8,6 +8,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.Instant;
+import java.util.Map;
 
 @Data
 @Builder
@@ -27,5 +28,7 @@ public class CopilotConversationTurn {
     private String clientMessageId;
     @JsonIgnore
     private String resultJson;
+    /** Safe assistant-only metadata projected from resultJson for conversation restore. */
+    private Map<String, Object> responseMetadata;
     private Instant createdAt;
 }

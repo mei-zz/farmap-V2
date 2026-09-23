@@ -3,12 +3,13 @@ import { HttpRequestError, req } from "@/utils/reqeust";
 import { readServerSentEvents, requestUrl, type ServerSentEvent } from "@/utils/sse";
 import { toCopilotContext, type AIContext } from "@/store/aiContext";
 import type { OverviewCopilotContext } from "@/features/overview/copilot/context";
-import type { CopilotChatRequest, CopilotConversationView, CopilotMemoryView, CopilotPageContext, CopilotRouteRequest, CopilotRouteResult } from "./contract";
+import type { CopilotChatRequest, CopilotConversationListItem, CopilotConversationView, CopilotMemoryView, CopilotPageContext, CopilotRouteRequest, CopilotRouteResult } from "./contract";
 
 const auth = () => ({ Authorization: `Bearer ${permanence.token.useToken()}` });
 const sessionKey = "farmap.copilot.session-id";
 const conversationKey = "farmap.copilot.conversation-id";
 const versionKey = "farmap.copilot.context-version";
+const continuationKey = "farmap.copilot.use-conversation-context";
 
 function getSessionId(): string {
   if (typeof window === "undefined") return "copilot-browser-session";
@@ -28,6 +29,16 @@ function getContextVersion(): number | undefined {
   if (typeof window === "undefined") return undefined;
   const value = window.sessionStorage.getItem(versionKey);
   return value ? Number(value) : undefined;
+}
+
+function hasSavedConversationContext(): boolean {
+  return typeof window !== "undefined" && window.sessionStorage.getItem(continuationKey) === "true";
+}
+
+function setUseSavedConversationContext(value: boolean): void {
+  if (typeof window === "undefined") return;
+  if (value) window.sessionStorage.setItem(continuationKey, "true");
+  else window.sessionStorage.removeItem(continuationKey);
 }
 
 function rememberConversation(result: { conversationId?: string; contextVersion?: number }): void {
@@ -55,12 +66,14 @@ export function toCopilotPageContext(context: AIContext, discussion?: OverviewCo
 }
 
 export function createCopilotRequest(message: string, context: AIContext, discussion?: OverviewCopilotContext): CopilotChatRequest {
+  const useConversationContext = hasSavedConversationContext();
   return {
     message,
     sessionId: getSessionId(),
     conversationId: getCopilotConversationId(),
     clientMessageId: typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `client-${Date.now()}`,
     contextVersion: getContextVersion(),
+    ...(useConversationContext ? { useConversationContext } : {}),
     pageContext: toCopilotPageContext(context, discussion),
   };
 }
@@ -128,6 +141,20 @@ export async function loadCopilotConversation(): Promise<CopilotConversationView
 export async function createCopilotConversation(): Promise<CopilotConversationView> {
   const view = await req.post<Record<string, never>, CopilotConversationView>("/api/copilot/conversations", {}, auth());
   rememberConversation(view);
+  setUseSavedConversationContext(false);
+  return view;
+}
+
+/** The API always scopes this list by the authenticated user ID. */
+export async function listCopilotConversations(limit = 24): Promise<CopilotConversationListItem[]> {
+  return req.get<CopilotConversationListItem[]>(`/api/copilot/conversations?limit=${Math.max(1, Math.min(limit, 50))}`, auth());
+}
+
+/** Restores bounded turns and renews the conversation's inactive window. */
+export async function resumeCopilotConversation(conversationId: string): Promise<CopilotConversationView> {
+  const view = await req.post<Record<string, never>, CopilotConversationView>(`/api/copilot/conversations/${encodeURIComponent(conversationId)}/resume`, {}, auth());
+  rememberConversation(view);
+  setUseSavedConversationContext(true);
   return view;
 }
 
@@ -135,6 +162,7 @@ export function clearCopilotConversation(): void {
   if (typeof window === "undefined") return;
   window.sessionStorage.removeItem(conversationKey);
   window.sessionStorage.removeItem(versionKey);
+  window.sessionStorage.removeItem(continuationKey);
 }
 
 export async function listCopilotMemories(context: AIContext): Promise<CopilotMemoryView[]> {

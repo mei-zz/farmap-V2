@@ -1,7 +1,7 @@
 // 1. 画地图
 // 2. 画markers
 import "@amap/amap-jsapi-types";
-import "@amap/amap-jsapi-loader";
+import { load as loadAMap } from "@amap/amap-jsapi-loader";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
@@ -40,18 +40,50 @@ export default function MapContainer(props: MapProps) {
     const setAIContext = useAIContextStore((state) => state.setContext);
 
     // Show amap and update when farm changes
+    const amapApiRef = useRef<typeof AMap | null>(null);
     const amapRef = useRef<AMap.Map | null>(null);
+    const [mapError, setMapError] = useState("");
+    const [mapReady, setMapReady] = useState(false);
     useEffect(() => {
         if (![centerLongitude, centerLatitude].every((value) => Number.isFinite(value))) return;
 
-        const map = new AMap.Map("map-container", {
-            center: [centerLongitude, centerLatitude],
-            zoom: props.zoom,
-        });
-        amapRef.current = map;
+        let active = true;
+        let map: AMap.Map | null = null;
+        setMapError("");
+        setMapReady(false);
+
+        const key = import.meta.env.VITE_GAODE_API_KEY;
+        if (!key) {
+            setMapError("地图服务未配置高德地图 Key，当前无法加载地图。");
+            return () => {
+                active = false;
+                amapApiRef.current = null;
+                amapRef.current = null;
+            };
+        }
+
+        void loadAMap({ key, version: "2.0" })
+            .then((api) => {
+                if (!active) return;
+                amapApiRef.current = api as typeof AMap;
+                map = new api.Map("map-container", {
+                    center: [centerLongitude, centerLatitude],
+                    zoom: props.zoom,
+                });
+                amapRef.current = map;
+                setMapReady(true);
+            })
+            .catch((error: unknown) => {
+                if (!active) return;
+                setMapError(error instanceof Error ? `地图加载失败：${error.message}` : "地图加载失败，请稍后重试。");
+            });
+
         return () => {
-            map.destroy();
+            active = false;
+            map?.destroy();
             if (amapRef.current === map) amapRef.current = null;
+            amapApiRef.current = null;
+            setMapReady(false);
         };
     }, [centerLatitude, centerLongitude, props.zoom]);
 
@@ -59,6 +91,8 @@ export default function MapContainer(props: MapProps) {
     // PERF: the map will be reset to initial location
     const drawMarkers = useCallback(
         (amap: AMap.Map, crops: FarmStoreState["crops"]) => {
+            const api = amapApiRef.current;
+            if (!api) return;
             amap.clearMap();
 
             // Slider range
@@ -69,11 +103,13 @@ export default function MapContainer(props: MapProps) {
             crops.forEach((c) => {
                 // Calculate color of markers
                 const color = getPercentageColor(
-                    (((c.info[props.infoKey] as number) - min) / range) * 100,
+                    Number.isFinite(range) && range > 0
+                        ? (((c.info[props.infoKey] as number) - min) / range) * 100
+                        : 50,
                 );
                 const content = `<div style="background-color: ${color}; width: 7px; height: 7px; border-radius: 50%"></div>`;
-                const position = new AMap.LngLat(c.longitude, c.latitude);
-                const marker = new AMap.Marker({
+                const position = new api.LngLat(c.longitude, c.latitude);
+                const marker = new api.Marker({
                     content,
                     position,
                 });
@@ -86,12 +122,14 @@ export default function MapContainer(props: MapProps) {
     // Update display mode
     const drawPolygon = useCallback(
         (amap: AMap.Map) => {
+            const api = amapApiRef.current;
+            if (!api) return;
             amap.clearMap();
 
             const pathArr = props.farmLocations.map(
                 (l): [number, number] => [l.longitude, l.latitude],
             );
-            const polygon = new AMap.Polygon();
+            const polygon = new api.Polygon();
             polygon.setOptions({
                 path: pathArr,
                 fillColor: "#ccebc5", //多边形填充颜色
@@ -183,10 +221,12 @@ export default function MapContainer(props: MapProps) {
     );
 
     const drawMonitor = useCallback((amap: AMap.Map) => {
+        const api = amapApiRef.current;
+        if (!api) return;
         (props.cameras ?? []).forEach((camera) => {
             const content = `<div title="${camera.name}" style="background-color: #0f8b62; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); width: 14px; height: 14px; border-radius: 50%"></div>`;
-            const position = new AMap.LngLat(Number(camera.longitude), Number(camera.latitude));
-            const marker = new AMap.Marker({
+            const position = new api.LngLat(Number(camera.longitude), Number(camera.latitude));
+            const marker = new api.Marker({
                 content,
                 position,
             });
@@ -221,12 +261,15 @@ export default function MapContainer(props: MapProps) {
         }
 
         // Trigger when farm sitches
-    }, [drawMarkers, drawMonitor, drawPolygon, props.crops, props.modeKey, props.slider.scale, props.slider.value]);
+    }, [drawMarkers, drawMonitor, drawPolygon, mapReady, props.crops, props.modeKey, props.slider.scale, props.slider.value]);
 
     // Draggable monitor card
     return (
         <>
             <div id="map-container" style={{ flexGrow: 1, borderRadius: 8, minHeight: 300 }}></div>
+            {mapError && (
+                <div style={{ color: "#b54708", fontSize: 12, marginTop: 6 }}>{mapError}</div>
+            )}
             {props.modeKey === "monitor" && props.cameras?.length === 0 && (
                 <div style={{ color: "#667085", fontSize: 12, marginTop: 6 }}>
                     当前农场没有已绑定的实时摄像头；地图仍显示农场边界，摄像头需要由农场管理员完成绑定。

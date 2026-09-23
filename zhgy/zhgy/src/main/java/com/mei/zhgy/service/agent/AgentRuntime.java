@@ -8,9 +8,12 @@ import com.mei.zhgy.service.diagnosis.DiagnosisPersistenceService;
 import com.mei.zhgy.service.agriculture.FieldFacts;
 import com.mei.zhgy.service.agriculture.FieldFactsService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import javax.annotation.PostConstruct;
+import javax.annotation.PreDestroy;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -19,8 +22,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /** Bounded agent state machine. A run is persisted after every observable transition. */
 @Service
@@ -38,7 +44,11 @@ public class AgentRuntime {
     private final AgentReplanningPolicy replanningPolicy;
     private final AgentReplanner replanner;
     private final FieldFactsService fieldFactsService;
-    private final Executor executor = Executors.newCachedThreadPool(r -> { Thread t = new Thread(r, "farmap-agent"); t.setDaemon(true); return t; });
+    @Value("${farmap.agent.max-concurrent-runs:4}")
+    private int maxConcurrentRuns = 4;
+    @Value("${farmap.agent.queue-capacity:32}")
+    private int queueCapacity = 32;
+    private ExecutorService executor = createExecutor(4, 32);
 
     public AgentRuntime(AgentPlanner planner, ToolExecutor toolExecutor, AgentRunRepository repository,
                         TraceRecorder traceRecorder, ApprovalManager approvalManager) {
@@ -87,6 +97,29 @@ public class AgentRuntime {
         this.fieldFactsService = fieldFactsService;
     }
 
+    @PostConstruct
+    void configureExecutor() {
+        ExecutorService previous = executor;
+        executor = createExecutor(maxConcurrentRuns, queueCapacity);
+        if (previous != null) previous.shutdown();
+    }
+
+    @PreDestroy
+    void shutdownExecutor() {
+        if (executor != null) executor.shutdownNow();
+    }
+
+    private ExecutorService createExecutor(int concurrency, int capacity) {
+        int safeConcurrency = Math.max(1, Math.min(concurrency, 32));
+        int safeCapacity = Math.max(1, Math.min(capacity, 512));
+        return new ThreadPoolExecutor(safeConcurrency, safeConcurrency, 0L, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(safeCapacity), runnable -> {
+                    Thread thread = new Thread(runnable, "farmap-agent");
+                    thread.setDaemon(true);
+                    return thread;
+                }, new ThreadPoolExecutor.AbortPolicy());
+    }
+
     public AgentRun createRun(String goal, AgentContext context, String mode) {
         return createRun(goal, context, mode, null);
     }
@@ -113,7 +146,13 @@ public class AgentRuntime {
     }
 
     public CompletableFuture<AgentRun> start(String runId) {
-        return CompletableFuture.supplyAsync(() -> execute(runId), executor);
+        try {
+            return CompletableFuture.supplyAsync(() -> execute(runId), executor);
+        } catch (RejectedExecutionException error) {
+            AgentRun run = require(runId);
+            fail(run, "AGENT_QUEUE_FULL", "当前 Agent 任务较多，请稍后重试");
+            return CompletableFuture.completedFuture(run);
+        }
     }
 
     /** Creates a REAL run from the server-owned persisted Diagnosis snapshot. */
@@ -183,6 +222,9 @@ public class AgentRuntime {
                         traceRecorder.record(run, "action.blocked.unsupported_tool", Map.of("tool", String.valueOf(step.getToolName()), "reason", "WRITE_TOOL_NOT_REGISTERED_OR_NOT_WRITE_CAPABLE"));
                         complete(run, prior); return;
                     }
+                    if (isDirectTaskRequest(run) && run.getEvidence().isEmpty()) {
+                        addDirectTaskContextEvidence(run, prior);
+                    }
                     EvidenceResolution evidence = resolveEvidence(run);
                     EvidenceSufficiencyDecision decision = evidenceSufficiencyEvaluator.evaluate(true, evidence.evidence(), recommendationId(run),
                             evidence.recommendationEvidenceIds(), null, evidence.unavailableDependencies(), evidence.emptyObserved());
@@ -202,10 +244,15 @@ public class AgentRuntime {
                         complete(run, prior); return;
                     }
                 }
-                ProposedAction action = ProposedAction.builder().id("action-" + run.getRunId() + "-" + step.getId()).type("operations_task").title("创建农事复核任务")
-                        .detail("由 Agent 根据已持久化 Recommendation 和其支持证据创建 Operations 任务").toolName(step.getToolName()).approvalRequired(true)
+                Map<String, Object> recommendation = selectedRecommendation(run);
+                String actionTitle = text(recommendation.get("title"), directTaskTitle(run));
+                String actionDetail = text(recommendation.get("detail"), directTaskDetail(run));
+                Map<String, Object> actionPayload = new LinkedHashMap<>(prior);
+                if (!recommendation.isEmpty()) actionPayload.put("recommendation", recommendation);
+                ProposedAction action = ProposedAction.builder().id("action-" + run.getRunId() + "-" + step.getId()).type("operations_task").title(actionTitle)
+                        .detail(actionDetail).toolName(step.getToolName()).approvalRequired(true)
                         .diagnosisId(diagnosisId(run)).recommendationId(recommendationId(run)).evidenceIds(actionEvidenceIds(run))
-                        .approvalState(ApprovalState.REQUIRED).payload(new LinkedHashMap<>(prior)).build();
+                        .approvalState(ApprovalState.REQUIRED).payload(actionPayload).build();
                 run.getActions().add(action); run.setApprovalState(ApprovalState.REQUIRED); step.setStatus(StepStatus.PENDING);
                 traceRecorder.record(run, "approval.required", provenance(action));
                 transition(run, RunStatus.WAITING_FOR_APPROVAL, "run.waiting_for_approval"); persist(run); return;
@@ -660,13 +707,137 @@ public class AgentRuntime {
         Map<String, Object> output = new LinkedHashMap<>();
         if (prior != null) output.putAll(prior); else output.putAll(run.getOutput());
         output.put("evidenceCount", run.getEvidence().size());
-        output.put("conclusion", "基于当前农场上下文和已验证证据，建议完成现场复核后执行农事处置。");
+        Map<String, Object> diagnosis = run.getContext() == null ? Map.of() : run.getContext().getDiagnosis();
+        if (!diagnosis.isEmpty()) {
+            Map<String, Object> diagnosisSummary = new LinkedHashMap<>();
+            copyIfPresent(diagnosis, diagnosisSummary, "id", "title", "severity", "confidence", "summary", "sourceRunId");
+            output.put("diagnosis", diagnosisSummary);
+            List<Map<String, Object>> findings = mapList(diagnosis.get("claims"));
+            if (!findings.isEmpty()) output.put("findings", findings);
+            List<Map<String, Object>> recommendations = mapList(diagnosis.get("recommendations"));
+            if (recommendations.isEmpty()) recommendations = mapList(diagnosis.get("recommendation"));
+            output.put("recommendations", recommendations);
+            Object selectedRecommendation = diagnosis.get("recommendation");
+            if (selectedRecommendation instanceof Map<?, ?>) output.put("recommendation", selectedRecommendation);
+            Object summary = diagnosis.get("summary");
+            if (summary != null && !String.valueOf(summary).isBlank()) output.put("conclusion", String.valueOf(summary));
+        }
+        if (!output.containsKey("conclusion")) {
+            output.put("conclusion", run.getEvidence().isEmpty()
+                    ? "当前没有足够的已验证证据形成农事结论，请补充现场图片或检测数据。"
+                    : "已完成证据整理，建议先查看关联证据和不确定性，再决定是否提交农事处置。");
+        }
         addPhenologyOutput(run, output);
-        output.put("confidence", run.getContext() != null && run.getContext().getDiagnosis() != null ? run.getContext().getDiagnosis().getOrDefault("confidence", 0.76) : 0.76);
+        Object confidence = diagnosis.get("confidence");
+        output.put("confidence", confidence == null ? null : confidence);
         output.put("evidenceIds", run.getEvidence().stream().map(DiagnosisEvidenceVO::getId).filter(java.util.Objects::nonNull).collect(java.util.stream.Collectors.toList()));
-        output.put("recommendations", List.of("检查地块排水与根区湿度", "48 小时内复拍异常叶片", "由专家复核后形成处置任务"));
-        output.put("recommendation", "请依据证据完成现场复核");
         run.setOutput(output); transition(run, RunStatus.COMPLETED, "run.completed"); persist(run);
+    }
+
+    private void copyIfPresent(Map<String, Object> source, Map<String, Object> target, String... keys) {
+        for (String key : keys) if (source.containsKey(key)) target.put(key, source.get(key));
+    }
+
+    private List<Map<String, Object>> mapList(Object value) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> copy = new LinkedHashMap<>();
+            map.forEach((key, item) -> copy.put(String.valueOf(key), item));
+            result.add(copy);
+        } else if (value instanceof Iterable<?> values) {
+            for (Object item : values) {
+                if (!(item instanceof Map<?, ?> map)) continue;
+                Map<String, Object> copy = new LinkedHashMap<>();
+                map.forEach((key, entry) -> copy.put(String.valueOf(key), entry));
+                result.add(copy);
+            }
+        }
+        return result;
+    }
+
+    private Map<String, Object> selectedRecommendation(AgentRun run) {
+        if (run == null || run.getContext() == null || run.getContext().getDiagnosis() == null) return Map.of();
+        Map<String, Object> diagnosis = run.getContext().getDiagnosis();
+        Object selected = diagnosis.get("recommendation");
+        if (selected instanceof Map<?, ?> map) return copyMap(map);
+        Object all = diagnosis.get("recommendations");
+        if (all instanceof Iterable<?> values) {
+            for (Object item : values) if (item instanceof Map<?, ?> map) return copyMap(map);
+        }
+        return Map.of();
+    }
+
+    private String directTaskTitle(AgentRun run) {
+        String goal = run == null || run.getGoal() == null ? "" : run.getGoal().trim();
+        String field = run == null || run.getContext() == null ? null : run.getContext().getFieldName();
+        if (field == null || field.isBlank()) field = run == null || run.getContext() == null ? null : run.getContext().getFieldId();
+        String target = field == null || field.isBlank() ? "当前地块" : field;
+        if (goal.contains("浇水")) return (goal.contains("明天") ? "明天" : "") + "浇水 · " + target;
+        if (goal.contains("施肥")) return (goal.contains("明天") ? "明天" : "") + "施肥 · " + target;
+        if (goal.contains("喷药") || goal.contains("用药")) return (goal.contains("明天") ? "明天" : "") + "植保作业 · " + target;
+        return "农事任务 · " + target;
+    }
+
+    private String directTaskDetail(AgentRun run) {
+        String goal = run == null || run.getGoal() == null ? "用户请求的农事任务" : run.getGoal().trim();
+        return "按用户请求准备：" + goal + "。提交 Operations 前需要人工审批。";
+    }
+
+    private Map<String, Object> copyMap(Map<?, ?> source) {
+        Map<String, Object> copy = new LinkedHashMap<>();
+        source.forEach((key, value) -> copy.put(String.valueOf(key), value));
+        return copy;
+    }
+
+    private String text(Object value, String fallback) {
+        if (value == null || String.valueOf(value).isBlank()) return fallback;
+        return String.valueOf(value);
+    }
+
+    private boolean isDirectTaskRequest(AgentRun run) {
+        if (run == null || run.getGoal() == null || run.getContext() == null
+                || (run.getContext().getDiagnosisId() != null && !run.getContext().getDiagnosisId().isBlank())) return false;
+        String normalized = run.getGoal().replaceAll("\\s+", "");
+        if (normalized.contains("不要创建") || normalized.contains("不创建") || normalized.contains("无需创建")) return false;
+        return normalized.matches(".*(?:创建|生成|新建|安排).{0,12}任务.*")
+                || normalized.matches(".*(?:创建|生成|新建|安排).{0,12}(浇水|施肥|喷药|用药|灌溉|巡查).*");
+    }
+
+    /**
+     * Direct task creation is not a diagnosis. The verified field context
+     * returned by the server-owned read tools is the minimum provenance for a
+     * task draft; no image, disease conclusion or model-generated URL is
+     * introduced here.
+     */
+    private void addDirectTaskContextEvidence(AgentRun run, Map<String, Object> prior) {
+        if (prior == null || run.getContext() == null) return;
+        Object raw = prior.get("field-context");
+        if (!(raw instanceof Map<?, ?> fieldContext)) return;
+        Object status = fieldContext.get("fieldFactsStatus");
+        if (!"READY".equalsIgnoreCase(String.valueOf(status))) return;
+        String fieldId = run.getContext().getFieldId();
+        String evidenceId = "task-context-" + run.getRunId();
+        if (run.getContext().getFieldName() == null || run.getContext().getFieldName().isBlank()) {
+            run.getContext().setFieldName(text(fieldContext.get("fieldName"), fieldId));
+        }
+        String crop = text(fieldContext.get("cropLabel"), text(fieldContext.get("crop"), "当前作物"));
+        String stage = text(fieldContext.get("phenologyStageLabel"), text(fieldContext.get("phenologyStage"), "当前物候期"));
+        DiagnosisEvidenceVO evidence = DiagnosisEvidenceVO.builder()
+                .id(evidenceId)
+                .modality("field_context")
+                .title("任务草案地块上下文")
+                .summary("已验证地块：" + text(fieldContext.get("fieldName"), fieldId) + "；作物：" + crop + "；物候期：" + stage)
+                .score(1.0D)
+                .source(DiagnosisEvidenceVO.Source.builder()
+                        .type("FIELD_CONTEXT")
+                        .sourceMode("MYSQL")
+                        .status("READY")
+                        .fieldId(fieldId)
+                        .name(text(fieldContext.get("fieldName"), fieldId))
+                        .build())
+                .metadata(Map.of("purpose", "operations_task_draft", "goal", run.getGoal()))
+                .build();
+        run.getEvidence().add(evidence);
     }
 
     private void addPhenologyOutput(AgentRun run, Map<String, Object> output) {
@@ -685,7 +856,9 @@ public class AgentRuntime {
         if (context.getCropLabel() == null || context.getPhenologyStageLabel() == null) return;
         String next = context.getNextPhenologyStageLabel();
         String suffix = next == null ? context.isPhenologyCycleEnded() ? "；本茬已结束，没有下一物候期" : "" : "；下一物候期为" + next;
-        output.put("conclusion", "按【" + context.getCropLabel() + "·" + context.getPhenologyStageLabel() + "】的地块事实，当前 Agent 结论基于该作物物候历" + suffix + "。建议完成现场复核后执行农事处置。");
+        String existing = output.get("conclusion") == null ? "" : String.valueOf(output.get("conclusion"));
+        String prefix = "按【" + context.getCropLabel() + "·" + context.getPhenologyStageLabel() + "】的地块事实" + suffix + "，";
+        output.put("conclusion", prefix + existing);
     }
     private Map<String, Object> toolInput(AgentRun run) {
         Map<String, Object> input = new LinkedHashMap<>(); input.put("goal", run.getGoal());

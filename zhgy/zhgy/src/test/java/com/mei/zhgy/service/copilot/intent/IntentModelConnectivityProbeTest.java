@@ -8,13 +8,16 @@ import com.mei.zhgy.service.ai.BailianModelClient;
 import com.mei.zhgy.service.ai.ModelCallRequest;
 import com.mei.zhgy.service.ai.ModelCallResult;
 import com.mei.zhgy.service.ai.ModelRole;
+import com.mei.zhgy.service.copilot.CopilotIntentRouter;
+import com.mei.zhgy.service.copilot.CopilotIntent;
+import com.mei.zhgy.service.agriculture.CropResolver;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
 
 /**
- * Explicit, opt-in connectivity probe for the specialized intent model. It
+ * Explicit, opt-in connectivity probe for the configured intent Router model. It
  * never runs in an account without an API key and never prints the credential.
  */
 class IntentModelConnectivityProbeTest {
@@ -38,18 +41,58 @@ class IntentModelConnectivityProbeTest {
                 .structuredOutput(true)
                 .context(Map.of("maxOutputTokens", 300, "enableThinking", false, "temperature", 0D))
                 .build();
+        String model = firstNonBlank(System.getProperty("intent.probe.model"), "qwen-flash");
         try {
-            ModelCallResult result = client.call("tongyi-intent-detect-v3", request, ModelRole.DEFAULT_MODEL);
+            ModelCallResult result = client.call(model, request, ModelRole.DEFAULT_MODEL);
             boolean hasContent = result != null && result.isSuccess() && result.getContent() != null && !result.getContent().isBlank();
             boolean jsonShape = hasContent && intentShape(result.getContent(), mapper);
-            System.out.println("INTENT_MODEL_PROBE model=tongyi-intent-detect-v3 transport=chat_json status="
+            System.out.println("INTENT_MODEL_PROBE model=" + model + " transport=chat_json status="
                     + (hasContent && jsonShape ? "OK" : "INVALID_RESPONSE") + " shape=" + jsonShape
                     + " latencyMs=" + (result == null ? "unknown" : result.getLatencyMs()));
+            probeFullHybridRoute(model, properties, mapper);
         } catch (Exception error) {
             // The production classifier must use this exact failure as the
             // signal to fall through to the configured Flash pool.
-            System.out.println("INTENT_MODEL_PROBE model=tongyi-intent-detect-v3 transport=chat_json status=FAILED type="
-                    + error.getClass().getSimpleName());
+            String type = error instanceof com.mei.zhgy.service.ai.ModelCallException modelError
+                    ? modelError.getErrorType() : error.getClass().getSimpleName();
+            System.out.println("INTENT_MODEL_PROBE model=" + model + " transport=chat_json status=FAILED type=" + type);
+        }
+    }
+
+    private void probeFullHybridRoute(String model, BailianProperties bailianProperties, ObjectMapper mapper) {
+        IntentModelProperties intentProperties = new IntentModelProperties();
+        intentProperties.setEnabled(true);
+        intentProperties.setShadowMode(false);
+        intentProperties.setPrimaryModel(model);
+        intentProperties.setFlashPool(java.util.List.of());
+        intentProperties.setStrongPool(java.util.List.of());
+        intentProperties.setTotalTimeoutMs(1800);
+        LlmIntentClassifier classifier = new LlmIntentClassifier(intentProperties,
+                new BailianIntentClassifierClient(new BailianModelClient(mapper, bailianProperties)),
+                new IntentPromptBuilder(), new CropResolver(), mapper);
+        CopilotIntentRouter router = new CopilotIntentRouter();
+        router.setHybridClassifier(classifier);
+        CopilotIntentRouter.HybridClassification route = router.classifyHybrid(
+                "叶片有点黄是咋回事", new CopilotIntentRouter.HybridContext("", null, "脆李"));
+        String llmIntent = route.llm() == null || route.llm().intent() == null ? "none" : route.llm().intent().name();
+        String finalIntent = route.finalClassification() == null || route.finalClassification().intent() == null
+                ? "none" : route.finalClassification().intent().name();
+        String ruleIntent = route.rule() == null || route.rule().intent() == null ? "none" : route.rule().intent().name();
+        System.out.println("INTENT_MODEL_ROUTE_PROBE model=" + model + " ruleIntent=" + ruleIntent
+                + " llmIntent=" + llmIntent + " finalIntent=" + finalIntent
+                + " tier=" + (route.llm() == null ? "none" : route.llm().tier())
+                + " status=" + (route.llm() != null && route.llm().ok() ? "MODEL_DECISION" : "RULE_FALLBACK")
+                + " fallback=" + (route.llm() == null || route.llm().fallbackReason() == null ? "none" : route.llm().fallbackReason())
+                + " latencyMs=" + (route.llm() == null ? "unknown" : route.llm().latencyMs()));
+        if (route.llm() != null && route.llm().ok()) {
+            // This assertion is deliberately limited to the contract, not to
+            // one model label: the existing policy may safely retain the rule
+            // intent when the model is uncertain or protected.
+            boolean validIntent = route.llm().intent() == CopilotIntent.GENERAL_QA
+                    || route.llm().intent() == CopilotIntent.KNOWLEDGE_QUERY
+                    || route.llm().intent() == CopilotIntent.DIAGNOSIS_REQUEST
+                    || route.llm().intent() == CopilotIntent.RECOMMENDATION_QUERY;
+            if (!validIntent) throw new AssertionError("live Router returned an unexpected intent");
         }
     }
 

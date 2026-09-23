@@ -39,6 +39,8 @@ public class ReferenceImageStore {
     private final String cosRegion;
     private volatile boolean collectionLoadAttempted;
     private volatile boolean collectionLoaded;
+    private volatile long lastCollectionLoadAttemptAt;
+    private static final long COLLECTION_LOAD_RETRY_MS = 30_000L;
 
     @Autowired
     public ReferenceImageStore(@Autowired(required = false) MilvusServiceClient milvus,
@@ -54,24 +56,34 @@ public class ReferenceImageStore {
     }
 
     public List<ReferenceImage> byStage(String crop, String stageCode) {
-        if (!PLUM.equalsIgnoreCase(safe(crop))) return List.of();
+        return byStageResult(crop, stageCode).images();
+    }
+
+    public ReferenceImageLookup byStageResult(String crop, String stageCode) {
+        if (!PLUM.equalsIgnoreCase(safe(crop))) return ReferenceImageLookup.unavailable("invalid-crop");
         String requestedStage = safe(stageCode).toLowerCase(Locale.ROOT);
         String resolvedStage = fallbackStage(requestedStage);
-        if (!STAGE_CODES.contains(resolvedStage)) return List.of();
+        if (!STAGE_CODES.contains(resolvedStage)) return ReferenceImageLookup.noMatch("invalid-stage", 0, 0);
         String match = requestedStage.equals(resolvedStage) ? "direct" : "fallback";
         return query(PHENOLOGY, resolvedStage, null, properties == null ? 0 : properties.getPerStageLimit(), match);
     }
 
     public List<ReferenceImage> byDisease(String crop, String diseaseKey) {
-        if (!PLUM.equalsIgnoreCase(safe(crop)) || safe(diseaseKey).isBlank()) return List.of();
+        return byDiseaseResult(crop, diseaseKey).images();
+    }
+
+    public ReferenceImageLookup byDiseaseResult(String crop, String diseaseKey) {
+        if (!PLUM.equalsIgnoreCase(safe(crop)) || safe(diseaseKey).isBlank()) return ReferenceImageLookup.unavailable("invalid-disease-context");
         return query(DISEASE, null, safe(diseaseKey), properties == null ? 0 : properties.getPerDiseaseLimit(), "direct");
     }
 
-    private List<ReferenceImage> query(String refType, String stageCode, String diseaseKey,
+    private ReferenceImageLookup query(String refType, String stageCode, String diseaseKey,
                                        int limit, String match) {
-        if (limit <= 0 || milvus == null || properties == null || !properties.isEnabled()) return List.of();
+        if (limit <= 0 || milvus == null || properties == null || !properties.isEnabled()) {
+            return ReferenceImageLookup.unavailable(match);
+        }
         try {
-            if (!ensureCollectionLoaded()) return List.of();
+            if (!ensureCollectionLoaded()) return ReferenceImageLookup.unavailable(match);
             StringBuilder expression = new StringBuilder("crop == \"plum\" && ref_type == \"")
                     .append(escape(refType)).append("\"");
             if (stageCode != null) expression.append(" && stage_code == \"").append(escape(stageCode)).append("\"");
@@ -89,22 +101,29 @@ public class ReferenceImageStore {
                     .withLimit(64L)
                     .build());
             if (result == null || result.getStatus() == null || result.getStatus() != R.Status.Success.getCode()
-                    || result.getData() == null) return List.of();
-            List<ReferenceImage> rows = new QueryResultsWrapper(result.getData()).getRowRecords().stream()
+                    || result.getData() == null) return ReferenceImageLookup.unavailable(match);
+            List<QueryResultsWrapper.RowRecord> rawRows = new QueryResultsWrapper(result.getData()).getRowRecords();
+            List<ReferenceImage> rows = rawRows.stream()
                     .map(row -> toReferenceImage(row, match))
                     .filter(row -> row != null && !row.imageUrl().isBlank() && allowedImageUrl(row.imageUrl()))
                     .sorted(Comparator.comparing(ReferenceImage::refId, Comparator.nullsLast(String::compareTo)))
                     .toList();
-            return roundRobin(rows, limit);
+            List<ReferenceImage> output = roundRobin(rows, limit);
+            return output.isEmpty()
+                    ? ReferenceImageLookup.noMatch(match, rawRows.size(), rows.size())
+                    : ReferenceImageLookup.ready(output, rawRows.size(), rows.size(), match);
         } catch (Exception error) {
             log.warn("参考图谱读取失败，按空列表降级: {}", error.getClass().getSimpleName());
-            return List.of();
+            return ReferenceImageLookup.unavailable(match);
         }
     }
 
     private synchronized boolean ensureCollectionLoaded() {
-        if (collectionLoadAttempted) return collectionLoaded;
+        if (collectionLoaded) return true;
+        long now = System.currentTimeMillis();
+        if (collectionLoadAttempted && now - lastCollectionLoadAttemptAt < COLLECTION_LOAD_RETRY_MS) return false;
         collectionLoadAttempted = true;
+        lastCollectionLoadAttemptAt = now;
         try {
             String collection = properties == null ? null : properties.getCollection();
             if (collection == null || collection.isBlank()) return false;
@@ -117,6 +136,7 @@ public class ReferenceImageStore {
             collectionLoaded = true;
             return true;
         } catch (Exception error) {
+            collectionLoaded = false;
             log.warn("参考图谱集合加载失败，按空列表降级: {}", error.getClass().getSimpleName());
             return false;
         }

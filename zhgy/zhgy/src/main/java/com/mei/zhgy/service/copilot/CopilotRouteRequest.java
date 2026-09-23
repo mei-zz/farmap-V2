@@ -12,6 +12,8 @@ public class CopilotRouteRequest {
     private String conversationId;
     private String clientMessageId;
     private Long contextVersion;
+    /** True only after the user explicitly reopens a saved conversation. */
+    private Boolean useConversationContext;
     private CopilotPageContext pageContext;
     private String farmId;
     private String fieldId;

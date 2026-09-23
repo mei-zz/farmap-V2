@@ -7,6 +7,10 @@ import com.mei.zhgy.service.copilot.CopilotRouteResult;
 import com.mei.zhgy.service.copilot.CopilotRouteService;
 import com.mei.zhgy.service.copilot.CopilotIntent;
 import com.mei.zhgy.service.copilot.CopilotResolutionStatus;
+import com.mei.zhgy.service.copilot.CopilotResponseMetadata;
+import com.mei.zhgy.service.copilot.CopilotResponsePolicy;
+import com.mei.zhgy.service.copilot.CopilotMediaNeed;
+import com.mei.zhgy.service.copilot.CopilotMediaPolicy;
 import com.mei.zhgy.service.copilot.CopilotPageContext;
 import com.mei.zhgy.service.copilot.CopilotConversationException;
 import com.mei.zhgy.service.copilot.CopilotLongTermMemoryService;
@@ -21,16 +25,18 @@ import com.mei.zhgy.dto.DiagnosisAnalyzeRequest;
 import com.mei.zhgy.service.rag.KnowledgeEvidenceRetriever;
 import com.mei.zhgy.service.diagnosis.DiagnosisJobService;
 import com.mei.zhgy.service.field.FarmFieldService;
+import com.mei.zhgy.service.field.FarmField;
 import com.mei.zhgy.service.field.FieldContext;
 import com.mei.zhgy.service.agent.AgentRuntime;
 import com.mei.zhgy.service.agent.AgentRun;
+import com.mei.zhgy.service.agent.AgentContext;
 import com.mei.zhgy.service.agriculture.FieldFacts;
 import com.mei.zhgy.service.agriculture.FieldFactsService;
 import com.mei.zhgy.service.agriculture.CropResolver;
 import com.mei.zhgy.service.agriculture.PhenologyResult;
 import com.mei.zhgy.service.agriculture.PhenologyService;
-import com.mei.zhgy.service.reference.ReferenceImage;
 import com.mei.zhgy.service.reference.ReferenceImageAttacher;
+import com.mei.zhgy.service.reference.ReferenceImageLookup;
 import com.mei.zhgy.result.Result;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -44,6 +50,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import lombok.Data;
 import com.fasterxml.jackson.annotation.JsonInclude;
 
@@ -66,6 +74,7 @@ import java.util.concurrent.Executors;
 @RestController
 @RequestMapping("/api/copilot")
 public class CopilotController {
+    private static final Logger log = LoggerFactory.getLogger(CopilotController.class);
     private static final ZoneId COPILOT_ZONE = ZoneId.of("Asia/Shanghai");
     private static final DateTimeFormatter COPILOT_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy年M月d日 EEEE", Locale.SIMPLIFIED_CHINESE);
     private final CopilotRouteService routes;
@@ -180,6 +189,19 @@ public class CopilotController {
         return conversations.view(conversationId, requireUser());
     }
 
+    @GetMapping("/conversations")
+    public List<com.mei.zhgy.service.copilot.CopilotConversationListItem> listConversations(
+            @RequestParam(defaultValue = "24") int limit) {
+        requireConversationService();
+        return conversations.list(requireUser(), limit);
+    }
+
+    @PostMapping("/conversations/{conversationId}/resume")
+    public com.mei.zhgy.service.copilot.CopilotConversationView resumeConversation(@PathVariable String conversationId) {
+        requireConversationService();
+        return conversations.resume(conversationId, requireUser());
+    }
+
     @PostMapping("/route")
     public CopilotRouteResult route(@RequestBody CopilotRouteRequest request) {
         return routes.route(request, requireUser());
@@ -206,12 +228,39 @@ public class CopilotController {
     private void streamChat(CopilotChatRequest request, Long userId, SseEmitter emitter) {
         try {
             send(emitter, "status", Map.of("message", "正在结合你的农场情况…"));
-            CopilotRouteResult routed = routes.route(request, userId);
+            CopilotRouteResult routed = routes.route(request, userId, !trustedImageUrls(request.getImageUrls()).isEmpty());
             send(emitter, "route", routed);
+            if (routed.getIntent() == CopilotIntent.GENERAL_QA
+                    && routed.getResolutionStatus() == CopilotResolutionStatus.RESOLVED
+                    && isCasualGreeting(request.getMessage())) {
+                // A greeting is a conversational turn, not an agriculture
+                // query. Keep it out of field-fact and RAG enrichment so the
+                // user does not receive an unrelated phenology report.
+                sendResponseMetadata(emitter, request, routed, null, false, false,
+                        null, null, "NOT_REQUESTED", List.of());
+                String greeting = "你好，我是 FarMap 农业 Agent。你可以直接提问农事知识，或粘贴现场图片让我分析。";
+                streamDelta(emitter, greeting);
+                appendChatAnswer(request, routed, greeting, userId);
+                sendDone(emitter, "COMPLETED");
+                return;
+            }
             if (routed.getIntent() != CopilotIntent.GENERAL_QA && routed.getIntent() != CopilotIntent.KNOWLEDGE_QUERY) {
                 if (routed.getIntent() == CopilotIntent.DIAGNOSIS_REQUEST && routed.getResolutionStatus() == CopilotResolutionStatus.RESOLVED) {
+                    boolean hasImages = !trustedImageUrls(request.getImageUrls()).isEmpty();
+                    if (asksVisualEvidence(request.getMessage()) && !hasImages) {
+                        CopilotFacts knownFacts = resolveCopilotFacts(request, routed, userId);
+                        sendResponseMetadata(emitter, request, routed, knownFacts, false,
+                                knownFacts != null && "READY".equals(knownFacts.status()),
+                                knownFacts == null ? null : knownFacts.cropLabel(),
+                                knownFacts == null ? null : knownFacts.growthStageLabel(), "NOT_REQUESTED", List.of());
+                        String clarification = visualEvidenceClarification(request, routed, knownFacts);
+                        streamDelta(emitter, clarification);
+                        appendChatAnswer(request, routed, clarification, userId);
+                        sendDone(emitter, "COMPLETED");
+                        return;
+                    }
                     try {
-                        startDiagnosisAndAgent(request, routed, userId, emitter);
+                        startDiagnosisAndAgent(request, routed, userId, emitter, !isReadOnlyAnalysis(request.getMessage()));
                     } catch (FieldAccessException error) {
                         throw error;
                     } catch (RuntimeException failure) {
@@ -221,7 +270,13 @@ public class CopilotController {
                 }
                 if (routed.getIntent() == CopilotIntent.ACTION_REQUEST && routed.getResolutionStatus() == CopilotResolutionStatus.RESOLVED) {
                     try {
-                        startAgentFromDiagnosis(request, routed, userId, emitter);
+                        if ((isDirectTaskRequest(request.getMessage()) || routed.getRequestedAction() != null)
+                                && (routed.getResolvedContext() == null || routed.getResolvedContext().getDiagnosisId() == null
+                                || routed.getResolvedContext().getDiagnosisId().isBlank())) {
+                            startDirectTaskAgent(request, routed, userId, emitter);
+                        } else {
+                            startAgentFromDiagnosis(request, routed, userId, emitter);
+                        }
                     } catch (FieldAccessException error) {
                         throw error;
                     } catch (RuntimeException failure) {
@@ -232,11 +287,13 @@ public class CopilotController {
                 if (routed.getResolutionStatus() == CopilotResolutionStatus.FORBIDDEN
                         || routed.getResolutionStatus() == CopilotResolutionStatus.UNSUPPORTED) {
                     String rejection = routed.getClarificationQuestion() == null ? "当前请求未通过访问或安全校验，未执行任何诊断、Agent 或写操作。" : routed.getClarificationQuestion();
+                    sendResponseMetadata(emitter, request, routed, null, false, false, null, null, "NOT_REQUESTED", List.of());
                     streamDelta(emitter, rejection);
                     appendChatAnswer(request, routed, rejection, userId);
                     sendDone(emitter, "REJECTED");
                 } else if (routed.getIntent() == CopilotIntent.CLARIFICATION_REQUIRED) {
                     String clarification = routed.getClarificationQuestion() == null ? "请明确要查询的对象或希望执行的动作。" : routed.getClarificationQuestion();
+                    sendResponseMetadata(emitter, request, routed, null, false, false, null, null, "NOT_REQUESTED", List.of());
                     streamDelta(emitter, clarification);
                     appendChatAnswer(request, routed, clarification, userId);
                     sendDone(emitter, "COMPLETED");
@@ -247,6 +304,7 @@ public class CopilotController {
             }
             if (routed.isRequiresClarification() || routed.getResolutionStatus() != CopilotResolutionStatus.RESOLVED) {
                 String clarification = routed.getClarificationQuestion() == null ? "请先选择要讨论的农场或地块。" : routed.getClarificationQuestion();
+                sendResponseMetadata(emitter, request, routed, null, false, false, null, null, "NOT_REQUESTED", List.of());
                 streamDelta(emitter, clarification);
                 appendChatAnswer(request, routed, clarification, userId);
                 sendDone(emitter, "COMPLETED");
@@ -261,18 +319,24 @@ public class CopilotController {
             if ("PUBLIC_GENERIC".equals(facts.status())) send(emitter, "status", Map.of("message", "未使用地块实时数据，已按" + facts.cropLabel() + "通用物候历和服务器日期推算。", "code", "PUBLIC_GENERIC"));
             KnowledgeBundle knowledge = retrieveKnowledge(request, routed, facts, userId);
             send(emitter, "knowledge", Map.of("count", knowledge.items().size(), "items", knowledge.items(), "status", knowledge.status()));
-            List<ReferenceImage> referenceImages = referenceImageAttacher == null
-                    ? List.of() : referenceImageAttacher.forChat(request.getMessage(), facts.crop(), facts.growthStage());
-            send(emitter, "reference.images", Map.of("count", referenceImages.size(), "items", referenceImages));
+            ReferenceImageResponse referenceImages = emitReferenceImages(emitter, request, routed, facts);
             Map<String, Object> source = answerSource(routed, facts, knowledge, request.getMessage());
             send(emitter, "answer.source", source);
+            sendResponseMetadata(emitter, request, routed, facts, !trustedImageUrls(request.getImageUrls()).isEmpty(),
+                    facts != null && "READY".equals(facts.status()), facts == null ? null : facts.cropLabel(),
+                    facts == null ? null : facts.growthStageLabel(), knowledge.status(), knowledge.items());
             if ("UNAVAILABLE".equals(knowledge.status())) send(emitter, "status", Map.of("message", "当前知识库暂不可用；不会伪造地块事实，通用问题将按兜底策略处理。", "code", "KNOWLEDGE_UNAVAILABLE"));
             send(emitter, "status", Map.of("message", "正在生成建议…"));
             if (modelGateway == null) send(emitter, "status", Map.of("message", "模型暂不可用，无法生成建议。", "code", "MODEL_UNAVAILABLE"));
             String answer = streamModelAnswer(request, routed, facts, knowledge, userId, emitter);
-            appendChatAnswer(request, routed, answer, userId);
+            appendChatAnswer(request, routed, answer, userId, referenceImages);
             sendDone(emitter, "COMPLETED");
         } catch (Exception error) {
+            // The browser intentionally receives a safe message. Retain the
+            // operational cause server-side without logging prompt or image data.
+            log.error("COPILOT_CHAT_FAILED userId={} errorType={}", userId,
+                    error instanceof ModelCallException modelError ? modelError.getErrorType() : error.getClass().getSimpleName(),
+                    error);
             try {
                 send(emitter, "error", Map.of("message", "Copilot 暂时不可用，请稍后重试。"));
                 sendDone(emitter, "FAILED");
@@ -284,8 +348,17 @@ public class CopilotController {
         }
     }
 
-    private void startDiagnosisAndAgent(CopilotChatRequest request, CopilotRouteResult routed, Long userId, SseEmitter emitter) throws IOException {
+    private void startDiagnosisAndAgent(CopilotChatRequest request, CopilotRouteResult routed, Long userId, SseEmitter emitter, boolean createAgentRun) throws IOException {
         if (diagnosisJobs == null) throw new IllegalStateException("诊断任务服务未初始化");
+        CopilotFacts knownFacts = null;
+        if (fieldFactsService != null && routed.getResolvedContext() != null && routed.getResolvedContext().getFieldId() != null) {
+            try { knownFacts = CopilotFacts.from(fieldFactsService.forField(routed.getResolvedContext().getFieldId(), userId)); }
+            catch (FieldAccessException error) { throw error; }
+            catch (RuntimeException ignored) { /* the existing diagnosis path will report the capability failure */ }
+        }
+        sendResponseMetadata(emitter, request, routed, knownFacts, !trustedImageUrls(request.getImageUrls()).isEmpty(),
+                knownFacts != null && "READY".equals(knownFacts.status()), knownFacts == null ? null : knownFacts.cropLabel(),
+                knownFacts == null ? null : knownFacts.growthStageLabel(), "NOT_REQUESTED", List.of());
         DiagnosisAnalyzeRequest diagnosis = new DiagnosisAnalyzeRequest();
         diagnosis.setFieldId(routed.getResolvedContext() == null ? null : routed.getResolvedContext().getFieldId());
         diagnosis.setFarmId(parseInt(routed.getResolvedContext() == null ? null : routed.getResolvedContext().getFarmId()));
@@ -313,6 +386,14 @@ public class CopilotController {
         }
         String recommendationId = completed.getResult() == null || completed.getResult().getRecommendations() == null || completed.getResult().getRecommendations().isEmpty()
                 ? null : completed.getResult().getRecommendations().get(0).getId();
+        if (!createAgentRun) {
+            String summary = diagnosisSummary(completed.getResult());
+            send(emitter, "diagnosis.completed", Map.of("diagnosisId", completed.getDiagnosisId(), "summary", summary));
+            streamDelta(emitter, summary);
+            appendChatAnswer(request, routed, summary, userId);
+            sendDone(emitter, "COMPLETED");
+            return;
+        }
         AgentRun run = createAgentFromDiagnosis(request.getMessage(), completed.getDiagnosisId(), recommendationId, userId);
         send(emitter, "run.created", Map.of("runId", run.getRunId(), "diagnosisId", completed.getDiagnosisId(), "status", "PLANNING"));
         sendDone(emitter, "RUN_CREATED");
@@ -323,8 +404,47 @@ public class CopilotController {
                 || routed.getResolvedContext().getRecommendationId() == null) {
             throw new IllegalStateException("当前建议缺少可验证的 Diagnosis provenance。");
         }
+        sendResponseMetadata(emitter, request, routed, null, !trustedImageUrls(request.getImageUrls()).isEmpty(), false,
+                null, null, "NOT_REQUESTED", List.of());
         AgentRun run = createAgentFromDiagnosis(request.getMessage(), routed.getResolvedContext().getDiagnosisId(), routed.getResolvedContext().getRecommendationId(), userId);
         send(emitter, "run.created", Map.of("runId", run.getRunId(), "diagnosisId", routed.getResolvedContext().getDiagnosisId(), "status", "PLANNING"));
+        sendDone(emitter, "RUN_CREATED");
+    }
+
+    /**
+     * Direct task requests have no Diagnosis provenance yet. They may still
+     * enter the normal Agent Runtime: the run reads the verified field,
+     * creates a proposed Operations action, and stops at human approval. No
+     * Operations row is written by this method.
+     */
+    private void startDirectTaskAgent(CopilotChatRequest request, CopilotRouteResult routed,
+                                      Long userId, SseEmitter emitter) throws IOException {
+        if (agentRuntime == null || routed.getResolvedContext() == null
+                || routed.getResolvedContext().getFieldId() == null
+                || routed.getResolvedContext().getFieldId().isBlank()) {
+            throw new IllegalStateException("创建农事任务需要已验证的地块上下文。");
+        }
+        CopilotFacts knownFacts = resolveCopilotFacts(request, routed, userId);
+        sendResponseMetadata(emitter, request, routed, knownFacts, !trustedImageUrls(request.getImageUrls()).isEmpty(),
+                knownFacts != null && "READY".equals(knownFacts.status()),
+                knownFacts == null ? null : knownFacts.cropLabel(),
+                knownFacts == null ? null : knownFacts.growthStageLabel(), "NOT_REQUESTED", List.of());
+        streamDelta(emitter, "已识别为农事任务请求，正在准备任务草案；未经过人工审批前不会写入任务。\n");
+
+        AgentContext context = new AgentContext();
+        context.setFarmId(routed.getResolvedContext().getFarmId());
+        context.setFieldId(routed.getResolvedContext().getFieldId());
+        context.setImageUrls(trustedImageUrls(request.getImageUrls()));
+        if (request.getPageContext() != null) context.setPage(request.getPageContext().getRoute());
+        String goal = routed.getRequestedAction() == null || routed.getRequestedAction().isBlank()
+                ? request.getMessage() : routed.getRequestedAction();
+        AgentRun run = agentRuntime.createRun(goal, context, "real", userId);
+        Map<String, Object> created = new LinkedHashMap<>();
+        created.put("runId", run.getRunId());
+        created.put("status", "PLANNING");
+        created.put("workflow", "OPERATIONS_TASK_DRAFT");
+        send(emitter, "run.created", created);
+        agentRuntime.start(run.getRunId());
         sendDone(emitter, "RUN_CREATED");
     }
 
@@ -340,18 +460,130 @@ public class CopilotController {
         CopilotFacts facts = resolveCopilotFacts(request, routed, userId);
         KnowledgeBundle knowledge = retrieveKnowledge(request, routed, facts, userId);
         send(emitter, "knowledge", Map.of("count", knowledge.items().size(), "items", knowledge.items(), "status", knowledge.status()));
-        List<ReferenceImage> referenceImages = referenceImageAttacher == null
-                ? List.of() : referenceImageAttacher.forChat(request.getMessage(), facts.crop(), facts.growthStage());
-        send(emitter, "reference.images", Map.of("count", referenceImages.size(), "items", referenceImages));
+        ReferenceImageResponse referenceImages = emitReferenceImages(emitter, request, routed, facts);
         send(emitter, "answer.source", answerSource(routed, facts, knowledge, request.getMessage()));
+        sendResponseMetadata(emitter, request, routed, facts, !trustedImageUrls(request.getImageUrls()).isEmpty(),
+                facts != null && "READY".equals(facts.status()), facts == null ? null : facts.cropLabel(),
+                facts == null ? null : facts.growthStageLabel(), knowledge.status(), knowledge.items());
         String answer = streamModelAnswer(request, routed, facts, knowledge, userId, emitter);
-        appendChatAnswer(request, routed, answer, userId);
+        appendChatAnswer(request, routed, answer, userId, referenceImages);
         sendDone(emitter, "COMPLETED");
     }
 
     private AgentRun createAgentFromDiagnosis(String goal, String diagnosisId, String recommendationId, Long userId) {
         if (agentRuntime == null) throw new IllegalStateException("Agent Runtime 未初始化");
         return agentRuntime.createRunFromPersistedDiagnosis(goal, diagnosisId, recommendationId, userId);
+    }
+
+    private void sendResponseMetadata(SseEmitter emitter, CopilotChatRequest request, CopilotRouteResult routed,
+                                      CopilotFacts facts, boolean hasImages, boolean fieldFactsReady,
+                                      String cropLabel, String growthStageLabel, String knowledgeStatus,
+                                      List<Map<String, Object>> knowledgeItems) throws IOException {
+        String messageId = request == null || request.getClientMessageId() == null || request.getClientMessageId().isBlank()
+                ? routed == null ? "copilot-response" : routed.getTraceId() : request.getClientMessageId();
+        CopilotResponseMetadata metadata = CopilotResponsePolicy.build(routed,
+                request == null ? "" : request.getMessage(), messageId, hasImages, fieldFactsReady,
+                cropLabel, growthStageLabel, knowledgeStatus, knowledgeItems);
+        send(emitter, "response.meta", metadata);
+    }
+
+    private ReferenceImageResponse emitReferenceImages(SseEmitter emitter, CopilotChatRequest request,
+                                                       CopilotRouteResult routed, CopilotFacts facts) throws IOException {
+        boolean hasUserImages = request != null && !trustedImageUrls(request.getImageUrls()).isEmpty();
+        CopilotMediaNeed mediaNeed = CopilotMediaPolicy.decide(request == null ? null : request.getMessage(),
+                routed == null ? null : routed.getIntent(), hasUserImages);
+        ReferenceImageLookup lookup = mediaNeed == CopilotMediaNeed.NONE || referenceImageAttacher == null
+                ? ReferenceImageLookup.notRequested()
+                : referenceImageAttacher.forChatResult(request == null ? null : request.getMessage(),
+                facts == null ? null : facts.crop(), facts == null ? null : facts.growthStage());
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("count", lookup.images().size());
+        payload.put("items", lookup.images());
+        payload.put("mediaNeed", mediaNeed.name());
+        payload.put("status", lookup.status());
+        payload.put("matchedRows", lookup.matchedRows());
+        payload.put("acceptedRows", lookup.acceptedRows());
+        String message = referenceImageMessage(lookup.status(), mediaNeed);
+        if (message != null) payload.put("message", message);
+        send(emitter, "reference.images", payload);
+        log.info("COPILOT_REFERENCE_LOOKUP traceId={} intent={} mediaNeed={} status={} matchedRows={} acceptedRows={} returned={}",
+                routed == null ? null : routed.getTraceId(), routed == null || routed.getIntent() == null ? null : routed.getIntent().name(),
+                mediaNeed.name(), lookup.status(), lookup.matchedRows(), lookup.acceptedRows(), lookup.images().size());
+        return new ReferenceImageResponse(lookup, mediaNeed, message);
+    }
+
+    private String referenceImageMessage(String status, CopilotMediaNeed mediaNeed) {
+        if (mediaNeed == CopilotMediaNeed.NONE) return null;
+        if ("NO_MATCH".equals(status)) return "当前知识库未找到与该问题匹配的参考图片。";
+        if ("UNAVAILABLE".equals(status)) return "参考图谱当前不可用，未返回参考图片。";
+        return null;
+    }
+
+    private boolean asksVisualEvidence(String message) {
+        String value = safe(message);
+        return contains(value, "现场图片", "图片", "图像", "照片", "拍照", "可见异常", "叶片", "病斑");
+    }
+
+    private boolean isCasualGreeting(String message) {
+        String value = safe(message).toLowerCase(Locale.ROOT);
+        return value.matches("^(你好|您好|嗨|哈喽|hello|hi|谢谢|多谢|辛苦了|在吗|你是谁)[！!。,.？? ]*$");
+    }
+
+    private boolean isDirectTaskRequest(String message) {
+        String value = safe(message).toLowerCase(Locale.ROOT);
+        boolean requested = (contains(value, "创建任务", "创建农事任务", "生成任务", "新建任务", "创建浇水任务", "创建施肥任务",
+                "安排农事任务", "安排浇水任务", "安排施肥任务", "create task", "schedule task")
+                || value.matches(".*(?:创建|生成|新建|安排).{0,12}任务.*")
+                || isAgentPlanningRequest(value));
+        return requested && !contains(value, "不要创建", "不创建", "无需创建", "只分析", "仅分析", "do not create", "without executing");
+    }
+
+    private boolean isAgentPlanningRequest(String value) {
+        boolean planningObject = contains(value, "农事计划", "农事安排", "作业计划", "管理计划", "一周计划", "周计划", "未来一周", "本周计划", "farm plan", "weekly plan");
+        boolean directive = contains(value, "帮我制定", "请制定", "给我制定", "制定一份", "帮我生成", "请生成", "给我生成", "生成一份",
+                "帮我规划", "请规划", "给我规划", "规划一份", "create a plan", "make a plan");
+        return planningObject && directive;
+    }
+
+    private String visualEvidenceClarification(CopilotChatRequest request, CopilotRouteResult routed, CopilotFacts facts) {
+        String fieldId = routed == null || routed.getResolvedContext() == null ? null : routed.getResolvedContext().getFieldId();
+        String crop = facts == null ? null : facts.cropLabel();
+        String known = (fieldId == null || fieldId.isBlank()) && (crop == null || crop.isBlank())
+                ? "我已识别这是一次现场异常分析"
+                : "我已知道你咨询的是" + (fieldId == null || fieldId.isBlank() ? "当前地块" : fieldId)
+                + (crop == null || crop.isBlank() ? "" : "的" + crop) + "";
+        String query = safe(request == null ? null : request.getMessage());
+        String missingImage = query.contains("叶片") ? "叶片正反面照片" : query.contains("果") ? "果实和受影响部位照片" : "现场图片";
+        String missingTime = contains(query, "发黄", "变色", "病斑", "腐烂", "掉果", "异常") ? "，并说明症状从什么时候开始" : "";
+        return known + "。目前还缺少" + missingImage + missingTime + "；我不会在证据不足时猜测病因或直接给出用药结论。";
+    }
+
+    private boolean isReadOnlyAnalysis(String message) {
+        String value = safe(message);
+        return contains(value, "暂不执行", "不要执行", "不要创建任务", "不创建任务", "仅分析", "只读分析", "先分析再决定");
+    }
+
+    private String diagnosisSummary(com.mei.zhgy.vo.DiagnosisAnalysisResponse result) {
+        if (result == null) return "诊断已完成，但暂未返回可展示的结构化结论。";
+        StringBuilder output = new StringBuilder("### 只读诊断结果\n\n");
+        if (result.getDiagnosis() != null) {
+            String title = result.getDiagnosis().getTitle();
+            String summary = result.getDiagnosis().getSummary();
+            if (title != null && !title.isBlank()) output.append("**结论：** ").append(title).append("\n\n");
+            if (summary != null && !summary.isBlank()) output.append(summary).append("\n\n");
+        }
+        if (result.getRecommendations() != null && !result.getRecommendations().isEmpty()) {
+            output.append("**下一步建议：**\n");
+            result.getRecommendations().stream().limit(3).forEach(item -> {
+                if (item != null && item.getTitle() != null && !item.getTitle().isBlank()) {
+                    output.append("- ").append(item.getTitle());
+                    if (item.getDetail() != null && !item.getDetail().isBlank()) output.append("：").append(item.getDetail());
+                    output.append("\n");
+                }
+            });
+        }
+        return output.toString().trim();
     }
 
     private DiagnosisJobService.DiagnosisJobResponse waitForDiagnosis(String jobId, Long userId, SseEmitter emitter) throws IOException {
@@ -370,12 +602,28 @@ public class CopilotController {
         LocalDate today = LocalDate.now(COPILOT_ZONE);
         String currentDate = today.format(COPILOT_DATE_FORMAT);
         String fieldId = routed == null || routed.getResolvedContext() == null ? null : routed.getResolvedContext().getFieldId();
+        // The overview page can have a selected farm without a selected field.
+        // Use the farm's server-owned field master only when it has one
+        // unambiguous crop. This gives media/reference retrieval a trusted crop
+        // context without guessing from the disease name or the UI label.
+        if (fieldId == null || fieldId.isBlank()) {
+            CopilotFacts farmFacts = farmFactsFromContext(request, routed, userId, today, currentDate);
+            if (farmFacts != null) return farmFacts;
+        }
         if (fieldFactsService != null) {
-            FieldFacts facts = fieldFactsService.forField(fieldId, userId);
-            CopilotFacts resolved = CopilotFacts.from(facts);
-            if (resolved.ready()) return resolved;
-            CopilotFacts publicFacts = publicFactsFromQuery(request, userId, today, currentDate);
-            return publicFacts == null ? resolved : publicFacts;
+            try {
+                FieldFacts facts = fieldFactsService.forField(fieldId, userId);
+                CopilotFacts resolved = CopilotFacts.from(facts);
+                if (resolved.ready()) return resolved;
+                CopilotFacts publicFacts = publicFactsFromQuery(request, userId, today, currentDate);
+                return publicFacts == null ? resolved : publicFacts;
+            } catch (FieldAccessException error) {
+                throw error;
+            } catch (RuntimeException failure) {
+                log.warn("COPILOT_FIELD_FACTS_DEGRADED userId={} fieldBound={}", userId, fieldId != null && !fieldId.isBlank(), failure);
+                CopilotFacts publicFacts = publicFactsFromQuery(request, userId, today, currentDate);
+                return publicFacts == null ? CopilotFacts.empty(currentDate, "UNAVAILABLE") : publicFacts;
+            }
         }
         if (fieldId == null || fieldId.isBlank()) {
             CopilotFacts publicFacts = publicFactsFromQuery(request, userId, today, currentDate);
@@ -404,6 +652,52 @@ public class CopilotController {
         } catch (RuntimeException ignored) {
             CopilotFacts publicFacts = publicFactsFromQuery(request, userId, today, currentDate);
             return publicFacts == null ? CopilotFacts.empty(currentDate, "UNAVAILABLE") : publicFacts;
+        }
+    }
+
+    private CopilotFacts farmFactsFromContext(CopilotChatRequest request, CopilotRouteResult routed,
+                                              Long userId, LocalDate today, String currentDate) {
+        if (farmFieldService == null) return null;
+        String rawFarmId = routed == null || routed.getResolvedContext() == null
+                ? null : routed.getResolvedContext().getFarmId();
+        if (rawFarmId == null || rawFarmId.isBlank()) {
+            CopilotPageContext page = request == null ? null : request.getPageContext();
+            rawFarmId = page == null ? null : page.getFarmId();
+        }
+        Integer farmId = parseInt(rawFarmId);
+        if (farmId == null) return null;
+        try {
+            List<FarmField> fields = farmFieldService.list(farmId, userId);
+            if (fields == null || fields.isEmpty()) return null;
+            List<CropResolver.ResolvedCrop> crops = fields.stream()
+                    .map(FarmField::getCrop)
+                    .map(cropResolver::resolve)
+                    .filter(CropResolver.ResolvedCrop::ready)
+                    .filter(crop -> crop.code() != null && !crop.code().isBlank())
+                    .collect(java.util.stream.Collectors.toMap(
+                            CropResolver.ResolvedCrop::code,
+                            crop -> crop,
+                            (left, ignored) -> left,
+                            LinkedHashMap::new))
+                    .values().stream().toList();
+            // A mixed-crop farm needs a field selection before a reference image
+            // can be attached; never silently choose one crop in that case.
+            if (crops.size() != 1) return null;
+            CropResolver.ResolvedCrop crop = crops.get(0);
+            FarmField representative = fields.stream()
+                    .filter(field -> crop.code().equals(cropResolver.resolve(field.getCrop()).code()))
+                    .findFirst().orElse(null);
+            String registeredStage = representative == null ? null : representative.getGrowthStage();
+            PhenologyResult result = phenologyService.calculate(crop.code(), today, registeredStage);
+            return CopilotFacts.from(currentDate, crop, result,
+                    phenologyService.orderedStageNames(crop.code()), phenologyService.cycleType(crop.code()),
+                    Map.of("serverDate", "SERVER_ASIA_SHANGHAI", "crop", "MYSQL_FARM_FIELDS",
+                            "currentStage", registeredStage == null ? "SERVER_RULE" : "MYSQL_FARM_FIELD"),
+                    "FARM_CONTEXT");
+        } catch (RuntimeException failure) {
+            log.warn("COPILOT_FARM_FACTS_DEGRADED userId={} farmId={}", userId, farmId,
+                    failure.getClass().getSimpleName());
+            return null;
         }
     }
 
@@ -455,7 +749,16 @@ public class CopilotController {
         rewriteContext.put("untaggedOnly", untaggedOnly);
         query.setContext(rewriteContext);
         query.setEnabledModalities(List.of("knowledge"));
-        var result = knowledgeRetriever.retrieveWithStatus(query, userId);
+        final com.mei.zhgy.service.rag.KnowledgeEvidenceRetriever.RetrievalResult result;
+        try {
+            result = knowledgeRetriever.retrieveWithStatus(query, userId);
+        } catch (RuntimeException failure) {
+            // Knowledge enrichment must not turn a normal Copilot question
+            // into a total outage. The response model can still provide the
+            // configured, clearly labelled L3 general-agriculture fallback.
+            log.warn("COPILOT_KNOWLEDGE_DEGRADED userId={} cropBound={}", userId, crop != null && !crop.isBlank(), failure);
+            return new KnowledgeBundle("UNAVAILABLE", List.of());
+        }
         List<Map<String, Object>> output = new ArrayList<>();
         if (result == null || result.getEvidence() == null) return new KnowledgeBundle("UNAVAILABLE", output);
         result.getEvidence().forEach(item -> {
@@ -464,6 +767,12 @@ public class CopilotController {
             value.put("content", item.getPreview() == null ? item.getSummary() : item.getPreview().getTextSnippet());
             value.put("score", item.getScore());
             value.put("source", item.getSource() == null ? null : item.getSource().getDocument());
+            if (item.getSource() != null) {
+                value.put("sourceId", item.getSource().getSourceId());
+                value.put("documentId", item.getSource().getDocumentId());
+                value.put("versionId", item.getSource().getVersionId());
+                value.put("contentHash", item.getSource().getContentHash());
+            }
             value.put("chunkId", item.getId());
             output.add(value);
         });
@@ -521,7 +830,11 @@ public class CopilotController {
         context.put("answerSource", source.get("layer"));
         context.put("answerSourceWarning", source.get("warning"));
         context.put("allowUngrounded", allowUngrounded);
-        context.put("modelPolicy", allowUngrounded ? "allow_ungrounded" : "grounded_only");
+        // Interactive chat must reach first-token latency quickly and should
+        // not enter the large random answer pool. Grounding remains an
+        // independent safety policy carried in the prompt/context.
+        context.put("modelPolicy", "force_fast");
+        context.put("groundingPolicy", allowUngrounded ? "allow_ungrounded" : "grounded_only");
         boolean privateFactQuestion = asksPrivateFacts(request.getMessage());
         String sourceInstruction = privateFactQuestion
                 ? "这是涉及用户地块、数值、历史或检测的私有事实问题；缺少对应私有事实时绝不编造，只能明确指出缺口；若补充一般说明，必须标明‘以下为通用建议，未结合你的地块数据，仅供参考’。"
@@ -741,9 +1054,27 @@ public class CopilotController {
     }
 
     private void appendChatAnswer(CopilotChatRequest request, CopilotRouteResult routed, String answer, Long userId) {
+        appendChatAnswer(request, routed, answer, userId, null);
+    }
+
+    private void appendChatAnswer(CopilotChatRequest request, CopilotRouteResult routed, String answer, Long userId,
+                                  ReferenceImageResponse referenceImages) {
         if (request.getConversationId() == null || conversations == null) return;
-        try { conversations.appendAssistantAnswer(request.getConversationId(), userId, routed.getIntent(), routed.getTraceId(), answer); }
+        try { conversations.appendAssistantAnswer(request.getConversationId(), userId, routed.getIntent(), routed.getTraceId(), answer,
+                referenceImages == null ? null : referenceImages.persistenceMetadata()); }
         catch (RuntimeException ignored) { /* optional conversation persistence must not break the answer */ }
+    }
+
+    private record ReferenceImageResponse(ReferenceImageLookup lookup, CopilotMediaNeed mediaNeed, String message) {
+        private Map<String, Object> persistenceMetadata() {
+            Map<String, Object> metadata = new LinkedHashMap<>();
+            metadata.put("schemaVersion", 1);
+            metadata.put("referenceImages", lookup.images());
+            metadata.put("referenceImageStatus", lookup.status());
+            if (lookup.match() != null && !lookup.match().isBlank()) metadata.put("referenceImageMatch", lookup.match());
+            if (message != null && !message.isBlank()) metadata.put("referenceImageNotice", message);
+            return metadata;
+        }
     }
 
     private Integer parseInt(String value) {
@@ -985,8 +1316,11 @@ public class CopilotController {
         if (view == null) return "无";
         List<com.mei.zhgy.service.copilot.CopilotConversationTurn> turns = view.getRecentTurns() == null
                 ? List.of() : view.getRecentTurns();
-        String joined = turns.stream()
-                .skip(Math.max(0, turns.size() - 10L))
+        List<com.mei.zhgy.service.copilot.CopilotConversationTurn> visibleTurns = turns.stream()
+                .filter(com.mei.zhgy.service.copilot.CopilotConversationTurnPolicy::isVisibleConversationTurn)
+                .toList();
+        String joined = visibleTurns.stream()
+                .skip(Math.max(0, visibleTurns.size() - 10L))
                 .map(turn -> turn.getRole() + "：" + turn.getMessage())
                 .reduce((left, right) -> left + "\n" + right).orElse("无");
         String summary = view.getSummary();

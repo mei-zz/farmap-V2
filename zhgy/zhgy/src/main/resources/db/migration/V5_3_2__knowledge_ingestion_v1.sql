@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS knowledge_ingestions (
   UNIQUE KEY uk_knowledge_ingestion_file_hash (source_id, source_file_hash),
   INDEX idx_knowledge_ingestion_status (status),
   INDEX idx_knowledge_ingestion_document (document_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS knowledge_chunks (
   chunk_id VARCHAR(160) NOT NULL,
@@ -45,4 +45,4 @@ CREATE TABLE IF NOT EXISTS knowledge_chunks (
   INDEX idx_knowledge_chunk_version (version_id),
   INDEX idx_knowledge_chunk_source (source_id),
   INDEX idx_knowledge_chunk_document (document_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

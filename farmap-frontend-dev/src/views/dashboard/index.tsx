@@ -202,9 +202,13 @@ export default function Map() {
             "potassium",
             "phosphorus",
         ];
-        const values = crops.map((c) => Number(c.info[info as keyof Crop["info"]]));
+        const values = crops
+            .map((c) => Number(c.info[info as keyof Crop["info"]]))
+            .filter((value) => Number.isFinite(value));
         let max = 0;
         let min = 0;
+        let left = 0;
+        let right = 1;
         if (shouldManualSet.includes(info)) {
             if (info === "phenology") {
                 max = 9;
@@ -214,15 +218,30 @@ export default function Map() {
                 min = 1;
             }
         } else {
-            max = Math.max(...values);
-            min = Math.min(...values);
+            min = values.length ? Math.min(...values) : 0;
+            max = values.length ? Math.max(...values) : 1;
+            // A flat or absent data series has no mathematical slider range.
+            // Keep a one-unit visual range and select every value by default.
+            if (max <= min) max = min + 1;
+        }
+
+        const range = max - min;
+        if (shouldManualSet.includes(info)) {
+            left = range * 0.2 + min;
+            right = range * 0.8 + min;
+        } else if (values.length && Math.max(...values) > Math.min(...values)) {
+            left = range * 0.2 + min;
+            right = range * 0.8 + min;
+        } else {
+            left = min;
+            right = max;
         }
 
         // Update slider range and values
         setSlider({
             value: {
-                left: (max - min) * 0.2 + min,
-                right: (max - min) * 0.8 + min,
+                left,
+                right,
             },
             scale: {
                 max,

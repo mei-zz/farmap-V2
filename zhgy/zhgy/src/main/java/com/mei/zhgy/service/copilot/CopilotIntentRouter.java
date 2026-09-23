@@ -39,7 +39,7 @@ public class CopilotIntentRouter {
     public Classification classify(String rawMessage) {
         String message = rawMessage == null ? "" : rawMessage.trim();
         if (message.isBlank()) return new Classification(CopilotIntent.CLARIFICATION_REQUIRED, 0D, null);
-        String normalized = message.toLowerCase(Locale.ROOT);
+        String normalized = CopilotQueryNormalizer.forMatching(message);
         if (normalized.matches(".*(" + INJECTION_PATTERN + ").*")) {
             return new Classification(CopilotIntent.UNSUPPORTED, DETERMINISTIC_CONFIDENCE, null);
         }
@@ -56,24 +56,45 @@ public class CopilotIntentRouter {
             return new Classification(CopilotIntent.MEMORY_WRITE_REQUEST, DETERMINISTIC_CONFIDENCE, null);
         }
         boolean navigation = contains(normalized, "打开", "带我去", "跳转", "导航到", "open ", "go to", "navigate", "navigation");
-        boolean action = contains(normalized, "安排", "执行", "启动agent", "启动 agent", "帮我处理", "落实", "schedule", "execute", "start agent");
+        boolean action = (contains(normalized, "安排", "执行", "启动agent", "启动 agent", "帮我处理", "落实", "schedule", "execute", "start agent")
+                || isTaskCreationRequest(normalized) || isAgentPlanningRequest(normalized))
+                && !hasNegatedActionConstraint(normalized);
         boolean priorities = contains(normalized, "今天最需要", "优先处理", "今天关注", "值得关注", "今日重点", "priority", "priorities", "what should i handle today", "what needs attention");
         boolean historicalCases = contains(normalized, "历史病例", "相似病例", "历史案例", "类似案例", "找病例", "similar case", "historical case");
         boolean farmStatus = contains(normalized, "今天农场怎么样", "农场状态", "农场概况", "farm status", "farm overview", "how is the farm");
         boolean diagnosisQuery = contains(normalized, "最近一次诊断", "查看诊断", "解释诊断", "诊断依据", "诊断证据", "latest diagnosis", "show diagnosis", "diagnosis evidence");
         boolean operations = contains(normalized, "任务状态", "任务进度", "任务做到", "做到哪一步", "作业状态", "未完成任务", "待处理任务", "有哪些任务还没完成", "现在怎么样", "目前怎么样", "operations", "task status", "task progress", "open tasks", "pending tasks");
         boolean outcome = contains(normalized, "处理结果", "执行结果", "效果怎么样", "效果如何", "结果如何", "结果呢", "outcome", "execution result");
-        boolean recommendation = contains(normalized, "应该怎么办", "怎么处理", "处理建议", "建议", "第一条建议", "recommendation", "what should we do");
-        boolean diagnosis = !diagnosisQuery && contains(normalized, "有什么问题", "帮我分析", "分析一下", "分析当前", "怎么了", "为什么", "原因", "诊断", "病害", "病斑", "发黄", "diagnos", "what is wrong", "why");
+        boolean recommendation = contains(normalized, "应该怎么办", "怎么处理", "处理建议", "建议", "管理方案", "制定管理方案", "结合地块制定方案", "第一条建议", "recommendation", "what should we do");
+        // “为什么/原因” alone is a knowledge explanation signal. Diagnosis
+        // requires an observable symptom, image request, or explicit
+        // diagnosis wording; otherwise a contextual explanation is sent to
+        // the knowledge path instead of opening a diagnosis job.
+        boolean explicitReferenceImage = contains(normalized, "给我看", "给我一张", "给我几张", "展示", "参考图片", "参考图", "图片", "图像", "照片");
+        boolean userProvidedEvidence = contains(normalized, "上传", "现场", "这张", "我的照片", "我拍的", "拍的照片",
+                "诊断这", "分析这", "分析图片", "分析图像", "图片分析", "识别图片", "识别图像");
+        // A disease appearance question is a reference-knowledge request,
+        // not a request to diagnose the current field. Without this branch,
+        // "褐腐病是什么样的" also matches the broad "病害" diagnosis
+        // signal below and enters the heavy diagnosis path before the
+        // reference.images SSE event can be emitted.
+        boolean diseaseAppearanceQuestion = contains(normalized,
+                "病害", "褐腐病", "褐腐", "穿孔病", "穿孔", "袋果病", "袋果", "锈病", "痘病毒")
+                && contains(normalized, "是什么样", "长什么样", "外观", "外观特征", "形态", "特征", "样子", "图片", "图像", "照片");
+        boolean visualKnowledge = !userProvidedEvidence && (explicitReferenceImage
+                || diseaseAppearanceQuestion
+                || (contains(normalized, "萌芽期", "萌芽", "花蕾期", "露白期", "花期", "坐果期", "果实发育期", "果实膨大期", "膨果期", "膨大期", "成熟期", "物候期")
+                && contains(normalized, "是什么样", "长什么样", "外观", "特征", "样子")));
+        boolean diagnosis = !diagnosisQuery && !visualKnowledge && contains(normalized, "有什么问题", "帮我分析", "分析一下", "分析当前", "现场图片", "图像", "照片", "拍照", "可见异常", "叶片异常", "长势差", "长势不好", "生长异常", "怎么了", "诊断", "病害", "病斑", "发黄", "diagnos", "what is wrong");
         boolean asksCurrentOrAdjacentPhenology = contains(normalized, "现在", "当前", "目前", "今天", "今日",
                 "下一个", "下一阶段", "下一期", "之后", "上一个", "上一阶段", "上一期", "之前");
         boolean cropPhenologyStatus = cropResolver.containsKnownAlias(normalized)
                 && asksCurrentOrAdjacentPhenology
                 && hasPhenologyQuestionSignal(normalized);
-        boolean fieldStatus = cropPhenologyStatus || contains(normalized, "当前地块", "这个地块", "地块信息", "地块状态", "最近需要注意", "近期需要注意", "最近情况", "当前情况", "农情", "field status", "field condition");
+        boolean fieldStatus = cropPhenologyStatus || contains(normalized, "当前地块", "这个地块", "那个地块", "刚才那个地块", "上一轮地块", "地块信息", "地块状态", "最近需要注意", "近期需要注意", "最近情况", "当前情况", "农情", "field status", "field condition");
         boolean cropOrPhenologyQuestion = cropResolver.containsKnownAlias(normalized) && hasPhenologySignal(normalized);
-        boolean knowledge = !fieldStatus && !historicalCases && (cropOrPhenologyQuestion
-                || contains(normalized, "是什么", "怎么办", "科普", "知识", "一般如何", "通常怎么", "knowledge", "what is", "how is"));
+        boolean knowledge = !fieldStatus && !historicalCases && (cropOrPhenologyQuestion || visualKnowledge
+                || contains(normalized, "是什么", "什么是", "何谓", "为什么", "原因", "怎么办", "长什么样", "有什么作用", "有何作用", "科普", "知识", "一般如何", "通常怎么", "knowledge", "what is", "how is"));
 
         int strongSignals = count(navigation, action, priorities, historicalCases, farmStatus, diagnosisQuery, operations, outcome, recommendation, diagnosis, knowledge, fieldStatus);
         if ((navigation && action) || (navigation && (diagnosis || recommendation) && contains(normalized, "并", " and ")) || strongSignals > 2) {
@@ -108,11 +129,26 @@ public class CopilotIntentRouter {
      * protected command, memory, navigation or safety decisions.
      */
     public HybridClassification classifyHybrid(String rawMessage, HybridContext context) {
+        return classifyHybrid(rawMessage, context, false);
+    }
+
+    /**
+     * Chat requests may carry user-uploaded photos. That is evidence about the
+     * current scene, not a request for atlas images, so make that signal
+     * available to routing without putting image URLs into the intent prompt.
+     */
+    public HybridClassification classifyHybrid(String rawMessage, HybridContext context, boolean hasUserImages) {
         Classification rule = classify(rawMessage);
+        if (hasUserImages && shouldTreatAsImageDiagnosis(rawMessage, rule)) {
+            rule = new Classification(CopilotIntent.DIAGNOSIS_REQUEST, DETERMINISTIC_CONFIDENCE, rule.safeRoute());
+        }
         if (hybridClassifier == null || !hybridClassifier.isEnabled() || !shouldDelegate(rawMessage, rule)) {
             return new HybridClassification(rule, rule, null, null);
         }
         HybridContext safeContext = context == null ? new HybridContext("", null, "") : context;
+        if (hybridClassifier.isRuleOnlyMode()) {
+            return new HybridClassification(rule, rule, null, null);
+        }
         if (hybridClassifier.isShadowMode()) {
             hybridClassifier.classifyShadow(rawMessage, safeContext, rule);
             return new HybridClassification(rule, rule, null, null);
@@ -120,6 +156,14 @@ public class CopilotIntentRouter {
         LlmIntentResult llm = hybridClassifier.classify(rawMessage, safeContext, rule);
         Classification finalClassification = arbitrate(rule, llm);
         return new HybridClassification(rule, finalClassification, llm, llm == null ? null : llm.slots());
+    }
+
+    private boolean shouldTreatAsImageDiagnosis(String rawMessage, Classification rule) {
+        if (rule == null || rule.intent() == null || isProtected(rule.intent())
+                || rule.intent() == CopilotIntent.DIAGNOSIS_REQUEST) return false;
+        String normalized = CopilotQueryNormalizer.forMatching(rawMessage);
+        if (contains(normalized, "参考图", "参考图片", "给我看", "展示参考", "图库")) return false;
+        return !isGreeting(normalized) && !contains(normalized, "打开", "跳转", "导航", "记住", "忘记");
     }
 
     /** Optional injection keeps direct/unit construction of this router compatible. */
@@ -159,6 +203,40 @@ public class CopilotIntentRouter {
     private boolean contains(String value, String... terms) {
         for (String term : terms) if (value.contains(term)) return true;
         return false;
+    }
+
+    private boolean isGreeting(String value) {
+        return value.matches("^(你好|您好|嗨|哈喽|hello|hi|谢谢|多谢|辛苦了|在吗)[！!。,.？? ]*$");
+    }
+
+    /**
+     * A write verb inside a negative constraint is not an action request. This
+     * is intentionally conservative: the request can still be diagnosed or
+     * answered, but it cannot enter an Agent-start path by keyword accident.
+     */
+    private boolean hasNegatedActionConstraint(String normalized) {
+        return contains(normalized, "不执行", "不要执行", "别执行", "暂不执行", "不创建任务", "不要创建", "无需创建",
+                "不安排", "不要安排", "只分析", "仅分析", "先给方案", "等我确认", "do not execute", "don't execute",
+                "do not create", "without executing", "analysis only", "wait for my confirmation");
+    }
+
+    /**
+     * Direct Operations requests do not need an existing Diagnosis. They still
+     * enter the Agent approval workflow, where the server validates the current
+     * field and the Agent produces a proposed task before any write.
+     */
+    private boolean isTaskCreationRequest(String normalized) {
+        return contains(normalized, "创建任务", "创建农事任务", "生成任务", "新建任务", "创建浇水任务", "创建施肥任务",
+                "安排农事任务", "安排浇水任务", "安排施肥任务", "create task", "schedule task")
+                || normalized.matches(".*(?:创建|生成|新建|安排).{0,12}任务.*")
+                || isAgentPlanningRequest(normalized);
+    }
+
+    private boolean isAgentPlanningRequest(String normalized) {
+        boolean planningObject = contains(normalized, "农事计划", "农事安排", "作业计划", "管理计划", "一周计划", "周计划", "未来一周", "本周计划", "farm plan", "weekly plan");
+        boolean directive = contains(normalized, "帮我制定", "请制定", "给我制定", "制定一份", "帮我生成", "请生成", "给我生成", "生成一份",
+                "帮我规划", "请规划", "给我规划", "规划一份", "create a plan", "make a plan");
+        return planningObject && directive;
     }
 
     private int count(boolean... values) {

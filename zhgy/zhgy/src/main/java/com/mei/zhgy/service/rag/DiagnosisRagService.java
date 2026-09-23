@@ -161,10 +161,11 @@ public class DiagnosisRagService {
                 generationFallbackReason = "evidence_reference_validation_failed";
                 response = buildGroundedResponse(request, runId, evidence);
             } catch (ModelCallException exception) {
-                if (!"invalid_structured_output".equals(exception.getErrorType())) {
-                    throw exception;
-                }
-                generationFallbackReason = "structured_output_repair_failed";
+                // A provider outage must not erase already verified RAG evidence.
+                // Keep the diagnosis usable in a clearly marked grounded-template
+                // mode; the metadata exposes the exact model error for operations.
+                generationFallbackReason = "model_unavailable:" + exception.getErrorType();
+                log.warn("Qwen grounded generation unavailable; returning evidence-backed fallback: {}", exception.getErrorType());
                 response = buildGroundedResponse(request, runId, evidence);
             }
         } else {

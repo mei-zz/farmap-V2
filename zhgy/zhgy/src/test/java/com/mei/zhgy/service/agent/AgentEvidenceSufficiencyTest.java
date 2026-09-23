@@ -57,6 +57,21 @@ class AgentEvidenceSufficiencyTest {
         assertTrue(run.getTraces().stream().anyMatch(event -> "action.blocked.insufficient_evidence".equals(event.getType())));
     }
 
+    @Test void directTaskUsesVerifiedFieldContextAndStopsForApproval() {
+        AgentRuntime runtime = directTaskRuntime();
+        AgentContext context = AgentContext.builder().fieldId("field-1").build();
+        AgentRun created = runtime.createRun("帮我创建明天的浇水任务", context, "real");
+
+        AgentRun run = runtime.execute(created.getRunId());
+
+        assertEquals(RunStatus.WAITING_FOR_APPROVAL, run.getStatus());
+        assertEquals(ApprovalState.REQUIRED, run.getApprovalState());
+        assertEquals(1, run.getActions().size());
+        assertEquals(EvidenceSufficiencyStatus.SUFFICIENT, run.getEvidenceSufficiency().getStatus());
+        assertEquals("明天浇水 · A-12", run.getActions().get(0).getTitle());
+        assertEquals("task-context-" + run.getRunId(), run.getActions().get(0).getEvidenceIds().get(0));
+    }
+
     private AgentRuntime runtime(List<AgentPlanStep> steps) {
         AgentPlanner planner = new AgentPlanner(mock(ModelGateway.class), false, 4, 4, 120000) {
             @Override public AgentPlan plan(AgentRun run) {
@@ -76,6 +91,26 @@ class AgentEvidenceSufficiencyTest {
         AgentRuntime runtime = runtime(steps);
         AgentRun created = runtime.createRun("test write", context, "real");
         return runtime.execute(created.getRunId());
+    }
+
+    private AgentRuntime directTaskRuntime() {
+        List<AgentPlanStep> steps = List.of(
+                AgentPlanStep.builder().id("context").toolName("field-context").readOnly(true).build(),
+                AgentPlanStep.builder().id("weather").toolName("weather").readOnly(true).build(),
+                AgentPlanStep.builder().id("gis").toolName("gis").readOnly(true).build(),
+                AgentPlanStep.builder().id("task").toolName("task").readOnly(false).build());
+        AgentPlanner taskPlanner = new AgentPlanner(mock(ModelGateway.class), false, 8, 8, 120000) {
+            @Override public AgentPlan plan(AgentRun run) {
+                return AgentPlan.builder().steps(steps).maxSteps(8).maxToolCalls(8).timeoutMs(120000).plannerModel("test").schemaVersion("test").build();
+            }
+        };
+        List<AgentTool> tools = List.of(
+                tool("field-context", request -> ToolResult.builder().output(Map.of(
+                        "fieldFactsStatus", "READY", "fieldName", "A-12", "cropLabel", "脆李", "phenologyStageLabel", "花期")).build()),
+                tool("weather", request -> ToolResult.builder().output(Map.of("status", "READY")).build()),
+                tool("gis", request -> ToolResult.builder().output(Map.of("location", "FIELD")).build()),
+                tool("task", request -> ToolResult.builder().output(Map.of("status", "PROPOSED")).build()));
+        return new AgentRuntime(taskPlanner, new ToolExecutor(new ToolRegistry(tools)), new InMemoryAgentRunRepository(), new TraceRecorder(), new ApprovalManager());
     }
 
     private AgentContext createContext(String recommendationId, List<String> recommendationEvidenceIds, String field) {

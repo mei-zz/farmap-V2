@@ -19,6 +19,7 @@ class CropAndPhenologyTest {
         assertEquals("rice", resolver.resolve("水稻").code());
         assertEquals("rice_late", resolver.resolve("晚稻").code());
         assertEquals("plum", resolver.resolve("晚熟脆李").code());
+        assertEquals("plum", resolver.resolve("脆里").code());
         assertTrue(resolver.resolve("玉米").unknown());
 
         assertEquals("dormancy", new PhenologyService(resolver).resolveStage("脆李", "休眠").code());

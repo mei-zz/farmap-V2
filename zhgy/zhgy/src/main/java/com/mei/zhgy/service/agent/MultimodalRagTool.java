@@ -17,10 +17,15 @@ public class MultimodalRagTool implements AgentTool {
     @Override public ToolResult execute(AgentToolRequest request) {
         try {
             if (request.getContext() == null || request.getContext().imageCount() == 0) return ToolResult.unavailable("RAG_IMAGE_INPUT_EMPTY", "多模态 RAG 需要至少一张图像");
-            DiagnosisAnalysisResponse response = ragService.analyze(AgentDiagnosisRequestFactory.create(request), 0L);
+            Long ownerUserId = request.getOwnerUserId();
+            if (ownerUserId == null) {
+                return ToolResult.unavailable("RAG_OWNER_CONTEXT_EMPTY", "多模态 RAG 缺少当前登录用户上下文");
+            }
+            DiagnosisAnalysisResponse response = ragService.analyze(AgentDiagnosisRequestFactory.create(request), ownerUserId);
             Map<String, Object> output = new LinkedHashMap<>();
             output.put("diagnosis", response.getDiagnosis()); output.put("claims", response.getClaims()); output.put("recommendations", response.getRecommendations());
             output.put("retrievalSummary", response.getRetrievalSummary());
+            output.put("ownerUserId", ownerUserId);
             return ToolResult.builder().output(output).evidence(response.getEvidence()).metadata(response.getMetadata() == null ? new LinkedHashMap<>() : response.getMetadata()).build();
         } catch (IllegalArgumentException | IllegalStateException error) {
             return ToolResult.unavailable("RAG_UNAVAILABLE", error.getMessage());

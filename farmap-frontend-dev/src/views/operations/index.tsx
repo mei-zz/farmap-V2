@@ -16,10 +16,11 @@ import { loadGuidanceContext, type FarmGuidanceContext } from "@/features/agricu
 const { Text } = Typography;
 type OperationsTasksResult = { code: number; data?: { items?: OperationsTaskRaw[]; count?: number } };
 type OperationsOutcomeResult = { code: number; data?: OperationsOutcome };
+type FarmContextInput = { id: number; name: string; address: string; type: string };
 
 const guidanceLabels: Record<string, string> = { body: "树体管理", fertite: "水肥管理", pest: "病虫管理", park: "清园操作" };
 
-function getFarmContext(stored: ReturnType<typeof permanence.farm.useFarmStore>, current: { id: number; name: string; address: string; type: string }) {
+function getFarmContext(stored: FarmContextInput | undefined, current: FarmContextInput) {
   return {
     id: stored?.id ?? current.id,
     name: stored?.name || current.name || "当前农场",
@@ -50,17 +51,31 @@ export default function Operations() {
   const currentFarmName = useFarmStore((state) => state.name);
   const currentFarmAddress = useFarmStore((state) => state.address);
   const currentFarmType = useFarmStore((state) => state.type);
-  const storeFarm = { id: currentFarmId, name: currentFarmName, address: currentFarmAddress, type: currentFarmType };
-  const selectedFarm = currentFarmId > 0
-    ? storeFarm
-    : aiCurrentFarm.id > 0
-      ? { id: aiCurrentFarm.id, name: aiCurrentFarm.name, address: aiCurrentFarm.address, type: currentFarmType }
-      : undefined;
-  const farm = useMemo(() => selectedFarm ? getFarmContext(undefined, selectedFarm) : getFarmContext(storedFarm, storeFarm), [
-    storedFarm?.id,
-    storedFarm?.name,
-    storedFarm?.address,
-    storedFarm?.type,
+  const storedFarmId = storedFarm?.id;
+  const storedFarmName = storedFarm?.name;
+  const storedFarmAddress = storedFarm?.address;
+  const storedFarmType = storedFarm?.type;
+  const farm = useMemo(() => {
+    const storeFarm: FarmContextInput = {
+      id: currentFarmId,
+      name: currentFarmName,
+      address: currentFarmAddress,
+      type: currentFarmType,
+    };
+    const selectedFarm = currentFarmId > 0
+      ? storeFarm
+      : aiCurrentFarm.id > 0
+        ? { id: aiCurrentFarm.id, name: aiCurrentFarm.name, address: aiCurrentFarm.address, type: currentFarmType }
+        : undefined;
+    const persistedFarm = storedFarmId === undefined
+      ? undefined
+      : { id: storedFarmId, name: storedFarmName ?? "", address: storedFarmAddress ?? "", type: storedFarmType ?? "" };
+    return selectedFarm ? getFarmContext(undefined, selectedFarm) : getFarmContext(persistedFarm, storeFarm);
+  }, [
+    storedFarmId,
+    storedFarmName,
+    storedFarmAddress,
+    storedFarmType,
     currentFarmId,
     currentFarmName,
     currentFarmAddress,

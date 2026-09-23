@@ -37,6 +37,7 @@ public class IntentObservabilityController {
     public Result<Map<String, Object>> metrics() {
         Map<String, Object> mode = new LinkedHashMap<>();
         mode.put("enabled", safeEnabled());
+        mode.put("decisionMode", safeDecisionMode());
         mode.put("shadowMode", safeShadowMode());
         mode.put("routingMode", safeRoutingMode());
         mode.put("takeoverThreshold", safeTakeoverThreshold());
@@ -73,7 +74,11 @@ public class IntentObservabilityController {
     }
 
     private boolean safeShadowMode() {
-        try { return properties.isShadowMode(); } catch (RuntimeException ignored) { return true; }
+        try { return properties.effectiveShadowMode(); } catch (RuntimeException ignored) { return true; }
+    }
+
+    private String safeDecisionMode() {
+        try { return properties.effectiveDecisionMode(); } catch (RuntimeException ignored) { return "SHADOW"; }
     }
 
     private String safeRoutingMode() {

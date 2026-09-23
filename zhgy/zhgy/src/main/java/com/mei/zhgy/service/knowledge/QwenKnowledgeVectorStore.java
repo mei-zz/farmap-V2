@@ -290,7 +290,22 @@ public class QwenKnowledgeVectorStore {
                         .thenComparing(value -> value.chunkId, Comparator.nullsFirst(String::compareTo)));
                 candidates = capCandidates(candidates, candidateTopN);
             }
-            if (candidates.isEmpty()) return new SearchResult("READY_EMPTY", Collections.emptyList(), retrievalProvider(denseHit, lexicalHit), "READY_EMPTY");
+            if (candidates.isEmpty()) {
+                if (cropCode != null && allowUntaggedRelaxation) {
+                    // The production corpus currently contains legacy public
+                    // chunks whose crop metadata is absent. A strict crop
+                    // filter can therefore remove every candidate before the
+                    // normal output-stage relaxation below is reached. Retry
+                    // once without a crop filter and keep only untagged rows;
+                    // never use a row explicitly tagged for another crop.
+                    SearchResult relaxed = searchResult(query, actorId, requestedTopK, useReranker, null, false);
+                    List<KnowledgeVectorHit> untagged = relaxed.hits.stream()
+                            .filter(hit -> !hasAnyCropTag(hit.classification, hit.content)).toList();
+                    return new SearchResult(untagged.isEmpty() ? "READY_EMPTY" : "DEGRADED", untagged,
+                            relaxed.retrievalProvider, relaxed.rerankerStatus);
+                }
+                return new SearchResult("READY_EMPTY", Collections.emptyList(), retrievalProvider(denseHit, lexicalHit), "READY_EMPTY");
+            }
             String rerankerStatus = useReranker ? "UNAVAILABLE" : "NOT_USED";
             List<KnowledgeReranker.RerankResult> ranked = Collections.emptyList();
             if (useReranker && reranker != null && reranker.configured()) {

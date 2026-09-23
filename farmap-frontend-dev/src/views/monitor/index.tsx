@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { Alert, Card, Flex, Tag } from "antd";
-import { BarsOutlined, FundViewOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import { BarsOutlined, FundViewOutlined, RobotOutlined } from "@ant-design/icons";
 
 import VideoPlayer from "./VideoPlayer";
 import MonitorListView from "./list/MonitorListView";
@@ -129,8 +129,8 @@ export default function Monitor() {
       <Card
         title={
           <>
-            <ThunderboltOutlined />
-            &nbsp;&nbsp;在线推理
+            <RobotOutlined />
+            &nbsp;&nbsp;Agent 农事分析
           </>
         }
         style={{ flex: "1 0 40%" }}

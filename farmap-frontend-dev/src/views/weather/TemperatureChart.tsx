@@ -23,7 +23,8 @@ function TemperatureChart() {
   const token = permanence.token.useToken();
   // Use local farm store if it exists
   const localFarmStore = permanence.farm.useFarmStore();
-  const farmType = localFarmStore ? localFarmStore.type : useFarmStore((s) => s.type);
+  const currentFarmType = useFarmStore((s) => s.type);
+  const farmType = localFarmStore?.type ?? currentFarmType;
 
   // for painting
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -53,7 +54,7 @@ function TemperatureChart() {
     if (window.innerWidth >= 1000) {
       // console.log(123);
     }
-  }, []);
+  }, [farmType, token]);
 
   useEffect(() => {
     if (!containerRef.current) return;

@@ -47,7 +47,7 @@ export default function KnowledgeStatusPanel({ graph, onSelectNode }: { graph: K
               <Col xs={12} sm={6}><div><small>生产知识块</small><b>{display(graph.summary.productionChunkCount)}</b></div></Col>
               <Col xs={12} sm={6}><div><small>Evidence 关系</small><b>{display(graph.summary.evidenceCount)}</b></div></Col>
             </Row>
-            <Alert className="fm-knowledge-honesty" type="info" showIcon title="知识图谱 V1 是 provenance / relationship graph，不是语义本体图谱。" description={graph.coverage.note} />
+            {graph.coverage.note && <Alert className="fm-knowledge-honesty" type="info" showIcon description={graph.coverage.note} />}
           </Card>
         </Col>
         <Col xs={24} lg={10}>

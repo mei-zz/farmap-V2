@@ -82,7 +82,7 @@ public class CopilotContextResolver {
             }
 
             DiagnosisRecord diagnosisRecord = null;
-            if (requiresDiagnosis(intent)) {
+            if (requiresDiagnosis(intent, message)) {
                 if (blank(hints.getDiagnosisId())) return clarify("请先打开一条诊断，或先询问这个地块有什么问题。");
                 diagnosisRecord = diagnoses.findRecord(hints.getDiagnosisId(), userId).orElse(null);
                 if (diagnosisRecord == null) return forbidden();
@@ -105,12 +105,20 @@ public class CopilotContextResolver {
             }
 
             if (intent == CopilotIntent.ACTION_REQUEST) {
+                if (isDirectTaskRequest(message)) {
+                    // A direct task request is intentionally allowed to reach
+                    // Agent Runtime without a pre-existing Diagnosis. The
+                    // runtime will read the verified field context, propose a
+                    // task, and stop at the existing human approval gate.
+                    if (blank(hints.getFieldId())) return clarify("请先选择要创建任务的地块。", hints);
+                } else {
                 if (blank(hints.getRecommendationId()) && diagnosisRecord != null && firstRecommendation(message)) {
                     hints.setRecommendationId(firstRecommendationId(diagnosisRecord));
                 }
                 if (blank(hints.getRecommendationId())) return clarify("请明确要执行哪条建议；可以说“安排第一条建议”。", hints);
                 Optional<DiagnosisAnalysisResponse.Recommendation> recommendation = diagnoses.findRecommendation(hints.getDiagnosisId(), hints.getRecommendationId(), userId);
                 if (recommendation.isEmpty()) return forbidden();
+                }
             }
 
             if (intent == CopilotIntent.OPERATIONS_STATUS_QUERY || intent == CopilotIntent.OUTCOME_QUERY) {
@@ -166,26 +174,64 @@ public class CopilotContextResolver {
     }
 
     private CopilotStableContext merge(CopilotRouteRequest request, CopilotPageContext page, CopilotStableContext session) {
-        String selectedField = firstNonBlank(request == null ? null : request.getFieldId(), page == null ? null : page.getFieldId(), session == null ? null : session.getFieldId());
+        boolean continueSavedConversation = request != null && Boolean.TRUE.equals(request.getUseConversationContext());
+        // A restored conversation may carry an old field, but an explicitly
+        // selected page field is a fresh user choice and must win. Otherwise
+        // switching from a citrus field to the Wushan plum field still answers
+        // with the restored conversation's crop and phenology.
+        String explicitField = firstNonBlank(request == null ? null : request.getFieldId(), page == null ? null : page.getFieldId());
+        String selectedField = firstNonBlank(explicitField, session == null ? null : session.getFieldId());
+        String explicitFarm = firstNonBlank(request == null ? null : request.getFarmId(), page == null ? null : page.getFarmId());
+        String selectedFarm = firstNonBlank(explicitFarm, session == null ? null : session.getFarmId());
         boolean fieldChanged = session != null && !blank(session.getFieldId()) && !blank(selectedField) && !session.getFieldId().equals(selectedField);
         return CopilotStableContext.builder()
-                .farmId(firstNonBlank(request == null ? null : request.getFarmId(), page == null ? null : page.getFarmId(), session == null ? null : session.getFarmId()))
+                .farmId(selectedFarm)
                 .fieldId(selectedField)
-                .diagnosisId(firstNonBlank(request == null ? null : request.getDiagnosisId(), page == null ? null : page.getDiagnosisId(), fieldChanged ? null : session == null ? null : session.getDiagnosisId()))
-                .recommendationId(firstNonBlank(request == null ? null : request.getRecommendationId(), page == null ? null : page.getRecommendationId(), fieldChanged ? null : session == null ? null : session.getRecommendationId()))
-                .runId(firstNonBlank(request == null ? null : request.getRunId(), page == null ? null : page.getRunId(), fieldChanged ? null : session == null ? null : session.getRunId()))
-                .actionId(firstNonBlank(request == null ? null : request.getActionId(), page == null ? null : page.getActionId(), fieldChanged ? null : session == null ? null : session.getActionId()))
-                .taskId(firstNonBlank(request == null ? null : request.getTaskId(), page == null ? null : page.getTaskId(), fieldChanged ? null : session == null ? null : session.getTaskId()))
-                .outcomeId(firstNonBlank(request == null ? null : request.getOutcomeId(), page == null ? null : page.getOutcomeId(), fieldChanged ? null : session == null ? null : session.getOutcomeId()))
+                .diagnosisId(continueSavedConversation
+                        ? firstNonBlank(fieldChanged ? null : session == null ? null : session.getDiagnosisId(), request.getDiagnosisId(), page == null ? null : page.getDiagnosisId())
+                        : firstNonBlank(request == null ? null : request.getDiagnosisId(), page == null ? null : page.getDiagnosisId(), fieldChanged ? null : session == null ? null : session.getDiagnosisId()))
+                .recommendationId(continueSavedConversation
+                        ? firstNonBlank(fieldChanged ? null : session == null ? null : session.getRecommendationId(), request.getRecommendationId(), page == null ? null : page.getRecommendationId())
+                        : firstNonBlank(request == null ? null : request.getRecommendationId(), page == null ? null : page.getRecommendationId(), fieldChanged ? null : session == null ? null : session.getRecommendationId()))
+                .runId(continueSavedConversation
+                        ? firstNonBlank(fieldChanged ? null : session == null ? null : session.getRunId(), request.getRunId(), page == null ? null : page.getRunId())
+                        : firstNonBlank(request == null ? null : request.getRunId(), page == null ? null : page.getRunId(), fieldChanged ? null : session == null ? null : session.getRunId()))
+                .actionId(continueSavedConversation
+                        ? firstNonBlank(fieldChanged ? null : session == null ? null : session.getActionId(), request.getActionId(), page == null ? null : page.getActionId())
+                        : firstNonBlank(request == null ? null : request.getActionId(), page == null ? null : page.getActionId(), fieldChanged ? null : session == null ? null : session.getActionId()))
+                .taskId(continueSavedConversation
+                        ? firstNonBlank(fieldChanged ? null : session == null ? null : session.getTaskId(), request.getTaskId(), page == null ? null : page.getTaskId())
+                        : firstNonBlank(request == null ? null : request.getTaskId(), page == null ? null : page.getTaskId(), fieldChanged ? null : session == null ? null : session.getTaskId()))
+                .outcomeId(continueSavedConversation
+                        ? firstNonBlank(fieldChanged ? null : session == null ? null : session.getOutcomeId(), request.getOutcomeId(), page == null ? null : page.getOutcomeId())
+                        : firstNonBlank(request == null ? null : request.getOutcomeId(), page == null ? null : page.getOutcomeId(), fieldChanged ? null : session == null ? null : session.getOutcomeId()))
                 .build();
     }
 
     private boolean requiresField(CopilotIntent intent) { return intent == CopilotIntent.FIELD_STATUS_QUERY || intent == CopilotIntent.DIAGNOSIS_REQUEST; }
-    private boolean requiresDiagnosis(CopilotIntent intent) { return intent == CopilotIntent.RECOMMENDATION_QUERY || intent == CopilotIntent.ACTION_REQUEST; }
+    private boolean requiresDiagnosis(CopilotIntent intent, String message) {
+        return intent == CopilotIntent.RECOMMENDATION_QUERY
+                || intent == CopilotIntent.ACTION_REQUEST && !isDirectTaskRequest(message);
+    }
     private boolean requiresFieldValidation(CopilotIntent intent, CopilotStableContext hints, String message) {
         return requiresField(intent) || (intent == CopilotIntent.KNOWLEDGE_QUERY && !blank(hints.getFieldId()))
-                || (requiresDiagnosis(intent) && !blank(hints.getFieldId()))
+                || (requiresDiagnosis(intent, message) && !blank(hints.getFieldId()))
+                || (intent == CopilotIntent.ACTION_REQUEST && isDirectTaskRequest(message))
                 || (intent == CopilotIntent.NAVIGATION_REQUEST && "/farm/map".equals(route(message)) && !blank(hints.getFieldId()));
+    }
+    private boolean isDirectTaskRequest(String message) {
+        String normalized = message == null ? "" : message.toLowerCase(java.util.Locale.ROOT);
+        return (contains(normalized, "创建任务", "创建农事任务", "生成任务", "新建任务", "创建浇水任务", "创建施肥任务",
+                "安排农事任务", "安排浇水任务", "安排施肥任务", "create task", "schedule task")
+                || normalized.matches(".*(?:创建|生成|新建|安排).{0,12}任务.*")
+                || isAgentPlanningRequest(normalized))
+                && !contains(normalized, "不要创建", "不创建", "无需创建", "只分析", "仅分析", "do not create", "without executing");
+    }
+    private boolean isAgentPlanningRequest(String normalized) {
+        boolean planningObject = contains(normalized, "农事计划", "农事安排", "作业计划", "管理计划", "一周计划", "周计划", "未来一周", "本周计划", "farm plan", "weekly plan");
+        boolean directive = contains(normalized, "帮我制定", "请制定", "给我制定", "制定一份", "帮我生成", "请生成", "给我生成", "生成一份",
+                "帮我规划", "请规划", "给我规划", "规划一份", "create a plan", "make a plan");
+        return planningObject && directive;
     }
     private void sanitizeForIntent(CopilotStableContext context, CopilotIntent intent) {
         if (intent == CopilotIntent.FIELD_STATUS_QUERY) {
@@ -221,6 +267,7 @@ public class CopilotContextResolver {
     private String find(Pattern pattern, String value) { if (value == null) return null; Matcher matcher = pattern.matcher(value); return matcher.find() ? matcher.group() : null; }
     private String firstNonBlank(String... values) { for (String value : values) if (!blank(value)) return value.trim(); return null; }
     private boolean blank(String value) { return value == null || value.isBlank(); }
+    private boolean contains(String value, String... terms) { for (String term : terms) if (value.contains(term)) return true; return false; }
     private Resolution clarify(String question) { return new Resolution(CopilotResolutionStatus.CLARIFICATION_REQUIRED, null, question); }
     private Resolution clarify(String question, CopilotStableContext context) { return new Resolution(CopilotResolutionStatus.CLARIFICATION_REQUIRED, context.copy(), question); }
     private Resolution forbidden() { return new Resolution(CopilotResolutionStatus.FORBIDDEN, null, "当前账号无权访问该上下文。"); }

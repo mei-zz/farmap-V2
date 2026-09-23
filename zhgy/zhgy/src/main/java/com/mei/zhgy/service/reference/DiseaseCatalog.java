@@ -1,8 +1,8 @@
 package com.mei.zhgy.service.reference;
 
+import com.mei.zhgy.service.copilot.CopilotQueryNormalizer;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 
 /** Resolves user disease wording without introducing a second crop/router dependency. */
 public class DiseaseCatalog {
@@ -27,10 +27,7 @@ public class DiseaseCatalog {
     }
 
     public String normalize(String value) {
-        if (value == null) return "";
-        return value.trim().toLowerCase(Locale.ROOT)
-                .replaceAll("[\\s_\\-—–/·（）()，,。:：;；]+", "")
-                .replace('ｗ', 'w').replace('Ｗ', 'w');
+        return CopilotQueryNormalizer.compactForMatching(value);
     }
 
     private record DiseaseDefinition(String key, List<String> aliases) { }

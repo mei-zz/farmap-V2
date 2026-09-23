@@ -33,7 +33,9 @@ public class CopilotContextAssembler {
     public AssembledContext assemble(CopilotConversationSnapshot snapshot, CopilotPageContext pageContext) {
         List<CopilotConversationTurn> selected = new ArrayList<>();
         int used = 0;
-        List<CopilotConversationTurn> source = snapshot.getRecentTurns() == null ? List.of() : snapshot.getRecentTurns();
+        List<CopilotConversationTurn> source = snapshot.getRecentTurns() == null ? List.of() : snapshot.getRecentTurns().stream()
+                .filter(CopilotConversationTurnPolicy::isVisibleConversationTurn)
+                .toList();
         int from = Math.max(0, source.size() - maxRecentTurns);
         for (int index = from; index < source.size(); index++) {
             CopilotConversationTurn turn = source.get(index);
@@ -41,7 +43,8 @@ public class CopilotContextAssembler {
             if (used + bounded.length() > maxContextChars && !selected.isEmpty()) break;
             CopilotConversationTurn copy = CopilotConversationTurn.builder().turnId(turn.getTurnId()).conversationId(turn.getConversationId())
                     .role(turn.getRole()).message(bounded).intent(turn.getIntent()).traceId(turn.getTraceId())
-                    .clientMessageId(turn.getClientMessageId()).createdAt(turn.getCreatedAt()).build();
+                    .clientMessageId(turn.getClientMessageId()).resultJson(turn.getResultJson())
+                    .responseMetadata(turn.getResponseMetadata()).createdAt(turn.getCreatedAt()).build();
             selected.add(copy);
             used += bounded.length();
         }

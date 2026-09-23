@@ -20,12 +20,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -46,11 +46,13 @@ public class LlmIntentClassifier {
     private final ObjectMapper mapper;
     private final Map<String, LlmIntentResult> cache;
     private final ExecutorService calls;
+    private final ExecutorService shadowCallsExecutor;
     private final AtomicLong primaryCalls = new AtomicLong();
     private final AtomicLong strongEscalations = new AtomicLong();
     private final AtomicLong fallbackCalls = new AtomicLong();
     private final AtomicLong cacheHits = new AtomicLong();
     private final AtomicLong shadowCalls = new AtomicLong();
+    private final AtomicLong shadowDropped = new AtomicLong();
     private final AtomicLong ruleComparisons = new AtomicLong();
     private final AtomicLong ruleMismatches = new AtomicLong();
     private final ConcurrentHashMap<String, AtomicLong> modelCalls = new ConcurrentHashMap<>();
@@ -81,6 +83,15 @@ public class LlmIntentClassifier {
                     Thread thread = new Thread(runnable, "farmap-intent-model");
                     thread.setDaemon(true);
                     return thread;
+                 }, new ThreadPoolExecutor.AbortPolicy());
+        this.shadowCallsExecutor = new ThreadPoolExecutor(
+                Math.max(1, Math.min(4, this.properties.getMaxConcurrentCalls())),
+                Math.max(1, Math.min(4, this.properties.getMaxConcurrentCalls())),
+                0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(this.properties.getQueueCapacity()),
+                runnable -> {
+                    Thread thread = new Thread(runnable, "farmap-intent-shadow");
+                    thread.setDaemon(true);
+                    return thread;
                 }, new ThreadPoolExecutor.AbortPolicy());
         this.cache = Collections.synchronizedMap(new LinkedHashMap<>(32, 0.75F, true) {
             @Override
@@ -97,7 +108,9 @@ public class LlmIntentClassifier {
     }
 
     public boolean isEnabled() { return properties.isEnabled() && client != null; }
-    public boolean isShadowMode() { return properties.isShadowMode(); }
+    public boolean isShadowMode() { return properties.effectiveShadowMode(); }
+    public boolean isRuleOnlyMode() { return "RULE_ONLY".equals(properties.effectiveDecisionMode()); }
+    public String decisionMode() { return properties.effectiveDecisionMode(); }
     public double takeoverThreshold() { return properties.getTakeoverThreshold(); }
 
     public LlmIntentResult classify(String rawMessage, CopilotIntentRouter.HybridContext context,
@@ -146,14 +159,20 @@ public class LlmIntentClassifier {
                                CopilotIntentRouter.Classification rule) {
         if (!isEnabled()) return;
         shadowCalls.incrementAndGet();
-        CompletableFuture.runAsync(() -> {
-            LlmIntentResult result = classify(rawMessage, context, rule);
-            String ruleIntent = rule == null || rule.intent() == null ? "null" : rule.intent().name();
-            String llmIntent = result.intent() == null ? "null" : result.intent().name();
-            log.info("intent_shadow messageHash={} ruleIntent={} llmIntent={} tier={} model={} confidence={} latencyMs={} fallback={}",
-                    hash(rawMessage), ruleIntent, llmIntent, result.tier(), result.model(), result.confidence(), result.latencyMs(),
-                    result.fallbackReason() == null ? "none" : result.fallbackReason());
-        });
+        try {
+            shadowCallsExecutor.execute(() -> {
+                LlmIntentResult result = classify(rawMessage, context, rule);
+                String ruleIntent = rule == null || rule.intent() == null ? "null" : rule.intent().name();
+                String llmIntent = result.intent() == null ? "null" : result.intent().name();
+                log.info("intent_shadow messageHash={} ruleIntent={} llmIntent={} tier={} model={} confidence={} latencyMs={} fallback={}",
+                        hash(rawMessage), ruleIntent, llmIntent, result.tier(), result.model(), result.confidence(), result.latencyMs(),
+                        result.fallbackReason() == null ? "none" : result.fallbackReason());
+            });
+        } catch (RejectedExecutionException rejected) {
+            // Shadow work is explicitly best effort. Never make an interactive
+            // request wait when the bounded diagnostic queue is full.
+            shadowDropped.incrementAndGet();
+        }
     }
 
     public Map<String, Object> metricsSnapshot() {
@@ -163,6 +182,7 @@ public class LlmIntentClassifier {
         metrics.put("fallbackCalls", fallbackCalls.get());
         metrics.put("cacheHits", cacheHits.get());
         metrics.put("shadowCalls", shadowCalls.get());
+        metrics.put("shadowDropped", shadowDropped.get());
         long comparisons = ruleComparisons.get();
         metrics.put("ruleComparisons", comparisons);
         metrics.put("ruleMismatches", ruleMismatches.get());
@@ -199,6 +219,7 @@ public class LlmIntentClassifier {
         fallbackCalls.set(0L);
         cacheHits.set(0L);
         shadowCalls.set(0L);
+        shadowDropped.set(0L);
         ruleComparisons.set(0L);
         ruleMismatches.set(0L);
         modelCalls.clear();
@@ -417,7 +438,7 @@ public class LlmIntentClassifier {
                 result.confidence(),
                 Math.max(0L, result.latencyMs()),
                 result.fallbackReason(),
-                properties.isShadowMode() ? "shadow" : "primary"));
+                properties.effectiveDecisionMode().toLowerCase(Locale.ROOT)));
         while (recentSamples.size() > properties.getRecentSampleCapacity()) recentSamples.poll();
     }
 

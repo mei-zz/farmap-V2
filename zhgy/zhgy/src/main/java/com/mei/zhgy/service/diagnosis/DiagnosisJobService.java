@@ -7,6 +7,7 @@ import com.mei.zhgy.vo.DiagnosisAnalysisResponse;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.PreDestroy;
@@ -16,7 +17,10 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Runs the expensive real Diagnosis RAG flow outside the HTTP request thread.
@@ -29,17 +33,16 @@ public class DiagnosisJobService {
     private final DiagnosisRagService diagnosisRagService;
     private final DiagnosisPersistenceService diagnosisPersistenceService;
     private final Map<String, JobState> jobs = new ConcurrentHashMap<>();
-    private final ExecutorService executor = Executors.newFixedThreadPool(2, runnable -> {
-        Thread thread = new Thread(runnable, "farmap-diagnosis");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private final ExecutorService executor;
 
     @Autowired
     public DiagnosisJobService(DiagnosisRagService diagnosisRagService,
-                               DiagnosisPersistenceService diagnosisPersistenceService) {
+                               DiagnosisPersistenceService diagnosisPersistenceService,
+                               @Value("${farmap.diagnosis.max-concurrent-jobs:2}") int maxConcurrentJobs,
+                               @Value("${farmap.diagnosis.queue-capacity:8}") int queueCapacity) {
         this.diagnosisRagService = diagnosisRagService;
         this.diagnosisPersistenceService = diagnosisPersistenceService;
+        this.executor = createExecutor(maxConcurrentJobs, queueCapacity);
     }
 
     public DiagnosisJobResponse submit(DiagnosisAnalyzeRequest request, Long userId) {
@@ -48,8 +51,24 @@ public class DiagnosisJobService {
         String jobId = "diagnosis-job-" + UUID.randomUUID();
         JobState state = new JobState(jobId, userId, Instant.now());
         jobs.put(jobId, state);
-        executor.submit(() -> execute(state, request));
+        try {
+            executor.submit(() -> execute(state, request));
+        } catch (RejectedExecutionException error) {
+            state.fail("当前诊断任务较多，请稍后重试。", "DIAGNOSIS_QUEUE_FULL");
+            log.warn("DIAGNOSIS_JOB_QUEUE_FULL jobId={} ownerUserId={}", jobId, userId);
+        }
         return state.snapshot();
+    }
+
+    private ExecutorService createExecutor(int concurrency, int capacity) {
+        int safeConcurrency = Math.max(1, Math.min(concurrency, 16));
+        int safeCapacity = Math.max(1, Math.min(capacity, 128));
+        return new ThreadPoolExecutor(safeConcurrency, safeConcurrency, 0L, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(safeCapacity), runnable -> {
+                    Thread thread = new Thread(runnable, "farmap-diagnosis");
+                    thread.setDaemon(true);
+                    return thread;
+                }, new ThreadPoolExecutor.AbortPolicy());
     }
 
     public DiagnosisJobResponse get(String jobId, Long userId) {
@@ -151,10 +170,14 @@ public class DiagnosisJobService {
         }
 
         private synchronized void fail(String message) {
+            fail(message, null);
+        }
+
+        private synchronized void fail(String message, String errorCode) {
             this.status = "FAILED";
             this.stage = "FAILED";
             this.message = message;
-            this.error = message;
+            this.error = errorCode == null || errorCode.isBlank() ? message : errorCode + ": " + message;
             this.updatedAt = Instant.now();
         }
 

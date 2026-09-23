@@ -97,6 +97,7 @@ public class DiagnosisPersistenceService {
             diagnosis.put("summary", snapshot.getDiagnosis().getSummary());
         }
         diagnosis.put("sourceRunId", snapshot.getSourceRunId());
+        diagnosis.put("claims", claimSnapshots(snapshot.getClaims()));
         diagnosis.put("evidence", evidenceSnapshots(snapshot.getEvidence()));
         diagnosis.put("recommendations", recommendationSnapshots(snapshot.getRecommendations()));
         if (recommendation != null) {
@@ -157,6 +158,20 @@ public class DiagnosisPersistenceService {
             value.put("id", item.getId()); value.put("modality", item.getModality()); value.put("title", item.getTitle());
             value.put("summary", item.getSummary()); value.put("score", item.getScore());
             value.put("source", item.getSource()); value.put("metadata", item.getMetadata());
+            result.add(value);
+        }
+        return result;
+    }
+
+    private List<Map<String, Object>> claimSnapshots(List<DiagnosisAnalysisResponse.Claim> claims) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        if (claims == null) return result;
+        for (DiagnosisAnalysisResponse.Claim item : claims) {
+            if (item == null) continue;
+            Map<String, Object> value = new LinkedHashMap<>();
+            value.put("id", item.getId());
+            value.put("text", item.getText());
+            value.put("evidenceIds", new ArrayList<>(safeIds(item.getEvidenceIds())));
             result.add(value);
         }
         return result;

@@ -16,4 +16,15 @@ class AgentPlannerTest {
         assertEquals("agent-plan-v1", plan.getSchemaVersion());
         assertTrue(plan.getSteps().stream().allMatch(s -> s.getToolName() != null));
     }
+
+    @Test void directTaskDoesNotRequireDiagnosticRag() {
+        AgentPlanner planner = new AgentPlanner(mock(ModelGateway.class), false, 8, 12, 120000);
+        AgentRun run = AgentRun.builder().runId("task-run").goal("帮我创建明天的浇水任务")
+                .context(AgentContext.builder().fieldId("field-1").build()).build();
+
+        AgentPlan plan = planner.plan(run);
+
+        assertEquals(java.util.List.of("field-context", "weather", "gis", "task"),
+                plan.getSteps().stream().map(AgentPlanStep::getToolName).toList());
+    }
 }

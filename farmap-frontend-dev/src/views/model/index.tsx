@@ -6,7 +6,7 @@ import { TrademarkOutlined } from "@ant-design/icons";
 import { Loader2 } from "lucide-react";
 
 export type ResultType = "default" | "normal" | "error";
-export default function index() {
+export default function Model() {
   const [result, setResult] = useState<string>("请输入图片进行模型推理。");
   const [resultType, setResultType] = useState<ResultType>("default");
 

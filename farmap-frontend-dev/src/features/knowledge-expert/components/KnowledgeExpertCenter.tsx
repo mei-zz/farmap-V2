@@ -178,7 +178,7 @@ export default function KnowledgeExpertCenter() {
           <div><Text className="fm-eyebrow">KNOWLEDGE INTELLIGENCE CENTER</Text><Title level={2}>Knowledge Intelligence Center</Title><Paragraph>农业知识、证据关系、RAG 检索与专家反馈中心</Paragraph></div>
           <Flex align="center" gap={8} wrap><ModeTag mode={model.mode} />{knowledgeProfile && <Tag color="green">{displayFarmName} · {knowledgeProfile.corpusFolder}</Tag>}<Button icon={<RobotOutlined />} onClick={openReviewCopilot}>Ask Copilot</Button></Flex>
         </Flex>
-        <Alert type={isDemo ? "warning" : graph.status === "DEGRADED" ? "warning" : "info"} showIcon title={isDemo ? "演示模式：知识图谱与专家写入均已关闭。" : "知识图谱 V1 是基于稳定 ID 的 provenance / relationship graph，不是语义本体图谱。"} />
+        {(isDemo || graph.status === "DEGRADED") && <Alert type="warning" showIcon title={isDemo ? "演示模式：知识图谱与专家写入均已关闭。" : "知识图谱部分能力暂不可用。"} />}
       </div>
       {notice && <Alert closable onClose={() => setNotice(undefined)} type={notice.includes("失败") || notice.includes("不可用") ? "error" : "success"} title={notice} />}
       <Tabs className="fm-knowledge-center__tabs" activeKey={activeTab} onChange={setActiveTab} items={[

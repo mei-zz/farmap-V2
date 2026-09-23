@@ -1,3 +1,5 @@
+import { resolveServiceUrl } from "./reqeust";
+
 export type ServerSentEvent = {
   event: string;
   id?: string;
@@ -59,7 +61,9 @@ export async function readServerSentEvents(
 }
 
 export function requestUrl(path: string): URL {
-  const base = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL
-    || (import.meta.env.PROD ? window.location.origin : "http://localhost:8080");
-  return new URL(path, base);
+  // VITE_API_URL is normally a same-origin relative base such as "/api".
+  // URL(path, "/api") throws in the browser, which used to make every real
+  // streaming Copilot request fail before fetch() could reach Spring Boot.
+  const serviceBase = new URL(resolveServiceUrl(), window.location.origin);
+  return new URL(path, serviceBase);
 }

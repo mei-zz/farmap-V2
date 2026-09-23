@@ -4,14 +4,39 @@ import { Loader2 } from "lucide-react";
 import { useRef } from "react";
 const { Search } = Input;
 
+interface SpeechRecognitionAlternativeLike {
+  transcript: string;
+}
+
+interface SpeechRecognitionResultLike {
+  [index: number]: SpeechRecognitionAlternativeLike;
+}
+
+interface SpeechRecognitionEventLike {
+  results: {
+    length: number;
+    [index: number]: SpeechRecognitionResultLike;
+  };
+}
+
+interface SpeechRecognitionLike {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+
+interface SpeechRecognitionConstructor {
+  new (): SpeechRecognitionLike;
+}
+
 declare global {
   interface Window {
-    SpeechRecognition: any;
-    webkitSpeechRecognition: any;
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
   }
-
-  var SpeechRecognition: any;
-  var webkitSpeechRecognition: any;
 }
 
 interface Props {
@@ -21,20 +46,21 @@ interface Props {
   loading: boolean;
 }
 
-const hasSR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const hasSR = typeof window !== "undefined" && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
 export default function PromptInput(props: Props) {
   // Create speech recognition ref
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const isRecordingRef = useRef(false);
-  if (!recognitionRef.current) {
-    const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
+  const SpeechRecognition = typeof window === "undefined"
+    ? undefined
+    : window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!recognitionRef.current && SpeechRecognition) {
     const r = new SpeechRecognition();
     r.lang = "zh-CN";
     r.continuous = true;
-    r.interimResult = false;
+    r.interimResults = false;
 
-    r.onresult = (e: any) => {
+    r.onresult = (e) => {
       let full = "";
       for (let i = 0; i < e.results.length; i++) {
         full += e.results[i][0].transcript;
@@ -53,6 +79,7 @@ export default function PromptInput(props: Props) {
       style={{ fontSize: 24, color: "#1677ff" }}
       onClick={() => {
         const r = recognitionRef.current;
+        if (!r) return;
 
         if (!isRecordingRef.current) {
           // start

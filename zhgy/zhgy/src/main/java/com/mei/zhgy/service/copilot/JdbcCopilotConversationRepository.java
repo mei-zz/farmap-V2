@@ -45,6 +45,21 @@ public class JdbcCopilotConversationRepository implements CopilotConversationRep
     }
 
     @Override
+    public List<CopilotConversationSnapshot> list(Long userId, int limit) {
+        ensureSchema();
+        int safeLimit = Math.max(1, Math.min(limit, 50));
+        return jdbc.query("SELECT conversation_id,user_id,status,active_farm_id,active_field_id,active_diagnosis_id,active_recommendation_id,active_run_id,active_action_id,active_task_id,active_outcome_id,last_intent,summary_json,summary_version,turn_count,version,pending_type,pending_question,pending_created_turn,pending_expires_after_turn,created_at,updated_at,expires_at FROM copilot_conversations WHERE user_id=? ORDER BY updated_at DESC LIMIT " + safeLimit,
+                (rs, row) -> row(rs), userId);
+    }
+
+    @Override
+    public Optional<String> firstUserMessage(String conversationId, Long userId) {
+        ensureSchema();
+        return jdbc.query("SELECT message FROM copilot_turns WHERE conversation_id=? AND user_id=? AND role='USER' ORDER BY created_at ASC LIMIT 1",
+                (rs, row) -> rs.getString("message"), conversationId, userId).stream().findFirst();
+    }
+
+    @Override
     public List<CopilotConversationTurn> recentTurns(String conversationId, Long userId, int limit) {
         ensureSchema();
         int safeLimit = Math.max(1, Math.min(limit, 10));
@@ -52,6 +67,12 @@ public class JdbcCopilotConversationRepository implements CopilotConversationRep
         List<CopilotConversationTurn> result = new ArrayList<>(reverse);
         java.util.Collections.reverse(result);
         return result;
+    }
+
+    @Override
+    public List<CopilotConversationTurn> allTurns(String conversationId, Long userId) {
+        ensureSchema();
+        return jdbc.query("SELECT turn_id,conversation_id,user_id,role,message,intent,trace_id,client_message_id,result_json,created_at FROM copilot_turns WHERE conversation_id=? AND user_id=? ORDER BY created_at ASC", (rs, row) -> turn(rs), conversationId, userId);
     }
 
     @Override
@@ -65,8 +86,8 @@ public class JdbcCopilotConversationRepository implements CopilotConversationRep
     @Transactional
     public boolean commit(CopilotConversationSnapshot next, long expectedVersion, List<CopilotConversationTurn> turns) {
         ensureSchema();
-        int updated = jdbc.update("UPDATE copilot_conversations SET status=?,active_farm_id=?,active_field_id=?,active_diagnosis_id=?,active_recommendation_id=?,active_run_id=?,active_action_id=?,active_task_id=?,active_outcome_id=?,last_intent=?,summary_json=?,summary_version=?,turn_count=?,version=?,pending_type=?,pending_question=?,pending_created_turn=?,pending_expires_after_turn=?,updated_at=? WHERE conversation_id=? AND user_id=? AND version=?",
-                next.getStatus(), id(next.getActiveContext(), "farmId"), id(next.getActiveContext(), "fieldId"), id(next.getActiveContext(), "diagnosisId"), id(next.getActiveContext(), "recommendationId"), id(next.getActiveContext(), "runId"), id(next.getActiveContext(), "actionId"), id(next.getActiveContext(), "taskId"), id(next.getActiveContext(), "outcomeId"), enumName(next.getLastIntent()), next.getSummary(), next.getSummaryVersion(), next.getTurnCount(), next.getVersion(), pending(next, "type"), pending(next, "question"), pendingInteger(next, "created"), pendingInteger(next, "expires"), timestamp(next.getUpdatedAt()), next.getConversationId(), next.getUserId(), expectedVersion);
+        int updated = jdbc.update("UPDATE copilot_conversations SET status=?,active_farm_id=?,active_field_id=?,active_diagnosis_id=?,active_recommendation_id=?,active_run_id=?,active_action_id=?,active_task_id=?,active_outcome_id=?,last_intent=?,summary_json=?,summary_version=?,turn_count=?,version=?,pending_type=?,pending_question=?,pending_created_turn=?,pending_expires_after_turn=?,updated_at=?,expires_at=? WHERE conversation_id=? AND user_id=? AND version=?",
+                next.getStatus(), id(next.getActiveContext(), "farmId"), id(next.getActiveContext(), "fieldId"), id(next.getActiveContext(), "diagnosisId"), id(next.getActiveContext(), "recommendationId"), id(next.getActiveContext(), "runId"), id(next.getActiveContext(), "actionId"), id(next.getActiveContext(), "taskId"), id(next.getActiveContext(), "outcomeId"), enumName(next.getLastIntent()), next.getSummary(), next.getSummaryVersion(), next.getTurnCount(), next.getVersion(), pending(next, "type"), pending(next, "question"), pendingInteger(next, "created"), pendingInteger(next, "expires"), timestamp(next.getUpdatedAt()), timestamp(next.getExpiresAt()), next.getConversationId(), next.getUserId(), expectedVersion);
         if (updated != 1) return false;
         for (CopilotConversationTurn turn : turns) {
             jdbc.update("INSERT INTO copilot_turns(turn_id,conversation_id,user_id,role,message,intent,trace_id,client_message_id,result_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -86,8 +107,9 @@ public class JdbcCopilotConversationRepository implements CopilotConversationRep
                 turn.getTurnId(), turn.getConversationId(), turn.getUserId(), turn.getRole(), turn.getMessage(), enumName(turn.getIntent()), turn.getTraceId(), turn.getClientMessageId(), turn.getResultJson(), timestamp(turn.getCreatedAt()));
         // Do not advance the optimistic context version: the answer does not
         // mutate routing context, but it must count as a visible conversation turn.
-        jdbc.update("UPDATE copilot_conversations SET turn_count=turn_count+1,updated_at=? WHERE conversation_id=? AND user_id=?",
-                timestamp(Instant.now()), turn.getConversationId(), turn.getUserId());
+        Instant now = Instant.now();
+        jdbc.update("UPDATE copilot_conversations SET turn_count=turn_count+1,updated_at=?,expires_at=? WHERE conversation_id=? AND user_id=?",
+                timestamp(now), timestamp(now.plus(java.time.Duration.ofDays(30))), turn.getConversationId(), turn.getUserId());
     }
 
     @Override

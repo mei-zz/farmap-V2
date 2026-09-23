@@ -22,9 +22,24 @@ $env:NODE_OPTIONS='--max-old-space-size=4096'
 pnpm build
 ```
 
-The visual analyzer uses `hunyuan-turbos-vision`. The Spring JSON editing
-service uses `hunyuan-a13b`, selected through `HUNYUAN_TEXT_MODEL` because the
-previous `hunyuan-lite` model has been retired.
+On the Linux deployment host:
+
+```sh
+VITE_API_URL=/api NODE_OPTIONS=--max-old-space-size=4096 pnpm build
+```
+
+`pnpm build` reads the sibling `deployment/.env` only for `GAODE_API_KEY` and
+passes it to Vite as `VITE_GAODE_API_KEY`; do not copy the key into a tracked
+frontend `.env` file. An explicitly supplied `VITE_GAODE_API_KEY` still takes
+precedence for CI/CD.
+
+The production Agent / multimodal-RAG path uses Alibaba Cloud Model Studio
+(Bailian): `qwen3-vl-32b-thinking` for image understanding, Qwen grounded
+generation, and `qwen3.7-text-embedding-flash` for the imported knowledge
+vectors. The legacy `tree-analyzer` and `HUNYUAN_*` settings are retained only
+for compatibility endpoints; they are not required by `/diagnosis/jobs` or the
+Agent workspace. Keep the Bailian key in `BAILIAN_API_KEY` (or the existing
+`APIKEY` alias) and do not put it in frontend files.
 
 Persistent state is stored in Docker volumes, except migrated MongoDB files in
 `deployment/data/mongo`. Do not delete these paths during upgrades.

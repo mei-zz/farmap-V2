@@ -29,6 +29,25 @@ public class InMemoryCopilotConversationRepository implements CopilotConversatio
     }
 
     @Override
+    public synchronized List<CopilotConversationSnapshot> list(Long userId, int limit) {
+        int safeLimit = Math.max(1, Math.min(limit, 50));
+        return conversations.values().stream()
+                .filter(snapshot -> java.util.Objects.equals(snapshot.getUserId(), userId))
+                .sorted(Comparator.comparing(CopilotConversationSnapshot::getUpdatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
+                .limit(safeLimit)
+                .map(CopilotConversationSnapshot::copy)
+                .toList();
+    }
+
+    @Override
+    public synchronized Optional<String> firstUserMessage(String conversationId, Long userId) {
+        return turns.getOrDefault(conversationId, List.of()).stream()
+                .filter(turn -> java.util.Objects.equals(turn.getUserId(), userId) && "USER".equals(turn.getRole()))
+                .min(Comparator.comparing(CopilotConversationTurn::getCreatedAt))
+                .map(CopilotConversationTurn::getMessage);
+    }
+
+    @Override
     public synchronized List<CopilotConversationTurn> recentTurns(String conversationId, Long userId, int limit) {
         CopilotConversationSnapshot snapshot = conversations.get(conversationId);
         if (snapshot == null || !java.util.Objects.equals(snapshot.getUserId(), userId)) return List.of();
@@ -36,6 +55,11 @@ public class InMemoryCopilotConversationRepository implements CopilotConversatio
         values.sort(Comparator.comparing(CopilotConversationTurn::getCreatedAt));
         int from = Math.max(0, values.size() - Math.max(0, limit));
         return new ArrayList<>(values.subList(from, values.size()));
+    }
+
+    @Override
+    public synchronized List<CopilotConversationTurn> allTurns(String conversationId, Long userId) {
+        return recentTurns(conversationId, userId, Integer.MAX_VALUE);
     }
 
     @Override

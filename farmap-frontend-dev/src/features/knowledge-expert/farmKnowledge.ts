@@ -11,11 +11,10 @@ export type FarmKnowledgeProfile = {
  * source ID from the server instead of hardcoding generated UUIDs here.
  */
 export const farmKnowledgeProfiles: Record<number, FarmKnowledgeProfile> = {
-  1: { farmId: 1, farmName: "云阳", corpusFolder: "脆李时期" },
-  8: { farmId: 8, farmName: "大足", corpusFolder: "柑橘数据" },
-  // The existing 脆李时期 corpus is authoritative for 巫山. Keep the
-  // existing 云阳 mapping for compatibility and expose the same ingested
-  // source under 巫山 without duplicating documents or vectors.
+  1: { farmId: 1, farmName: "云阳", corpusFolder: "柑橘数据" },
+  8: { farmId: 8, farmName: "大足", corpusFolder: "水稻数据" },
+  // The existing 脆李时期 corpus is authoritative for 巫山. Expose the
+  // same ingested source without duplicating documents or vectors.
   7: { farmId: 7, farmName: "巫山", corpusFolder: "脆李时期" },
 };
 
@@ -32,6 +31,11 @@ export function resolveFarmKnowledgeSource(sources: KnowledgeSource[], farmId: n
     const origin = source.originUri?.toLowerCase() ?? "";
     return name.includes(folder) || origin.includes(folder);
   };
-  return sources.find((source) => matchesFolder(source) && source.status !== "DISABLED")
-    ?? sources.find(matchesFolder);
+  const activeSources = sources.filter((source) => source.status !== "DISABLED");
+  return activeSources.find(matchesFolder)
+    ?? sources.find(matchesFolder)
+    // Production may expose one curated public source whose display name is
+    // not the local corpus folder. It is safe to use only when it is the sole
+    // active source; with multiple sources we must not guess across crops.
+    ?? (activeSources.length === 1 ? activeSources[0] : undefined);
 }

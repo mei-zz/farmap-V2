@@ -21,5 +21,7 @@ public class CopilotConversationView {
     long contextVersion;
     CopilotPendingClarification pendingClarification;
     List<CopilotConversationTurn> recentTurns;
+    /** Full owner-scoped transcript for display; recentTurns remains the bounded model context. */
+    List<CopilotConversationTurn> historyTurns;
     List<CopilotMemoryView> relevantLongTermMemories;
 }

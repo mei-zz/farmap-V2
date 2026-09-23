@@ -117,9 +117,18 @@ export class Request {
   }
 }
 
-// 本地默认走 8080；生产构建使用同源 /api，避免绑定服务器 IP 或域名。
-const SERVICE_URL =
-  import.meta.env.VITE_API_BASE_URL ||
-  import.meta.env.VITE_API_URL ||
-  (import.meta.env.PROD ? "/api" : "http://localhost:8080");
+// Local builds are sometimes served from the production `dist` directory on
+// port 5173. In that case `import.meta.env.PROD` is true, but there is no Nginx
+// in front of the SPA to proxy API requests. Resolve the backend on the same
+// machine so login, Agent streaming and uploads still reach Spring Boot.
+// Deployed builds continue to use the same-origin reverse proxy.
+export function resolveServiceUrl(): string {
+  const isLocalFrontendPreview = window.location.port === "5173";
+  const localBackendUrl = `${window.location.protocol}//${window.location.hostname}:8080`;
+  return import.meta.env.VITE_API_BASE_URL ||
+    import.meta.env.VITE_API_URL ||
+    (isLocalFrontendPreview ? localBackendUrl : import.meta.env.PROD ? "/api" : localBackendUrl);
+}
+
+const SERVICE_URL = resolveServiceUrl();
 export const req = new Request(SERVICE_URL);

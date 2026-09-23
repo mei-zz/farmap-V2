@@ -78,6 +78,7 @@ export default function Expert() {
       });
       setDetail(resp.data);
     } catch {
+      console.warn("[FARMAP]: failed to fetch expert case detail.");
     } finally {
       setDetailLoading(false);
     }
@@ -149,14 +150,11 @@ export default function Expert() {
             header={detail.userRequestInfo}
             content={detail.initialResultInfo}
             onSubmitSuccess={() => {
-              try {
-                setListLoading(true);
-                fecthList();
+              setListLoading(true);
+              void fecthList().finally(() => {
                 setSelectedRequestId(null);
-              } catch {
-              } finally {
                 setListLoading(false);
-              }
+              });
             }}
           />
         </Card>

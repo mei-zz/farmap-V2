@@ -32,14 +32,14 @@ export default function Content({
         setIsConsistencyError(false);
         onParseEnd(true);
       }
-    } catch (e) {
+    } catch {
       setParseError("Invalid JSON string provided.");
       setParsedData(null);
       onParseEnd(false);
     }
-  }, [jsonData]);
+  }, [jsonData, onParseEnd]);
 
-  const handleFieldUpdate = useCallback((path: (string | number)[], value: any) => {
+  const handleFieldUpdate = useCallback((path: (string | number)[], value: unknown) => {
     setParsedData((prev) => {
       if (!prev) return prev;
       return setNestedValue(prev, path, value);

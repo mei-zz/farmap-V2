@@ -19,10 +19,15 @@ bailian:
 farmap:
   agent:
     planner:
-      model-enabled: ${FARMAP_AGENT_PLANNER_MODEL_ENABLED:true}
+      # REAL runs already carry a persisted, server-owned Diagnosis snapshot;
+      # keep the bounded deterministic plan as the default until a validated
+      # AgentPlan JSON contract is enabled explicitly.
+      model-enabled: ${FARMAP_AGENT_PLANNER_MODEL_ENABLED:false}
   knowledge:
     embedding:
-      provider: ${FARMAP_KNOWLEDGE_EMBEDDING_PROVIDER:local_bge}
+      # Production vectors are imported from Bailian and must not be mixed
+      # with the legacy local BGE generation.
+      provider: ${FARMAP_KNOWLEDGE_EMBEDDING_PROVIDER:bailian}
       model: ${FARMAP_KNOWLEDGE_EMBEDDING_MODEL:qwen3.7-text-embedding-flash}
       dimension: ${FARMAP_KNOWLEDGE_EMBEDDING_DIMENSION:1024}
       batch-size: ${FARMAP_KNOWLEDGE_EMBED_BATCH_SIZE:10}
@@ -36,7 +41,7 @@ farmap:
       # The dated default is preserved as the final fallback when the pool is
       # disabled, empty, not applicable, or fully unavailable.
       default-model: ${FARMAP_DEFAULT_MODEL:qwen-plus-2025-07-28}
-      fast-model: ${FARMAP_FAST_MODEL:deepseek-r1-distill-qwen-7b}
+      fast-model: ${FARMAP_FAST_MODEL:qwen-flash}
       multimodal-model: ${FARMAP_MULTIMODAL_MODEL:qwen3-vl-32b-thinking}
       expert-model: ${FARMAP_EXPERT_MODEL:qwen3-vl-32b-thinking}
       max-candidates: ${FARMAP_MODEL_MAX_CANDIDATES:5}
@@ -49,15 +54,19 @@ farmap:
       intent:
         enabled: ${FARMAP_INTENT_ROUTER_ENABLED:true}
         shadow-mode: ${FARMAP_INTENT_SHADOW_MODE:true}
+        # RULE_ONLY, SHADOW, or HYBRID. Blank preserves shadow-mode
+        # compatibility; production therefore remains SHADOW by default.
+        decision-mode: ${FARMAP_INTENT_DECISION_MODE:}
         routing-mode: ${FARMAP_INTENT_ROUTING_MODE:primary}
         primary-weight: ${FARMAP_INTENT_PRIMARY_WEIGHT:0.70}
         takeover-threshold: ${FARMAP_INTENT_TAKEOVER_THRESHOLD:0.70}
         escalate-threshold: ${FARMAP_INTENT_ESCALATE_THRESHOLD:0.55}
-        primary-model: ${FARMAP_INTENT_PRIMARY_MODEL:tongyi-intent-detect-v3}
+        # qwen-flash is already present in the configured Bailian pool and was
+        # re-probed with the existing JSON client before being selected here.
+        primary-model: ${FARMAP_INTENT_PRIMARY_MODEL:qwen-flash}
         flash-pool:
           - ${FARMAP_INTENT_FLASH_01:tongyi-xiaomi-analysis-flash}
           - ${FARMAP_INTENT_FLASH_02:qwen-turbo}
-          - ${FARMAP_INTENT_FLASH_03:qwen-flash}
           - ${FARMAP_INTENT_FLASH_04:qwen-flash-2025-07-28}
           - ${FARMAP_INTENT_FLASH_05:qwen3.5-flash}
           - ${FARMAP_INTENT_FLASH_06:qwen3.5-flash-2026-02-23}
@@ -144,7 +153,9 @@ farmap:
           - ${FARMAP_ANSWER_POOL_49:kimi-k2.6}
           - ${FARMAP_ANSWER_POOL_50:Moonshot-Kimi-K2-Instruct}
     generation:
-      mode: ${RAG_GENERATION_MODE:template}
+      # The product path should demonstrate the real grounded model by
+      # default. Set RAG_GENERATION_MODE=template only for an offline fallback.
+      mode: ${RAG_GENERATION_MODE:qwen}
       evidence-synthesis-enabled: ${FARMAP_EVIDENCE_SYNTHESIS_ENABLED:false}
       global-max-output-tokens: ${FARMAP_AI_GLOBAL_MAX_OUTPUT_TOKENS:8192}
       copilot-max-output-tokens: ${FARMAP_COPILOT_MAX_OUTPUT_TOKENS:2048}

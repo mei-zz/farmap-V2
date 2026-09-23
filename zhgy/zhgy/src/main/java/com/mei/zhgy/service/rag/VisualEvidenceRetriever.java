@@ -177,6 +177,10 @@ public class VisualEvidenceRetriever implements DiagnosisRetriever {
                 log.warn("VISION_ANALYZE unavailable for field {}: {}", request.getFieldId(), error.getClass().getSimpleName());
                 markVisionStatus(request, "VISION_UNAVAILABLE");
             }
+            // The legacy vision boundary is an analysis service, not a raw
+            // image-ingestion boundary. Returning the image as if it had been
+            // interpreted would make the Agent display unsupported findings.
+            return Collections.emptyList();
         }
 
         List<DiagnosisEvidenceVO> evidence = new ArrayList<>();

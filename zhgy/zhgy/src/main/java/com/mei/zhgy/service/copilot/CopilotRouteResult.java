@@ -45,6 +45,12 @@ public class CopilotRouteResult {
     private Double intentModelConfidence;
     private Long intentLatencyMs;
     private String intentFallbackReason;
+    /** Additive understanding contract used by SSE/observability consumers. */
+    private String originalQuery;
+    private String normalizedQuery;
+    private CopilotMediaNeed mediaNeed;
+    /** Canonical action text after pending-confirmation recovery. */
+    private String requestedAction;
 
     /** Binary-compatible constructor kept for callers compiled against the original DTO. */
     public CopilotRouteResult(CopilotIntent intent, CopilotResolutionStatus resolutionStatus,

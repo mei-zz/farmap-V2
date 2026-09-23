@@ -7,8 +7,8 @@ import { Divider, Flex } from "antd";
 // "Short use input, long use textarea"
 
 interface EditableFieldProps {
-  value: any;
-  onChange: (val: any) => void;
+  value: unknown;
+  onChange: (val: unknown) => void;
   label?: string;
   element: "input" | "view";
 }
@@ -55,7 +55,7 @@ const EditableField: React.FC<EditableFieldProps> = ({ value, onChange, label, e
         <>
           {useTextarea ? (
             <textarea
-              value={value}
+              value={strVal}
               onChange={(e) => onChange(e.target.value)}
               rows={Math.max(2, Math.ceil(strVal.length / 35))}
               className="w-full px-2 text-sm text-gray-800 border border-gray-200 rounded-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all bg-white hover:border-gray-300 "
@@ -63,7 +63,7 @@ const EditableField: React.FC<EditableFieldProps> = ({ value, onChange, label, e
           ) : (
             <input
               type={isNumber ? "number" : "text"}
-              value={value}
+              value={isString || isNumber ? value : strVal}
               onChange={(e) => onChange(isNumber ? parseFloat(e.target.value) : e.target.value)}
               className="w-full px-2 text-sm text-gray-800 border border-gray-200 rounded-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all bg-white hover:border-gray-300 "
             />
@@ -71,7 +71,7 @@ const EditableField: React.FC<EditableFieldProps> = ({ value, onChange, label, e
         </>
       ) : (
         <p className="w-full px-2 text-sm text-gray-800 border border-gray-200 rounded-xs bg-white">
-          {value}
+          {strVal}
         </p>
       )}
     </div>
@@ -84,7 +84,7 @@ interface SectionProps<T> {
   data: T;
   path: (string | number)[];
   element: "input" | "view";
-  onUpdate: (path: (string | number)[], value: any) => void;
+  onUpdate: (path: (string | number)[], value: unknown) => void;
 }
 
 const PlantValidationSection: React.FC<{ data: PlantValidation }> = ({ data }) => {
@@ -110,10 +110,10 @@ const PlantValidationSection: React.FC<{ data: PlantValidation }> = ({ data }) =
 // Helper to render a group of properties (either nested object or single value)
 const PropertyGroup: React.FC<{
   label: string;
-  data: any;
+  data: unknown;
   path: (string | number)[];
   element: "input" | "view";
-  onUpdate: (path: (string | number)[], value: any) => void;
+  onUpdate: (path: (string | number)[], value: unknown) => void;
 }> = ({ label, data, path, onUpdate, element }) => {
   if (label === "回答置信度") return null;
 
@@ -202,7 +202,7 @@ const ValidationSummarySection: React.FC<{
 };
 
 // Internal icon for this file
-const CheckCircleIcon = (props: any) => (
+const CheckCircleIcon = (props: React.SVGProps<SVGSVGElement>) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
     width="24"

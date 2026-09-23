@@ -61,13 +61,22 @@ public class AgentPlanner {
         // A persisted Diagnosis already owns the grounded snapshot. The Agent
         // consumes that snapshot and must not rerun RAG or drift its provenance.
         if (context.getDiagnosisId() == null || context.getDiagnosisId().isBlank()) {
+            // A direct Operations request is already a typed business intent.
+            // It needs verified field/weather context and approval, not a
+            // diagnostic image search. Requiring multimodal RAG here used to
+            // terminate "创建明天的浇水任务" before a draft could be shown.
+            if (isDirectTaskRequest(run.getGoal())) {
+                add(steps, "task", "生成后续农事任务", "根据已验证地块上下文提出任务草案，提交前需要人工审批", "task", false);
+            } else {
             add(steps, "rag", "多模态检索", "复用现有 DiagnosisRagService 检索证据", "multimodal-rag", true);
             add(steps, "history", "检索历史案例", "读取专家案例；向量为空时继续使用其他证据", "historical-case", true, false);
             add(steps, "knowledge", "检索农业知识", "读取本地农业知识库", "knowledge", true);
+                add(steps, "task", "生成后续农事任务", "提出可执行任务，提交前需要人工审批", "task", false);
+            }
         } else {
             add(steps, "diagnosis", "读取诊断证据", "复用已保存的多模态 Evidence 与 Recommendation，不重复生成诊断", "diagnosis-evidence", true);
+            add(steps, "task", "生成后续农事任务", "提出可执行任务，提交前需要人工审批", "task", false);
         }
-        add(steps, "task", "生成后续农事任务", "提出可执行任务，提交前需要人工审批", "task", false);
         if (steps.size() > maxSteps) steps = new ArrayList<>(steps.subList(0, maxSteps));
         String previousRequiredStep = null;
         for (AgentPlanStep step : steps) {
@@ -88,5 +97,13 @@ public class AgentPlanner {
     private boolean containsAny(String value, String... words) {
         if (value == null) return false;
         return Arrays.stream(words).anyMatch(value::contains);
+    }
+
+    private boolean isDirectTaskRequest(String value) {
+        if (value == null || value.isBlank()) return false;
+        String normalized = value.replaceAll("\\s+", "");
+        if (normalized.contains("不要创建") || normalized.contains("不创建") || normalized.contains("无需创建")) return false;
+        return normalized.matches(".*(?:创建|生成|新建|安排).{0,12}任务.*")
+                || normalized.matches(".*(?:创建|生成|新建|安排).{0,12}(浇水|施肥|喷药|用药|灌溉|巡查).*");
     }
 }

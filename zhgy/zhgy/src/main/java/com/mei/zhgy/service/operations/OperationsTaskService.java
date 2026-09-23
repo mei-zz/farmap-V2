@@ -292,7 +292,13 @@ public class OperationsTaskService {
         Map<String, Object> task = new LinkedHashMap<>();
         task.put("taskId", "task-" + UUID.randomUUID()); task.put("actionId", request == null ? null : request.getActionId());
         String fieldName = context == null ? null : context.getFieldName();
-        task.put("title", "复核 " + (fieldName == null || fieldName.isBlank() ? fieldId == null ? "当前地块" : fieldId : fieldName) + " 农情"); task.put("fieldId", fieldId);
+        String fieldLabel = fieldName == null || fieldName.isBlank() ? fieldId == null ? "当前地块" : fieldId : fieldName;
+        String goal = request == null ? null : request.getGoal();
+        String title = goal != null && goal.contains("浇水") ? (goal.contains("明天") ? "明天" : "") + "浇水 · " + fieldLabel
+                : goal != null && goal.contains("施肥") ? (goal.contains("明天") ? "明天" : "") + "施肥 · " + fieldLabel
+                : goal != null && (goal.contains("喷药") || goal.contains("用药")) ? (goal.contains("明天") ? "明天" : "") + "植保作业 · " + fieldLabel
+                : "农事任务 · " + fieldLabel;
+        task.put("title", title); task.put("fieldId", fieldId);
         task.put("diagnosisId", serverDiagnosisId(request, context)); task.put("recommendationId", serverRecommendationId(request, context));
         task.put("agentRunId", request == null ? null : request.getRunId()); task.put("status", "OPEN"); task.put("priority", "HIGH");
         task.put("source", "agent"); task.put("createdFrom", "FarMap Agent"); task.put("createdBy", "FarMap Agent");

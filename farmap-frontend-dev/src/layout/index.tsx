@@ -25,6 +25,7 @@ import CopilotDrawer from "@/components/copilot/CopilotDrawer";
 import { clearDemoSession, getDemoSession } from "@/utils/demoSession";
 import { formatCurrentLocalDate } from "@/utils/currentDate";
 import { loadCurrentWeather } from "@/features/agricultural/context";
+import { req } from "@/utils/reqeust";
 import {
   primaryNavigation,
   settingsNavigation,
@@ -188,6 +189,26 @@ export default function Layout() {
       });
     return () => { active = false; };
   }, [isDemoMode, selectedFarmId, setAIContext, token]);
+
+  useEffect(() => {
+    if (isDemoMode || selectedFarmId === undefined || selectedFarmId <= 0 || context.currentField?.id) return;
+    let active = true;
+    req.get<{ data?: Array<{ fieldId?: string; name?: string; crop?: string; area?: number; growthStage?: string }> }>(
+      `/api/farms/${selectedFarmId}/fields`,
+      { Authorization: `Bearer ${token}` },
+    ).then((response) => {
+      const field = response.data?.find((item) => item.fieldId && item.name);
+      if (!active || !field?.fieldId) return;
+      setAIContext({
+        currentField: { id: field.fieldId, name: field.name ?? field.fieldId, area: field.area ?? 0, crop: field.crop ?? "" },
+        currentCrop: field.crop ? { name: field.crop, growthStage: field.growthStage } : undefined,
+        currentPhenology: field.growthStage ? { stage: field.growthStage, progress: 0 } : undefined,
+      });
+    }).catch(() => {
+      // Detail pages remain authoritative; this only repairs the global Agent context.
+    });
+    return () => { active = false; };
+  }, [context.currentField?.id, isDemoMode, selectedFarmId, setAIContext, token]);
 
   const handleFarmChange = (farmId: number) => {
     const selectedFarm = farmOptions.find((farm) => farm.value === farmId);

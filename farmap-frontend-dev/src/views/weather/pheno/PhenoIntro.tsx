@@ -30,7 +30,8 @@ export default function PhenoIntro() {
     // Introductions
     // Use local farm store if it exists
     const localFarmStore = permanence.farm.useFarmStore();
-    const farmId = localFarmStore ? localFarmStore.id : useFarmStore((s) => s.id);
+    const currentFarmId = useFarmStore((s) => s.id);
+    const farmId = localFarmStore?.id ?? currentFarmId;
 
     // Store introductions
     const [introList, setIntroList] = useState<WeatherIntro[]>([]);
@@ -47,8 +48,8 @@ export default function PhenoIntro() {
 
                 setIntroList(list);
             })
-            .catch(() => {});
-    }, []);
+            .catch(() => setIntroList([]));
+    }, [farmId, token]);
     const intro = <div>{introList[selectedMonth]?.text}</div>;
 
     return (

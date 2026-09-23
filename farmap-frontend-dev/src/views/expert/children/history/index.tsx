@@ -9,7 +9,7 @@ import Image from "../../preview/Image";
 
 const token = permanence.token.useToken();
 
-export default function index() {
+export default function History() {
   // --- States ---
   // Expert pending cases
   const [pendingCases, setPendingCases] = useState<string[]>([]);
@@ -71,6 +71,7 @@ export default function index() {
       });
       setDetail(resp.data);
     } catch {
+      console.warn("[FARMAP]: failed to fetch expert case detail.");
     } finally {
       setDetailLoading(false);
     }

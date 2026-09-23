@@ -577,14 +577,16 @@ public class KnowledgeIngestionService {
                         "created_at TIMESTAMP(3) NOT NULL,updated_at TIMESTAMP(3) NOT NULL,PRIMARY KEY(ingestion_id)," +
                         "UNIQUE KEY uk_knowledge_ingestion_version(version_id)," +
                         "UNIQUE KEY uk_knowledge_ingestion_file_hash(source_id,source_file_hash)," +
-                        "INDEX idx_knowledge_ingestion_status(status),INDEX idx_knowledge_ingestion_document(document_id))");
+                         "INDEX idx_knowledge_ingestion_status(status),INDEX idx_knowledge_ingestion_document(document_id)) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
                 s.execute("CREATE TABLE IF NOT EXISTS knowledge_chunks (" +
                         "chunk_id VARCHAR(160) NOT NULL,source_id VARCHAR(112) NOT NULL,document_id VARCHAR(112) NOT NULL," +
                         "version_id VARCHAR(112) NOT NULL,chunk_index INT NOT NULL,title VARCHAR(255) NULL,content LONGTEXT NOT NULL," +
                         "content_hash CHAR(64) NOT NULL,classification VARCHAR(64) NOT NULL DEFAULT 'ADMIN_CURATED'," +
                         "created_at TIMESTAMP(3) NOT NULL,PRIMARY KEY(chunk_id)," +
                         "UNIQUE KEY uk_knowledge_chunk_version_index(version_id,chunk_index),INDEX idx_knowledge_chunk_version(version_id)," +
-                        "INDEX idx_knowledge_chunk_source(source_id),INDEX idx_knowledge_chunk_document(document_id))");
+                         "INDEX idx_knowledge_chunk_source(source_id),INDEX idx_knowledge_chunk_document(document_id)) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+                 s.execute("ALTER TABLE knowledge_ingestions CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+                 s.execute("ALTER TABLE knowledge_chunks CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
                 schemaChecked = true;
             }
         }

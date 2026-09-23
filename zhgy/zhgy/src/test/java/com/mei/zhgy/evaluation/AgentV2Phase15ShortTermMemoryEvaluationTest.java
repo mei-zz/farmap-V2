@@ -55,7 +55,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** Phase 1.5 deterministic evaluation: bounded server-side conversation working memory. */
+    /** Phase 1.5 deterministic evaluation: bounded server-side conversation working memory. */
 class AgentV2Phase15ShortTermMemoryEvaluationTest {
     private static final ObjectMapper MAPPER = new ObjectMapper().findAndRegisterModules();
 
@@ -79,7 +79,7 @@ class AgentV2Phase15ShortTermMemoryEvaluationTest {
         cases.put("M03_outcome_followup", m03.getResolvedContext().getOutcomeId().equals("outcome-1") && m03b.getResolvedContext().getTaskId().equals("task-1"));
 
         CopilotConversationView m04 = fixture.conversations().view(m01a.getConversationId(), 42L);
-        cases.put("M04_refresh_restore", m04.getConversationId().equals(m01a.getConversationId()) && m04.getRecentTurns().size() == 6 && m04.getActiveContext().getDiagnosisId().equals("diagnosis-1"));
+        cases.put("M04_refresh_restore", m04.getConversationId().equals(m01a.getConversationId()) && m04.getRecentTurns().size() == 3 && m04.getActiveContext().getDiagnosisId().equals("diagnosis-1"));
 
         CopilotRouteResult m05 = routes.route(request("那应该怎么办？", null, "m05-1", null), 42L);
         cases.put("M05_new_conversation_isolation", m05.isRequiresClarification() && !m05.getConversationId().equals(m01a.getConversationId()));
@@ -142,6 +142,12 @@ class AgentV2Phase15ShortTermMemoryEvaluationTest {
         assertThrows(RuntimeException.class, () -> routes.route(request("当前地块状态", m19.getConversationId(), "m19-user-b", page("field-owner", null, null, null, null)), 43L));
         cases.put("M19_cross_user_isolation", true);
 
+        CopilotRouteResult m21a = routes.route(request("这个地块有什么问题？", null, "m21-1", page("field-owner", "diagnosis-1", null, null, null)), 42L);
+        CopilotRouteRequest m21b = request("当前地块状态", m21a.getConversationId(), "m21-2", page("field-other", null, null, null, null));
+        m21b.setUseConversationContext(true);
+        CopilotRouteResult m21r = routes.route(m21b, 42L);
+        cases.put("M21_explicit_page_field_overrides_restored_context", "field-other".equals(m21r.getResolvedContext().getFieldId()));
+
         MockMvc mvc = MockMvcBuilders.standaloneSetup(new CopilotController(routes, fixture.conversations()))
                 .setMessageConverters(new MappingJackson2HttpMessageConverter()).build();
         BaseContext.setCurrentId(42L);
@@ -153,13 +159,18 @@ class AgentV2Phase15ShortTermMemoryEvaluationTest {
             CopilotRouteRequest http = request("这个地块有什么问题？", id, "m20-http", page("field-owner", "diagnosis-1", null, null, null));
             mvc.perform(post("/api/copilot/route").contentType(MediaType.APPLICATION_JSON).content(MAPPER.writeValueAsBytes(http)))
                     .andExpect(status().isOk()).andExpect(jsonPath("$.conversationId").value(id)).andExpect(jsonPath("$.memoryStatus").value("PERSISTED"));
-            mvc.perform(get("/api/copilot/conversations/" + id)).andExpect(status().isOk()).andExpect(jsonPath("$.recentTurns.length()").value(2));
+            // /route persists one user-visible user turn plus one internal
+            // SYSTEM_EVENT. History intentionally excludes internal routing
+            // acknowledgements; the final chat/answer is appended separately.
+            mvc.perform(get("/api/copilot/conversations/" + id)).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.recentTurns.length()").value(1))
+                    .andExpect(jsonPath("$.recentTurns[0].role").value("USER"));
             cases.put("M20_real_http_conversation_boundary", true);
         } finally {
             BaseContext.removeCurrentId();
         }
 
-        assertEquals(20, cases.size());
+        assertEquals(21, cases.size());
         assertTrue(cases.entrySet().stream().allMatch(Map.Entry::getValue), cases.toString());
         Map<String, Object> metrics = new LinkedHashMap<>();
         metrics.put("Context Continuity Accuracy", 1.0D);

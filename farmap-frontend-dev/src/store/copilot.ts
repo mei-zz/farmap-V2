@@ -1,12 +1,23 @@
 import { create } from "zustand";
 import type { OverviewCopilotContext } from "@/features/overview/copilot/context";
+import type { CopilotResponseMetadata, CopilotResponseMode } from "@/features/copilot/contract";
 
 export type CopilotMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  /**
+   * Presentation is intentionally a UI concern. The server stays the source
+   * of truth for intent, authorization and tool routing; this only prevents
+   * a short answer from being rendered as an oversized decision card.
+   */
+  responseMode?: CopilotResponseMode;
+  responseLabel?: string;
+  responseMeta?: CopilotResponseMetadata;
+  imageAttachments?: Array<{ id: string; name: string; url: string }>;
   knowledgeCount?: number;
   referenceImages?: Array<{ refId: string; label: string; imageUrl: string; match?: string }>;
+  referenceImageNotice?: string;
 };
 
 type CopilotStore = {

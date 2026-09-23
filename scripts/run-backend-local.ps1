@@ -2,7 +2,8 @@ param(
     [string]$Profile = "",
     [string]$JavaTempDir = "D:\farmap-runtime-temp",
     [ValidateSet("qwen", "template")]
-    [string]$GenerationMode = "qwen"
+    [string]$GenerationMode = "qwen",
+    [switch]$PackagedJar
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,6 +52,14 @@ New-Item -ItemType Directory -Force -Path $JavaTempDir | Out-Null
 $env:TEMP = $JavaTempDir
 $env:TMP = $JavaTempDir
 $env:MAVEN_OPTS = "-Djava.io.tmpdir=$JavaTempDir"
+# Spring, Milvus and the model gateway load more classes than the old 80 MB
+# metaspace cap can hold. Keep a conservative local default, while still
+# allowing operators to override it before invoking this script.
+if (-not $env:JAVA_TOOL_OPTIONS) {
+    $env:JAVA_TOOL_OPTIONS = "-Xms128m -Xmx512m -XX:MaxMetaspaceSize=256m -XX:MaxDirectMemorySize=128m -Xss512k"
+}
+if (-not $env:BAILIAN_READ_TIMEOUT_MS) { $env:BAILIAN_READ_TIMEOUT_MS = "30000" }
+if (-not $env:FARMAP_MODEL_MAX_CANDIDATES) { $env:FARMAP_MODEL_MAX_CANDIDATES = "2" }
 if (-not $env:LOCAL_AI_BASE_URL) { $env:LOCAL_AI_BASE_URL = "http://127.0.0.1:8001" }
 # The Docker default is valid only inside the compose network. These legacy
 # adapter endpoints are retained for compatibility with old APIs; production
@@ -97,7 +106,18 @@ if (-not $env:FARMAP_PRESENTATION_DATA_ENABLED) { $env:FARMAP_PRESENTATION_DATA_
 
 Push-Location $backendRoot
 try {
-    if ([string]::IsNullOrWhiteSpace($Profile)) {
+    if ($PackagedJar) {
+        $jarPath = Join-Path $backendRoot "target\zhgy-0.0.1-SNAPSHOT.jar"
+        if (-not (Test-Path -LiteralPath $jarPath -PathType Leaf)) {
+            throw "Missing packaged backend jar: $jarPath"
+        }
+        $javaCommand = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME "bin\java.exe" } else { "java" }
+        $javaArgs = @("-Djava.io.tmpdir=$JavaTempDir")
+        if (-not [string]::IsNullOrWhiteSpace($Profile)) {
+            $javaArgs += "--spring.profiles.active=$Profile"
+        }
+        & $javaCommand @javaArgs -jar $jarPath
+    } elseif ([string]::IsNullOrWhiteSpace($Profile)) {
         & $mavenCommand spring-boot:run
     } else {
         & $mavenCommand spring-boot:run "-Dspring-boot.run.profiles=$Profile"

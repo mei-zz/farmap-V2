@@ -1,9 +1,9 @@
 package com.mei.zhgy.service.agriculture;
 
+import com.mei.zhgy.service.copilot.CopilotQueryNormalizer;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
-import java.util.Locale;
 
 /** Converts user/legacy crop text to one server-owned code, or UNKNOWN. */
 @Service
@@ -39,10 +39,7 @@ public class CropResolver {
     }
 
     public String normalize(String value) {
-        if (value == null) return "";
-        return value.trim().toLowerCase(Locale.ROOT)
-                .replaceAll("[\\s_\\-—–/·（）()，,。:：;；]+", "")
-                .replace('ｗ', 'w').replace('Ｗ', 'w');
+        return CopilotQueryNormalizer.compactForMatching(value);
     }
 
     private record AliasMatch(CropDefinition crop, String alias) { }

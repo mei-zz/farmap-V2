@@ -12,6 +12,11 @@ import java.util.List;
 public class IntentModelProperties {
     private boolean enabled = true;
     private boolean shadowMode = true;
+    /**
+     * Explicit decision mode for controlled rollout. Blank keeps the legacy
+     * shadowMode compatibility behavior: true -> SHADOW, false -> HYBRID.
+     */
+    private String decisionMode = "";
     private String routingMode = "primary";
     private double primaryWeight = 0.70D;
     private double takeoverThreshold = 0.70D;
@@ -35,6 +40,23 @@ public class IntentModelProperties {
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
     public boolean isShadowMode() { return shadowMode; }
     public void setShadowMode(boolean shadowMode) { this.shadowMode = shadowMode; }
+    public String getDecisionMode() { return decisionMode; }
+    public void setDecisionMode(String decisionMode) {
+        if (decisionMode == null || decisionMode.isBlank()) {
+            this.decisionMode = "";
+            return;
+        }
+        String normalized = decisionMode.trim().toUpperCase();
+        this.decisionMode = switch (normalized) {
+            case "RULE_ONLY", "SHADOW", "HYBRID" -> normalized;
+            default -> "";
+        };
+    }
+    public String effectiveDecisionMode() {
+        if (!decisionMode.isBlank()) return decisionMode;
+        return shadowMode ? "SHADOW" : "HYBRID";
+    }
+    public boolean effectiveShadowMode() { return "SHADOW".equals(effectiveDecisionMode()); }
     public String getRoutingMode() { return routingMode; }
     public void setRoutingMode(String routingMode) { this.routingMode = routingMode == null ? "weighted" : routingMode.trim().toLowerCase(); }
     public double getPrimaryWeight() { return primaryWeight; }

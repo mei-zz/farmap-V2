@@ -1,6 +1,8 @@
 package com.mei.zhgy.service.ai;
 
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -13,6 +15,7 @@ import java.util.function.Consumer;
 /** 所有新业务通过此门面调用模型，统一处理路由、有限 fallback 和研究元数据。 */
 @Service
 public class ModelGateway {
+    private static final Logger log = LoggerFactory.getLogger(ModelGateway.class);
     private final ModelRouter modelRouter;
     private final ModelCapabilityRegistry capabilityRegistry;
     private final ModelAvailabilityRegistry availabilityRegistry;
@@ -64,6 +67,7 @@ public class ModelGateway {
                 return result;
             } catch (ModelCallException exception) {
                 lastException = exception;
+                log.warn("MODEL_CALL_FAILED taskType={} model={} errorType={}", taskType, model, exception.getErrorType());
                 if ("permission_denied".equals(exception.getErrorType())
                         || "model_not_found".equals(exception.getErrorType())) {
                     availabilityRegistry.markUnavailable(model, exception.getErrorType());
@@ -113,6 +117,7 @@ public class ModelGateway {
                 return result;
             } catch (ModelCallException exception) {
                 lastException = exception;
+                log.warn("MODEL_STREAM_FAILED taskType={} model={} errorType={}", taskType, model, exception.getErrorType());
                 if ("permission_denied".equals(exception.getErrorType()) || "model_not_found".equals(exception.getErrorType())) {
                     availabilityRegistry.markUnavailable(model, exception.getErrorType());
                 }

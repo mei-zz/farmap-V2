@@ -2,6 +2,7 @@ package com.mei.zhgy.service.ai;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Arrays;
 
@@ -28,8 +29,12 @@ class ModelGatewayTest {
                         .build();
             }
         };
+        ModelRoutingPolicy routingPolicy = new ModelRoutingPolicy();
+        // Keep this test explicit: production now defaults to the verified
+        // 32B VL model, while this case verifies the legacy 235B -> 32B fallback.
+        ReflectionTestUtils.setField(routingPolicy, "expertModel", ModelCapabilityRegistry.QWEN_VL_235B);
         ModelGateway gateway = new ModelGateway(
-                new ModelRouter(new ModelRoutingPolicy(), new ModelEscalationPolicy(), capabilities),
+                new ModelRouter(routingPolicy, new ModelEscalationPolicy(), capabilities),
                 capabilities,
                 availability,
                 fakeClient,

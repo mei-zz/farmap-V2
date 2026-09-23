@@ -39,6 +39,46 @@ export type CopilotCapability =
 
 export type CopilotResolutionStatus = "RESOLVED" | "CLARIFICATION_REQUIRED" | "NOT_FOUND" | "FORBIDDEN" | "STALE" | "UNSUPPORTED";
 
+export type CopilotResponseMode = "SIMPLE" | "KNOWLEDGE" | "GUIDED" | "AGENT" | "CLARIFICATION";
+
+export type CopilotResponseCard = {
+  id: string;
+  type: string;
+  title: string;
+  content: string;
+  sourceIds?: string[];
+};
+
+export type CopilotSourceReference = {
+  id: string;
+  title?: string;
+  quote?: string;
+  sourceId?: string;
+  documentId?: string;
+  versionId?: string;
+  chunkId?: string;
+  score?: number;
+};
+
+export type CopilotSuggestedQuestion = { id: string; text: string };
+
+export type CopilotAgentAction = { id: string; type: string; label: string; enabled: boolean };
+
+export type CopilotResponseMetadata = {
+  schemaVersion: number;
+  messageId: string;
+  intent?: CopilotIntent;
+  resolutionStatus?: CopilotResolutionStatus;
+  normalizedQuery?: string;
+  mediaNeed?: "NONE" | "BENEFICIAL" | "EXPLICIT";
+  responseType: CopilotResponseMode;
+  content: string;
+  cards?: CopilotResponseCard[];
+  sources?: CopilotSourceReference[];
+  suggestions?: CopilotSuggestedQuestion[];
+  actions?: CopilotAgentAction[];
+};
+
 export type CopilotStableContext = {
   farmId?: string;
   fieldId?: string;
@@ -58,6 +98,8 @@ export type CopilotRouteRequest = {
   conversationId?: string;
   clientMessageId?: string;
   contextVersion?: number;
+  /** Set only after an explicit history restore; server-owned context then wins over the current page. */
+  useConversationContext?: boolean;
   pageContext: CopilotPageContext;
 };
 
@@ -84,6 +126,10 @@ export type CopilotRouteResult = {
   memoryScope?: "USER" | "FARM" | "FIELD";
   memoryType?: "USER_PREFERENCE" | "FARM_PREFERENCE" | "FIELD_PREFERENCE" | "OPERATING_CONSTRAINT" | "COMMUNICATION_PREFERENCE";
   relevantLongTermMemories?: CopilotMemoryView[];
+  originalQuery?: string;
+  normalizedQuery?: string;
+  mediaNeed?: "NONE" | "BENEFICIAL" | "EXPLICIT";
+  requestedAction?: string;
 };
 
 export type CopilotMemoryView = {
@@ -107,6 +153,13 @@ export type CopilotConversationTurn = {
   message: string;
   intent?: CopilotIntent;
   createdAt?: string;
+  responseMetadata?: {
+    schemaVersion?: number;
+    referenceImages?: Array<{ refId: string; label: string; imageUrl: string; match?: string }>;
+    referenceImageNotice?: string;
+    referenceImageStatus?: string;
+    referenceImageMatch?: string;
+  };
 };
 
 export type CopilotConversationView = {
@@ -121,4 +174,16 @@ export type CopilotConversationView = {
   pendingClarification?: { type: string; question?: string };
   relevantLongTermMemories?: CopilotMemoryView[];
   recentTurns: CopilotConversationTurn[];
+  /** Full transcript for the history UI; recentTurns remains the bounded model context. */
+  historyTurns?: CopilotConversationTurn[];
+};
+
+export type CopilotConversationListItem = {
+  conversationId: string;
+  title: string;
+  status: string;
+  lastIntent?: CopilotIntent;
+  turnCount: number;
+  updatedAt?: string;
+  activeContext?: CopilotStableContext;
 };

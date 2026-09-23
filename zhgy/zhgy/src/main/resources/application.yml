@@ -95,7 +95,8 @@ farmap:
   presentation-data:
     enabled: ${FARMAP_PRESENTATION_DATA_ENABLED:false}
   agent:
-    persistence: ${FARMAP_AGENT_PERSISTENCE:file}
+    # REAL runs and approvals must survive a process restart in production.
+    persistence: ${FARMAP_AGENT_PERSISTENCE:mysql}
     max-steps: ${FARMAP_AGENT_MAX_STEPS:8}
     max-tool-calls: ${FARMAP_AGENT_MAX_TOOL_CALLS:12}
     max-replans: ${FARMAP_AGENT_MAX_REPLANS:1}
@@ -104,6 +105,9 @@ farmap:
     tool:
       max-attempts: ${FARMAP_AGENT_TOOL_MAX_ATTEMPTS:2}
       retry-base-delay-ms: ${FARMAP_AGENT_TOOL_RETRY_BASE_DELAY_MS:25}
+  diagnosis:
+    max-concurrent-jobs: ${FARMAP_DIAGNOSIS_MAX_CONCURRENT_JOBS:2}
+    queue-capacity: ${FARMAP_DIAGNOSIS_QUEUE_CAPACITY:8}
   case-ingestion:
     enabled: ${FARMAP_CASE_INGESTION_ENABLED:false}
   knowledge:

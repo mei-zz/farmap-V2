@@ -6,7 +6,7 @@ import type { CaseContent } from "@/types/expert";
 import { Loader2 } from "lucide-react";
 import { req } from "@/utils/reqeust";
 import { permanence } from "@/utils/permanence";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Content from "./Content";
 
 const token = permanence.token.useToken();
@@ -20,6 +20,9 @@ interface Props {
 }
 export default function DetailPrevew(props: Props) {
   const [showPromptInput, setShowPromptInput] = useState(false);
+  const handleParseEnd = useCallback((status: boolean) => {
+    setShowPromptInput(status);
+  }, []);
 
   const [submistLoading, setSubmitLoading] = useState(false);
   const [submitResult, setSubmitResult] = useState("");
@@ -118,9 +121,7 @@ export default function DetailPrevew(props: Props) {
                     setSubmitLoading(false);
                   }
                 }}
-                onParseEnd={(status) => {
-                  setShowPromptInput(status);
-                }}
+                onParseEnd={handleParseEnd}
               />
               {showPromptInput && (
                 <PromptInput
