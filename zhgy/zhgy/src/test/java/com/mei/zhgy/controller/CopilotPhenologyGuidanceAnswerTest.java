@@ -33,9 +33,11 @@ class CopilotPhenologyGuidanceAnswerTest {
         Method deterministicAnswer = CopilotController.class.getDeclaredMethod("deterministicPhenologyAnswer", String.class, facts.getClass());
         deterministicAnswer.setAccessible(true);
         Object compound = deterministicAnswer.invoke(controller, "下一个物候期是什么，有哪些农事指导", facts);
+        Object naturalCompound = deterministicAnswer.invoke(controller, "下一个物候期是什么，接下来要做什么", facts);
         Object pureFact = deterministicAnswer.invoke(controller, "下一个物候期是什么", facts);
 
         assertNull(compound);
+        assertNull(naturalCompound);
         assertTrue(String.valueOf(pureFact).contains("下一物候期是休眠期"));
     }
 }

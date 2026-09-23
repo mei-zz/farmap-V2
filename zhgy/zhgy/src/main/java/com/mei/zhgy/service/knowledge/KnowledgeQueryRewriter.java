@@ -81,7 +81,7 @@ public class KnowledgeQueryRewriter {
 
     private String queryType(String query) {
         String value = query == null ? "" : query;
-        if (contains(value, "农事指导", "农事建议", "管理指导", "管理建议", "管理重点", "注意事项", "怎么管理", "如何管理", "怎么管", "怎么办", "怎么做", "做什么")
+        if (contains(value, "农事指导", "农事建议", "管理指导", "管理建议", "管理重点", "注意事项", "怎么管理", "如何管理", "怎么管", "怎么办", "怎么做", "做什么", "干什么", "干啥", "接下来", "后续", "下一步", "需要做", "应该做", "如何安排", "怎么安排", "注意什么", "注意啥", "管护", "农活")
                 && contains(value, "现在", "当前", "目前", "物候", "生育期", "阶段", "下一期", "下一个", "上一期", "上一个")) {
             return "MANAGEMENT_GUIDANCE";
         }

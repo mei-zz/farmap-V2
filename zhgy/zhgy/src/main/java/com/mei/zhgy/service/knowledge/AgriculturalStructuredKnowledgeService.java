@@ -167,10 +167,10 @@ public class AgriculturalStructuredKnowledgeService {
     }
 
     private boolean attentionQuestion(String value) {
-        return contains(value, "要点", "注意", "建议", "指导", "管理", "怎么管", "怎么办", "怎么做", "做什么", "农事");
+        return contains(value, "要点", "注意", "建议", "指导", "管理", "怎么管", "怎么办", "怎么做", "做什么", "干什么", "干啥", "接下来", "后续", "下一步", "需要做", "应该做", "管护", "农活", "农事");
     }
     private boolean broadManagementQuestion(String value) {
-        return contains(value, "农事指导", "农事建议", "管理指导", "管理建议", "管理重点", "注意事项", "整体管理", "综合管理");
+        return contains(value, "农事指导", "农事建议", "管理指导", "管理建议", "管理重点", "注意事项", "整体管理", "综合管理", "接下来要做", "后续怎么安排", "下一步怎么", "下一步要做", "需要做什么", "应该做什么", "注意什么", "注意啥", "管护");
     }
     private boolean signalQuestion(String value) { return contains(value, "症状", "阈值", "判断", "黄化", "发黄", "病斑", "高温", "降雨", "雨量"); }
     private boolean signalMatches(String normalizedQuery, String key) {
