@@ -70,7 +70,7 @@ public class AgriculturalStructuredKnowledgeService {
             hits.addAll(signalFacts(connection, cropCode, stageCode, query));
             hits = dedupe(hits);
             boolean deterministic = !hits.isEmpty() && !explanatory(query)
-                    && (category != null || signalQuestion(query));
+                    && (category != null || signalQuestion(query) || attentionQuestion(query));
             return new LookupResult("READY", hits, deterministic);
         } catch (SQLException error) {
             log.warn("Structured agricultural knowledge unavailable: {}", error.getClass().getSimpleName());
@@ -152,6 +152,11 @@ public class AgriculturalStructuredKnowledgeService {
     }
 
     private String category(String value) {
+        // Broad management questions need the complete stage guidance set.
+        // Do not collapse "农事指导" into FARM_OPERATION, otherwise the
+        // fertilizer/water and pest-control evidence is filtered out before
+        // the answer model can organize it.
+        if (broadManagementQuestion(value)) return null;
         if (contains(value, "结束", "终止", "本茬", "采后恢复")) return "TABOO";
         if (contains(value, "病虫", "病害", "虫害", "病斑", "防治", "打药", "用药")) return "PEST_DISEASE";
         if (contains(value, "肥", "水分", "水肥", "灌溉", "浇水", "排水", "墒情")) return "FERTILIZER_WATER";
@@ -161,7 +166,12 @@ public class AgriculturalStructuredKnowledgeService {
         return null;
     }
 
-    private boolean attentionQuestion(String value) { return contains(value, "要点", "注意", "建议", "管理", "怎么管", "怎么办"); }
+    private boolean attentionQuestion(String value) {
+        return contains(value, "要点", "注意", "建议", "指导", "管理", "怎么管", "怎么办", "怎么做", "做什么", "农事");
+    }
+    private boolean broadManagementQuestion(String value) {
+        return contains(value, "农事指导", "农事建议", "管理指导", "管理建议", "管理重点", "注意事项", "整体管理", "综合管理");
+    }
     private boolean signalQuestion(String value) { return contains(value, "症状", "阈值", "判断", "黄化", "发黄", "病斑", "高温", "降雨", "雨量"); }
     private boolean signalMatches(String normalizedQuery, String key) {
         String normalizedKey = normalize(key);

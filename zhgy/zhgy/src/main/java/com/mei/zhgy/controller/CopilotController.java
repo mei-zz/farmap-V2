@@ -725,7 +725,7 @@ public class CopilotController {
         // this keeps a generic question from mixing crop-specific evidence.
         boolean untaggedOnly = facts == null || facts.crop() == null || facts.crop().isBlank();
         String crop = facts == null ? null : facts.crop();
-        String growthStage = facts == null ? null : facts.growthStage();
+        String growthStage = knowledgeStageFor(request == null ? null : request.getMessage(), facts);
         DiagnosisAnalyzeRequest query = new DiagnosisAnalyzeRequest();
         CopilotPageContext page = request.getPageContext();
         String fieldId = routed == null || routed.getResolvedContext() == null ? null : routed.getResolvedContext().getFieldId();
@@ -781,7 +781,9 @@ public class CopilotController {
 
     private String streamModelAnswer(CopilotChatRequest request, CopilotRouteResult routed, CopilotFacts facts,
                                      KnowledgeBundle knowledge, Long userId, SseEmitter emitter) {
-        String deterministicAnswer = deterministicPhenologyAnswer(request.getMessage(), facts);
+        boolean compositePhenologyGuidance = isCompositePhenologyGuidance(request.getMessage());
+        String verifiedPhenologyAnswer = temporalPhenologyAnswer(request.getMessage(), facts);
+        String deterministicAnswer = compositePhenologyGuidance ? null : verifiedPhenologyAnswer;
         if (deterministicAnswer != null) {
             streamDelta(emitter, deterministicAnswer);
             return deterministicAnswer;
@@ -825,6 +827,10 @@ public class CopilotController {
         context.put("fieldFactsStatus", facts.status());
         context.put("knowledgeStatus", knowledge.status());
         context.put("knowledge", knowledge.items());
+        if (compositePhenologyGuidance && verifiedPhenologyAnswer != null) {
+            context.put("verifiedPhenologyAnswer", verifiedPhenologyAnswer);
+            context.put("guidanceGrowthStage", knowledgeStageFor(request.getMessage(), facts));
+        }
         context.put("maxOutputTokens", Math.max(256, copilotMaxOutputTokens));
         Map<String, Object> source = answerSource(routed, facts, knowledge, request.getMessage());
         context.put("answerSource", source.get("layer"));
@@ -841,6 +847,9 @@ public class CopilotController {
                 : allowUngrounded
                 ? "若没有私有地块事实或知识库命中，允许使用模型通用农业知识，但必须在回答开头明确写‘以下为通用建议，未结合你的地块数据，仅供参考’。"
                 : "只使用当前地块事实或知识库依据；不能把模型记忆当作事实。";
+        String phenologyInstruction = compositePhenologyGuidance
+                ? "这是一个复合问题，必须同时回答两个部分：先给出已验证的当前/目标物候期结论，再根据目标物候期给出具体农事指导。不要只回答物候期名称；农事指导只使用农业知识依据，按肥水、病虫监测、农事操作或注意事项整理2到5条，明确适用阶段，不能把建议写成新的物候期。"
+                : "事实优先级规则：当用户询问‘现在/当前/目前’的物候期、生育阶段或该做什么时，优先使用【当前日期】和【当前物候期】直接给出唯一结论，不要罗列全部物候期；上一个/下一个物候期必须使用给定的相邻阶段字段，不要让模型自行接词；没有地块时可以使用明确作物的通用历，但必须说明是通用历推算；日期、作物和依据都不足时，明确指出缺口。";
         String prompt = "用户问题：" + safe(request.getMessage())
                 + "\n当前上下文：" + context
                 + "\n最近对话（仅用于承接指代，不得覆盖当前页面事实）：" + recentConversation(request, userId)
@@ -848,7 +857,7 @@ public class CopilotController {
                 + "\n知识库状态：" + knowledge.status()
                 + "\n物候事实来源：" + facts.sources()
                 + "\n答案来源策略：优先使用当前地块私有事实，其次使用按作物过滤的公共农业知识，再按开关决定是否使用模型通用知识。当前答案层为“" + source.get("layer") + "”。"
-                + "\n事实优先级规则：当用户询问‘现在/当前/目前’的物候期、生育阶段或该做什么时，优先使用【当前日期】和【当前物候期】直接给出唯一结论，不要罗列全部物候期；上一个/下一个物候期必须使用给定的相邻阶段字段，不要让模型自行接词；没有地块时可以使用明确作物的通用历，但必须说明是通用历推算；日期、作物和依据都不足时，明确指出缺口。"
+                + "\n" + phenologyInstruction
                 + "\n物候术语规则：物候期只能使用给定的有序阶段名；修剪、施肥、疏果、打药、清园等是农事操作，不是物候期；禁止自造阶段名，也禁止把其他作物的阶段套入当前作物。"
                 + "\n" + sourceInstruction
                 + "\n始终不要虚构地块温度、湿度、土壤、历史用药、诊断或产量；知识库不可用时不要跨作物猜测。请直接用中文回答，不要输出隐藏思维链或 <think> 标签。";
@@ -867,6 +876,11 @@ public class CopilotController {
     }
 
     private String deterministicPhenologyAnswer(String message, CopilotFacts facts) {
+        if (isCompositePhenologyGuidance(message)) return null;
+        return temporalPhenologyAnswer(message, facts);
+    }
+
+    private String temporalPhenologyAnswer(String message, CopilotFacts facts) {
         String normalized = safe(message);
         boolean asksCurrent = normalized.contains("现在") || normalized.contains("当前") || normalized.contains("目前");
         boolean asksPhenology = normalized.contains("物候期") || normalized.contains("生育期") || normalized.contains("生长阶段")
@@ -899,6 +913,39 @@ public class CopilotController {
                 : facts.registeredGrowthStage() == null ? "根据服务器日期推算，" : "根据当前地块的服务端登记事实，";
         if ("PUBLIC_GENERIC".equals(facts.status())) source = "按服务器日期和" + crop + "通用物候历推算，";
         return ("PUBLIC_GENERIC".equals(facts.status()) ? "未使用地块实时数据，" : "截至" + facts.currentDate() + "，") + source + crop + "目前处于" + facts.growthStageLabel() + ("PUBLIC_GENERIC".equals(facts.status()) ? "。该结论不是你的地块实时事实。" : "。");
+    }
+
+    private boolean isCompositePhenologyGuidance(String message) {
+        String normalized = safe(message);
+        boolean asksPhenology = normalized.contains("物候期") || normalized.contains("生育期") || normalized.contains("生长阶段")
+                || normalized.contains("什么时期") || normalized.contains("什么阶段") || normalized.contains("哪一期") || normalized.contains("哪一个阶段");
+        boolean asksTemporal = normalized.contains("下一个") || normalized.contains("下一阶段") || normalized.contains("下一期")
+                || normalized.contains("之后") || normalized.contains("再下一个") || normalized.contains("上一个")
+                || normalized.contains("上一阶段") || normalized.contains("上一期") || normalized.contains("之前")
+                || normalized.contains("现在") || normalized.contains("当前") || normalized.contains("目前");
+        return asksPhenology && asksTemporal && asksGuidance(normalized);
+    }
+
+    private boolean asksGuidance(String message) {
+        return contains(safe(message), "农事指导", "农事建议", "管理指导", "管理建议", "管理重点", "注意事项",
+                "指导什么", "怎么管理", "如何管理", "怎么管", "怎么办", "怎么做", "如何做", "做什么",
+                "建议", "指导", "措施", "水肥管理", "肥水管理", "病虫防治");
+    }
+
+    private String knowledgeStageFor(String message, CopilotFacts facts) {
+        if (facts == null) return null;
+        String normalized = safe(message);
+        if (asksGuidance(normalized)) {
+            if (contains(normalized, "下一个", "下一阶段", "下一期", "之后", "再下一个")
+                    && facts.nextGrowthStage() != null && !facts.nextGrowthStage().isBlank()) {
+                return facts.nextGrowthStage();
+            }
+            if (contains(normalized, "上一个", "上一阶段", "上一期", "之前")
+                    && facts.previousGrowthStage() != null && !facts.previousGrowthStage().isBlank()) {
+                return facts.previousGrowthStage();
+            }
+        }
+        return facts.growthStage();
     }
 
     private String temporalPrefix(CopilotFacts facts) {

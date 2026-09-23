@@ -70,6 +70,7 @@ public class KnowledgeQueryRewriter {
 
     private int dynamicTopK(String queryType, Integer requested) {
         int policy = switch (queryType) {
+            case "MANAGEMENT_GUIDANCE" -> 6;
             case "PHENOLOGY_FACT" -> 3;
             case "DIAGNOSIS_OR_THRESHOLD" -> 5;
             default -> 4;
@@ -80,6 +81,10 @@ public class KnowledgeQueryRewriter {
 
     private String queryType(String query) {
         String value = query == null ? "" : query;
+        if (contains(value, "农事指导", "农事建议", "管理指导", "管理建议", "管理重点", "注意事项", "怎么管理", "如何管理", "怎么管", "怎么办", "怎么做", "做什么")
+                && contains(value, "现在", "当前", "目前", "物候", "生育期", "阶段", "下一期", "下一个", "上一期", "上一个")) {
+            return "MANAGEMENT_GUIDANCE";
+        }
         if (contains(value, "现在", "当前", "目前", "物候", "生育期", "下一期", "下一个", "上一期", "上一个")) return "PHENOLOGY_FACT";
         if (contains(value, "病", "虫", "病斑", "黄化", "发黄", "失绿", "阈值", "温度", "高温", "暴雨", "雨量", "降雨", "肥", "水分", "水肥", "灌溉", "浇水", "排水", "药", "防治", "为什么", "原因", "如何判断", "可能")) return "DIAGNOSIS_OR_THRESHOLD";
         return "GENERAL_KNOWLEDGE";
