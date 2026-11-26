@@ -1,382 +1,216 @@
-import { useEffect, useMemo, useState } from "react";
-import { useLoaderData } from "react-router";
-import {
-  Avatar,
-  Badge,
-  Button,
-  Divider,
-  Dropdown,
-  Flex,
-  Input,
-  Layout as LayoutAntd,
-  Menu,
-  Select,
-  Tag,
-  Tooltip,
-} from "antd";
-import { BellOutlined, CalendarOutlined, CloudOutlined, LogoutOutlined, RobotOutlined, SearchOutlined, UserOutlined } from "@ant-design/icons";
-import type { MenuProps } from "antd";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
-import { useUserStore } from "@/store/user";
-import { permanence } from "@/utils/permanence";
+import { useEffect, useState } from "react";
+import { Avatar, Button, Dropdown, Flex, Layout as AntLayout, Select, Tooltip } from "antd";
+import { CalendarOutlined, CloudOutlined, LogoutOutlined, MessageOutlined, UserOutlined } from "@ant-design/icons";
+import { NavLink, Outlet, useLoaderData, useLocation, useNavigate, useRevalidator } from "react-router";
+import { loadCurrentWeather } from "@/features/agricultural/context";
+import { clearCopilotConversation } from "@/features/copilot/service";
+import { primaryNavigation, settingsNavigation, type UserRole } from "@/routes/navigation";
 import { useAIContextStore } from "@/store/aiContext";
 import { useCopilotStore } from "@/store/copilot";
-import CopilotDrawer from "@/components/copilot/CopilotDrawer";
-import { clearDemoSession, getDemoSession } from "@/utils/demoSession";
+import { useUserStore, type UserStoreState } from "@/store/user";
 import { formatCurrentLocalDate } from "@/utils/currentDate";
-import { loadCurrentWeather } from "@/features/agricultural/context";
+import { clearDemoSession } from "@/utils/demoSession";
+import { permanence } from "@/utils/permanence";
 import { req } from "@/utils/reqeust";
-import {
-  primaryNavigation,
-  settingsNavigation,
-  type NavigationItem,
-  type UserRole,
-} from "@/routes/navigation";
+import AccountLogin from "@/views/login";
+import type { WorkspaceSession } from "./session";
+import "./shell.css";
+import "./design-system.css";
 
-const { Header, Sider, Content } = LayoutAntd;
-const SELECTED_FARM_STORAGE_KEY = "farmap.selected-farm-id";
+const { Header, Content } = AntLayout;
+const farmStorageKey = "farmap.selected-farm-id";
+const localOnlyKeys = ["user", "token", "accessToken", "farm", farmStorageKey];
+type FarmField = { fieldId: string; name: string; crop?: string; area?: number; growthStage?: string };
+export type SessionLoaderResult = { checkedToken: string; isExpired: boolean };
 
-function readSelectedFarmId(): number | undefined {
-  if (typeof window === "undefined") return undefined;
-  const value = Number(window.localStorage.getItem(SELECTED_FARM_STORAGE_KEY));
-  return Number.isFinite(value) && value > 0 ? value : undefined;
-}
-
-function getNavigationKey(pathname: string): string {
-  if (pathname.startsWith("/diagnosis") || pathname.startsWith("/analysis")) return "agent";
-  const match = primaryNavigation.find((item) => {
-    const rootPath = `/${item.path.split("/")[1]}`;
-    return pathname.startsWith(rootPath);
-  });
-  return match?.key ?? (pathname.startsWith("/settings") ? settingsNavigation.key : "overview");
-}
-
-function getNavigationItems(items: NavigationItem[], role: UserRole): MenuProps["items"] {
-  return items
-    .filter((item) => item.roles.includes(role))
-    .map((item) => {
-      const Icon = item.icon;
-      return {
-        key: item.key,
-        icon: <Icon />,
-        label: (
-          <NavLink to={item.path} className="farmap-nav-item">
-            <span>{item.label}</span>
-            <small>{item.english}</small>
-          </NavLink>
-        ),
-      };
-    });
+export async function loadWorkspaceSession(): Promise<SessionLoaderResult> {
+  const checkedToken = permanence.token.useToken();
+  if (checkedToken === "NO_TOKEN_STORED" || !permanence.user.useUserStore()) return { checkedToken, isExpired: true };
+  try {
+    const response = await req.get<{ data?: { isExpired?: boolean; isValid?: boolean } }>("/user/validate-token", { Authorization: `Bearer ${checkedToken}` });
+    return { checkedToken, isExpired: response.data?.isExpired !== false || response.data?.isValid === false };
+  } catch { return { checkedToken, isExpired: true }; }
 }
 
 export default function Layout() {
-  const { isExpired } = useLoaderData<{ isExpired: boolean }>();
-  const localUserStore = permanence.user.useUserStore();
-  const demoSession = getDemoSession();
-  const isDemoMode = Boolean(demoSession);
-  const storeFarms = useUserStore((state) => state.farms);
-  const logout = useUserStore((state) => state.logout);
-  const role: UserRole = isDemoMode ? "viewer" : localUserStore?.role ?? "guest";
-  const username = demoSession?.user.name ?? localUserStore?.username ?? "FarMap 用户";
+  const loader = useLoaderData<SessionLoaderResult>();
+  const [signedInToken, setSignedInToken] = useState("");
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [date, setDate] = useState(() => new Date());
+  const [loadedFields, setLoadedFields] = useState<{ farmId: number; items: FarmField[] }>();
+  const revalidator = useRevalidator();
   const navigate = useNavigate();
   const location = useLocation();
-  const setAIContext = useAIContextStore((state) => state.setContext);
-  const context = useAIContextStore((state) => state.context);
-  const openCopilot = useCopilotStore((state) => state.open);
-  const isCopilotOpen = useCopilotStore((state) => state.isOpen);
-  const setCopilotContext = useCopilotStore((state) => state.setContext);
-  const [searchValue, setSearchValue] = useState("");
-  const [currentDate, setCurrentDate] = useState(() => new Date());
-  const [preferredFarmId, setPreferredFarmId] = useState<number | undefined>(readSelectedFarmId);
-  const demoFarmId = demoSession?.farm.id;
-  const demoFarmName = demoSession?.farm.name;
-  const demoFarmAddress = demoSession?.farm.address;
   const token = permanence.token.useToken();
+  const storedUser = permanence.user.useUserStore();
+  const signedIn = Boolean(storedUser && token !== "NO_TOKEN_STORED" &&
+    (loader.checkedToken === token ? !loader.isExpired : signedInToken === token));
+  const role: UserRole = signedIn && storedUser ? storedUser.role : "guest";
+  const farms = signedIn ? storedUser?.farms ?? [] : [];
+  const username = signedIn ? storedUser?.username : undefined;
+  const context = useAIContextStore((state) => state.context);
+  const setContext = useAIContextStore((state) => state.setContext);
+  const isCopilotOpen = useCopilotStore((state) => state.isOpen);
+  const farmId = farms.find((farm) => farm.id === context.currentFarm.id)?.id
+    ?? farms.find((farm) => farm.id === Number(localStorage.getItem(farmStorageKey)))?.id
+    ?? farms[0]?.id;
+  const fields = loadedFields?.farmId === farmId ? loadedFields?.items ?? [] : [];
 
   useEffect(() => {
-    const timer = window.setInterval(() => setCurrentDate(new Date()), 60_000);
+    clearDemoSession();
+    const timer = window.setInterval(() => setDate(new Date()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
-    if (!isDemoMode && (isExpired || !localUserStore)) navigate("/login");
-  }, [isDemoMode, isExpired, localUserStore, navigate]);
+    if (location.pathname !== "/workspace") setContext({ currentPage: location.pathname, pageKey: location.pathname });
+  }, [location.pathname, setContext]);
+
+  const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+  const referenceDate = context.referenceDate?.slice(0, 10) || today;
+  useEffect(() => {
+    if (signedIn && !useAIContextStore.getState().context.referenceDate) setContext({ referenceDate: today });
+  }, [today, setContext, signedIn]);
 
   useEffect(() => {
-    setAIContext({ currentPage: location.pathname, pageKey: location.pathname });
-    setCopilotContext(undefined);
-  }, [location.pathname, setAIContext, setCopilotContext]);
+    if (!isCopilotOpen || !signedIn) return;
+    if (location.pathname !== "/workspace") navigate("/workspace");
+    useCopilotStore.getState().close();
+  }, [isCopilotOpen, location.pathname, navigate, signedIn]);
 
   useEffect(() => {
-    if (demoFarmId === undefined || !demoFarmName || !demoFarmAddress) return;
-    setAIContext({
-      currentFarm: {
-        id: demoFarmId,
-        name: demoFarmName,
-        address: demoFarmAddress,
-      },
+    if (!signedIn || farmId === undefined) return;
+    const farm = farms.find((item) => item.id === farmId);
+    if (!farm || farm.id === useAIContextStore.getState().context.currentFarm.id) return;
+    setContext({ ...clearFieldContext, currentFarm: { id: farm.id, name: farm.name, address: "" }, currentWeather: undefined });
+  }, [farmId, farms, setContext, signedIn]);
+
+  useEffect(() => {
+    if (!signedIn || farmId === undefined) return;
+    let live = true;
+    setContext({ currentWeather: undefined });
+    void loadCurrentWeather(farmId, token).then((weather) => {
+      if (!live) return;
+      setContext({ currentWeather: {
+        summary: weather.condition ?? "暂无气象观测",
+        temperature: weather.status === "READY" && weather.temperature ? `${weather.temperature}°C` : "—",
+        precipitation: weather.rainfallForecast24h !== undefined ? `未来24小时 ${weather.rainfallForecast24h.toFixed(1)} mm` : "暂无降雨信息",
+        updatedAt: weather.observedAt ?? weather.retrievedAt ?? new Date().toISOString(),
+        rainfall14d: weather.rainfall14d,
+        rainfallForecast24h: weather.rainfallForecast24h,
+        rainfallProbability24h: weather.rainfallProbability24h,
+        rainfallForecast: weather.rainfallForecast,
+        rainfallForecastDays: weather.rainfallForecastDays,
+        forecast: weather.forecast,
+      } });
+    }).catch(() => undefined);
+    void req.get<{ data?: FarmField[] }>(`/api/farms/${farmId}/fields`, { Authorization: `Bearer ${token}` }).then((response) => {
+      if (!live) return;
+      setLoadedFields({ farmId, items: (response.data ?? []).filter((field) => field.fieldId && field.name) });
+    }).catch(() => { if (live) setLoadedFields({ farmId, items: [] }); });
+    return () => { live = false; };
+  }, [farmId, setContext, signedIn, token]);
+
+  function chooseFarm(id: number) {
+    const farm = farms.find((item) => item.id === id);
+    if (!farm) return;
+    localStorage.setItem(farmStorageKey, String(id));
+    setContext({ ...clearFieldContext, currentFarm: { id, name: farm.name, address: "" }, currentWeather: undefined });
+    useCopilotStore.getState().setContext(undefined);
+  }
+
+  function chooseField(id: string | undefined) {
+    const field = fields.find((item) => item.fieldId === id);
+    setContext({ ...clearFieldContext,
+      currentField: field ? { id: field.fieldId, name: field.name, area: field.area ?? 0, crop: field.crop ?? "" } : undefined,
+      currentCrop: field?.crop ? { name: field.crop, growthStage: field.growthStage } : undefined,
+      currentPhenology: field?.growthStage ? { stage: field.growthStage, progress: 0 } : undefined,
     });
-  }, [demoFarmAddress, demoFarmId, demoFarmName, setAIContext]);
+    useCopilotStore.getState().setContext(undefined);
+  }
 
-  const farmOptions = useMemo(() => {
-    if (demoFarmId !== undefined && demoFarmName) {
-      return [{ value: demoFarmId, label: demoFarmName }];
-    }
-    const farms = localUserStore?.farms?.length ? localUserStore.farms : storeFarms;
-    return farms.length
-      ? farms.map((farm) => ({ value: farm.id, label: farm.name }))
-      : [{ value: context.currentFarm.id, label: context.currentFarm.name }];
-  }, [context.currentFarm.id, context.currentFarm.name, demoFarmId, demoFarmName, localUserStore?.farms, storeFarms]);
+  function acceptAccount(nextToken: string, user: UserStoreState) {
+    resetWorkspaceIdentity();
+    permanence.token.setToken(nextToken);
+    permanence.user.setUserStore(user);
+    useUserStore.getState().login(user);
+    setLoadedFields(undefined);
+    setSignedInToken(nextToken);
+    setLoginOpen(false);
+    void revalidator.revalidate();
+  }
 
-  const selectedFarmId = farmOptions.some((farm) => farm.value === context.currentFarm.id)
-    ? context.currentFarm.id
-    : farmOptions.find((farm) => farm.value === preferredFarmId)?.value ?? farmOptions[0].value;
+  function signOut() {
+    resetWorkspaceIdentity();
+    localOnlyKeys.forEach((key) => localStorage.removeItem(key));
+    useUserStore.getState().logout();
+    setLoadedFields(undefined);
+    setSignedInToken("");
+    navigate("/workspace", { replace: true });
+  }
 
-  useEffect(() => {
-    if (selectedFarmId === context.currentFarm.id) return;
-    const selectedFarm = farmOptions.find((farm) => farm.value === selectedFarmId);
-    if (!selectedFarm) return;
+  const session: WorkspaceSession = { signedIn, role, openLogin: () => setLoginOpen(true) };
+  const nav = [...primaryNavigation, settingsNavigation].filter((item) => item.roles.includes(role) && (signedIn || item.key === "agent"));
+  const inWorkspace = location.pathname === "/workspace";
+  const routeRoot = location.pathname.split("/")[1];
+  const activeKey = ["workspace", "planning", "diagnosis", "analysis"].includes(routeRoot) ? "agent" : routeRoot === "admin" ? "settings" : routeRoot;
 
-    setPreferredFarmId(selectedFarmId);
-    window.localStorage.setItem(SELECTED_FARM_STORAGE_KEY, String(selectedFarmId));
-
-    setAIContext({
-      currentFarm: {
-        ...context.currentFarm,
-        id: selectedFarm.value,
-        name: selectedFarm.label,
-      },
-      currentField: undefined,
-      currentCrop: undefined,
-      currentLocation: undefined,
-      currentPhenology: undefined,
-      selectedDiagnosis: undefined,
-      selectedImages: [],
-      selectedDevice: undefined,
-      currentWeather: undefined,
-      agentRunId: undefined,
-      taskId: undefined,
-    });
-  }, [context.currentFarm, context.currentFarm.id, farmOptions, selectedFarmId, setAIContext]);
-
-  useEffect(() => {
-    if (isDemoMode || selectedFarmId === undefined || selectedFarmId <= 0) return;
-    let active = true;
-    setAIContext({ currentWeather: undefined });
-    loadCurrentWeather(selectedFarmId, token)
-      .then((weather) => {
-        if (!active) return;
-        const precipitation = weather.rainfallForecast24h !== undefined
-          ? `未来24小时 ${weather.rainfallForecast24h.toFixed(1)} mm${weather.rainfallProbability24h !== undefined ? ` · ${weather.rainfallProbability24h}%概率` : ""}`
-          : "暂无降雨信息";
-        setAIContext({
-          currentWeather: {
-            summary: weather.condition ?? (weather.status === "NOT_CONFIGURED" ? "天气服务尚未配置" : "天气服务已配置但暂不可用"),
-            temperature: weather.status === "READY" && weather.temperature ? `${weather.temperature}°C` : "—",
-            precipitation,
-            updatedAt: weather.observedAt ?? weather.retrievedAt ?? new Date().toISOString(),
-            rainfall14d: weather.rainfall14d,
-            rainfallForecast24h: weather.rainfallForecast24h,
-            rainfallProbability24h: weather.rainfallProbability24h,
-            rainfallForecast: weather.rainfallForecast,
-            rainfallForecastDays: weather.rainfallForecastDays,
-            forecast: weather.forecast,
-          },
-        });
-      })
-      .catch(() => {
-        // Keep the compact header fallback; detailed pages show the request error.
-      });
-    return () => { active = false; };
-  }, [isDemoMode, selectedFarmId, setAIContext, token]);
-
-  useEffect(() => {
-    if (isDemoMode || selectedFarmId === undefined || selectedFarmId <= 0 || context.currentField?.id) return;
-    let active = true;
-    req.get<{ data?: Array<{ fieldId?: string; name?: string; crop?: string; area?: number; growthStage?: string }> }>(
-      `/api/farms/${selectedFarmId}/fields`,
-      { Authorization: `Bearer ${token}` },
-    ).then((response) => {
-      const field = response.data?.find((item) => item.fieldId && item.name);
-      if (!active || !field?.fieldId) return;
-      setAIContext({
-        currentField: { id: field.fieldId, name: field.name ?? field.fieldId, area: field.area ?? 0, crop: field.crop ?? "" },
-        currentCrop: field.crop ? { name: field.crop, growthStage: field.growthStage } : undefined,
-        currentPhenology: field.growthStage ? { stage: field.growthStage, progress: 0 } : undefined,
-      });
-    }).catch(() => {
-      // Detail pages remain authoritative; this only repairs the global Agent context.
-    });
-    return () => { active = false; };
-  }, [context.currentField?.id, isDemoMode, selectedFarmId, setAIContext, token]);
-
-  const handleFarmChange = (farmId: number) => {
-    const selectedFarm = farmOptions.find((farm) => farm.value === farmId);
-    if (!selectedFarm) return;
-
-    setPreferredFarmId(farmId);
-    window.localStorage.setItem(SELECTED_FARM_STORAGE_KEY, String(farmId));
-
-    setAIContext({
-      currentFarm: {
-        ...context.currentFarm,
-        id: selectedFarm.value,
-        name: selectedFarm.label,
-      },
-      currentField: undefined,
-      currentCrop: undefined,
-      currentLocation: undefined,
-      currentPhenology: undefined,
-      selectedDiagnosis: undefined,
-      selectedImages: [],
-      selectedDevice: undefined,
-      currentWeather: undefined,
-      agentRunId: undefined,
-      taskId: undefined,
-    });
-  };
-
-  const handleHeaderCopilotOpen = () => {
-    openCopilot();
-  };
-
-  const handleSearch = (value: string) => {
-    const normalized = value.trim().toLowerCase();
-    if (!normalized) return;
-    if (normalized.includes("地图") || normalized.includes("农场") || normalized.includes("farm")) {
-      navigate("/farm/map");
-    } else if (normalized.includes("诊断") || normalized.includes("ai")) {
-      navigate("/diagnosis/new");
-    } else if (normalized.includes("农事") || normalized.includes("操作")) {
-      navigate("/operations/tasks");
-    } else if (normalized.includes("专家") || normalized.includes("知识")) {
-      navigate("/knowledge/library");
-    }
-    setSearchValue("");
-  };
-
-  const handleLogout = () => {
-    if (isDemoMode) {
-      clearDemoSession();
-      navigate("/");
-      return;
-    }
-    logout();
-    permanence.token.setToken("NO_TOKEN_STORED");
-    navigate("/login");
-  };
-
-  const userMenuItems: MenuProps["items"] = [
-    { key: "user", label: `${username} · ${role}`, disabled: true },
-    { type: "divider" },
-    {
-      key: "logout",
-      icon: <LogoutOutlined />,
-      label: isDemoMode ? "退出演示" : "退出登录",
-      onClick: handleLogout,
-    },
-  ];
-
-  return (
-    <LayoutAntd className="farmap-shell">
-      <Sider breakpoint="lg" collapsedWidth="0" className="farmap-sidebar">
-        <div className="farmap-brand">
-          <div className="farmap-brand__mark">F</div>
-          <div>
-            <strong>FarMap</strong>
-            <small>农业智能决策平台</small>
-          </div>
+  return <AntLayout className={`farmap-shell agent-shell${signedIn ? " has-account" : ""}`}>
+    {signedIn && <aside className="agent-shell__rail" aria-label="主导航">
+      <NavLink to="/workspace" className="agent-shell__rail-mark" aria-label="FarMap 工作台">F</NavLink>
+      <nav className="agent-shell__nav">{nav.map((item) => {
+        const Icon = item.icon;
+        return <Tooltip key={item.key} title={item.label} placement="right"><NavLink to={item.path} aria-label={item.label}
+          className={`agent-shell__nav-link ${activeKey === item.key || (item.key === "agent" && inWorkspace) ? "is-active" : ""}`}><Icon /></NavLink></Tooltip>;
+      })}</nav>
+    </aside>}
+    <AntLayout className="farmap-main agent-shell__main">
+      <Header className="farmap-header agent-shell__header">
+        <div className="agent-shell__header-left">
+          <NavLink to="/workspace" className="agent-shell__brand">FarMap <span>农事智能工作台</span></NavLink>
+          {signedIn && <div className="agent-shell__scope" aria-label="共享农场上下文">
+            <Select aria-label="当前农场" className="agent-shell__farm-select" value={farmId} placeholder="暂无农场"
+              options={farms.map(({ id, name }) => ({ value: id, label: name }))} onChange={chooseFarm} />
+            <Select aria-label="当前地块" className="agent-shell__field-select" placeholder="全部地块" allowClear
+              value={context.currentField?.id} options={fields.map(({ fieldId, name }) => ({ value: fieldId, label: name }))} onChange={chooseField} />
+            {context.currentCrop?.name && <span className="agent-shell__scope-label">{context.currentCrop.name}</span>}
+          </div>}
         </div>
+        <Flex align="center" gap={12} className="agent-shell__header-right">
+          {signedIn && context.currentWeather && <span className="agent-shell__weather"><CloudOutlined /> {context.currentWeather.temperature}</span>}
+          {signedIn ? <label className="agent-shell__date agent-shell__date-picker"><CalendarOutlined />
+            <input type="date" aria-label="参考日期" value={referenceDate}
+              onChange={(event) => setContext({ referenceDate: event.target.value || today })} />
+          </label> : <span className="agent-shell__date"><CalendarOutlined /> {formatCurrentLocalDate(date)}</span>}
+          {signedIn && !inWorkspace && <Button className="agent-shell__takeover" aria-label="让 Agent 接管当前上下文" icon={<MessageOutlined />}
+            onClick={() => useCopilotStore.getState().open()}><span className="agent-shell__takeover-text">询问 Agent</span></Button>}
+          {signedIn ? <Dropdown trigger={["click"]} menu={{ items: [
+            { key: "user", label: username, disabled: true },
+            { key: "logout", icon: <LogoutOutlined />, label: "退出登录", onClick: signOut },
+          ] }}><Button type="text" aria-label="账号菜单" className="agent-shell__user"><Avatar size={30} icon={<UserOutlined />} /><span>{username}</span></Button></Dropdown>
+            : <Button type="text" className="agent-shell__login-entry" aria-label="登录" onClick={session.openLogin}><Avatar size={30} icon={<UserOutlined />} />登录</Button>}
+        </Flex>
+      </Header>
+      <Content className={`farmap-content agent-shell__content ${inWorkspace ? "is-workspace" : ""}`}>
+        <Outlet key={signedIn ? `account-${username}` : "guest"} context={session} />
+      </Content>
+    </AntLayout>
+    {loginOpen && !signedIn && <AccountLogin onClose={() => setLoginOpen(false)} onLogin={acceptAccount} />}
+  </AntLayout>;
+}
 
-        <div className="farmap-sidebar__label">工作空间</div>
-        <Menu
-          theme="dark"
-          mode="inline"
-          selectedKeys={[getNavigationKey(location.pathname)]}
-          items={getNavigationItems(primaryNavigation, role)}
-          onClick={({ key }) => {
-            const item = primaryNavigation.find((entry) => entry.key === key);
-            if (item) navigate(item.path);
-          }}
-        />
+const clearFieldContext = {
+  currentField: undefined, currentCrop: undefined, currentLocation: undefined, currentPhenology: undefined,
+  selectedImages: [], selectedDevice: undefined, selectedDiagnosis: undefined, agentRunId: undefined, taskId: undefined,
+};
 
-        {settingsNavigation.roles.includes(role) && (
-          <>
-            <Divider className="farmap-sidebar__divider" />
-            <div className="farmap-sidebar__label">系统</div>
-            <Menu
-              theme="dark"
-              mode="inline"
-              selectedKeys={location.pathname.startsWith("/settings") ? [settingsNavigation.key] : []}
-              items={getNavigationItems([settingsNavigation], role)}
-              onClick={() => navigate(settingsNavigation.path)}
-            />
-          </>
-        )}
-      </Sider>
-
-      <LayoutAntd className="farmap-main">
-        <Header className="farmap-header">
-          <Flex align="center" justify="space-between" gap={16} style={{ width: "100%" }}>
-            <div className="farmap-header__context">
-              <Select
-                aria-label="当前农场"
-                value={selectedFarmId}
-                options={farmOptions}
-                onChange={handleFarmChange}
-                className="farmap-header__farm-select"
-                suffixIcon={<span>⌄</span>}
-              />
-              <div className="farmap-header__weather"><CloudOutlined /><strong>{context.currentWeather?.temperature ?? "—"}</strong><span>{context.currentWeather?.summary ?? "天气数据不可用"}</span></div>
-              <div className="farmap-header__date"><CalendarOutlined /><span>{formatCurrentLocalDate(currentDate)}</span></div>
-            </div>
-
-            <Flex align="center" gap={10} className="farmap-header__tools">
-              <Input.Search
-                allowClear
-                value={searchValue}
-                onChange={(event) => setSearchValue(event.target.value)}
-                onSearch={handleSearch}
-                placeholder="搜索农场、地块或诊断"
-                enterButton={<SearchOutlined />}
-                style={{ width: 300 }}
-              />
-              <Tooltip title="通知">
-                <Badge dot>
-                  <Button type="text" icon={<BellOutlined />} aria-label="通知" />
-                </Badge>
-              </Tooltip>
-              <Button type="primary" ghost icon={<RobotOutlined />} onClick={handleHeaderCopilotOpen}>
-                FarMap Agent
-              </Button>
-              {isDemoMode && <Tag color="gold">DEMO MODE</Tag>}
-              <Dropdown menu={{ items: userMenuItems }} trigger={["click"]}>
-                <Button type="text" className="farmap-user-button">
-                  <Avatar size={30} icon={<UserOutlined />} />
-                  <span>{username}</span>
-                </Button>
-              </Dropdown>
-            </Flex>
-          </Flex>
-        </Header>
-
-        <Content className="farmap-content">
-          <Outlet />
-        </Content>
-      </LayoutAntd>
-      {!isCopilotOpen && (
-        <Button
-          type="primary"
-          size="large"
-          icon={<RobotOutlined />}
-          className="farmap-agent-launcher"
-          onClick={handleHeaderCopilotOpen}
-          aria-label="打开 FarMap 多模态农业 Agent"
-        >
-          <span><b>问 Agent</b><small>{context.currentField?.name ? `已连接 ${context.currentField.name}` : `已连接 ${context.currentFarm.name}`}</small></span>
-        </Button>
-      )}
-      <CopilotDrawer />
-    </LayoutAntd>
-  );
+function resetWorkspaceIdentity() {
+  clearDemoSession();
+  clearCopilotConversation();
+  useAIContextStore.getState().resetContext();
+  const copilot = useCopilotStore.getState();
+  copilot.clearMessages();
+  copilot.setDraft("");
+  copilot.setContext(undefined);
+  copilot.close();
 }

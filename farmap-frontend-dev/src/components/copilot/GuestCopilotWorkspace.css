@@ -1,0 +1,199 @@
+.farmap-guest {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.farmap-guest__mark {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 14px;
+  color: var(--fm-green);
+  background: #e5efe7;
+  border-radius: 14px;
+}
+
+.farmap-guest__toolbar {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  width: min(800px, 100%);
+  margin: 16px auto 10px;
+}
+
+.farmap-guest__toolbar button {
+  cursor: pointer;
+  background: white;
+  border: 1px solid var(--fm-line);
+  border-radius: 7px;
+  padding: 5px 10px;
+  color: var(--fm-green);
+}
+
+.farmap-guest__role {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 2px;
+  color: var(--fm-green);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.farmap-guest__transcript {
+  position: relative;
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.farmap-guest__messages {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  min-height: 0;
+  min-width: 0;
+  margin: 0;
+  padding: 4px 2px 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+  scrollbar-width: thin;
+}
+
+.farmap-guest__messages > .farmap-copilot__message--assistant {
+  align-self: stretch;
+  width: 100%;
+  max-width: 100%;
+}
+
+.farmap-guest__messages > .farmap-copilot__message--user {
+  align-self: flex-end;
+  width: fit-content;
+  max-width: min(83%, 680px);
+  margin-left: auto;
+  overflow-wrap: anywhere;
+}
+
+.farmap-guest__messages .farmap-copilot__message,
+.farmap-guest__messages .farmap-copilot__message :where(p, li, td, th, a, code, strong, em, blockquote) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.farmap-guest__messages .farmap-copilot__message :where(p, ul, ol, blockquote, pre, table) {
+  margin: 0.45em 0;
+}
+
+.farmap-guest__messages .farmap-copilot__message pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.farmap-guest__messages .farmap-copilot__message table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.farmap-guest__messages .farmap-copilot__message img {
+  max-width: 100%;
+  height: auto;
+}
+
+.farmap-guest__jump {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  z-index: 2;
+  flex: none;
+  margin: 0;
+  padding: 5px 12px;
+  transform: translateX(-50%);
+  background: #fff;
+  border: 1px solid #c9ded1;
+  border-radius: 20px;
+  box-shadow: 0 4px 14px #1e50301a;
+  color: var(--fm-green);
+  cursor: pointer;
+}
+
+.farmap-guest__messages article > p {
+  margin: 5px 0;
+}
+
+.farmap-guest .farmap-guest__composer {
+  position: relative;
+  flex: none;
+  margin: 10px auto 0;
+}
+
+.farmap-guest__composer textarea {
+  width: 100%;
+  min-height: 60px;
+  max-height: 22dvh;
+  padding: 2px 0;
+  resize: vertical;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--fm-ink);
+  font: inherit;
+  font-size: 14px;
+}
+
+.farmap-guest__composer:focus-within {
+  border-color: var(--fm-green);
+}
+
+.farmap-guest__composer-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  color: var(--fm-muted);
+}
+
+.farmap-guest__composer-footer button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  padding: 0 13px;
+  color: white;
+  background: var(--fm-green);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.farmap-guest__composer-footer button:disabled {
+  color: #52675a;
+  background: #e4ede6;
+  cursor: default;
+}
+
+.farmap-guest__error { margin: 0 0 8px; color: #a43731; }
+
+@media (max-width: 700px) {
+  .farmap-guest__toolbar {
+    margin: 12px auto 8px;
+  }
+
+  .farmap-guest__messages > .farmap-copilot__message--user {
+    max-width: 88%;
+  }
+
+  .farmap-guest .farmap-guest__composer {
+    margin-top: 8px;
+  }
+}

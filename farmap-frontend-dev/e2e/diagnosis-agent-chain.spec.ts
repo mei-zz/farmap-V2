@@ -35,19 +35,19 @@ test("AI diagnosis creates a diagnosis before creating an Agent Run", async ({ p
       currentWeather: { farmId: 1, status: "READY", condition: "晴", temperature: "26" },
     } }),
   }));
-  await page.route("**/diagnosis/analyze", async (route) => {
+  const diagnosisResult = {
+    diagnosisId: "diagnosis-chain-e2e",
+    run_id: "rag-run-chain-e2e",
+    diagnosis: { title: "柑橘膨果期风险调查", risk_level: "medium", confidence: 0.86, summary: "需要结合天气与历史农情继续调查。" },
+    claims: [], evidence: [], recommendations: [], retrieval_summary: {}, metadata: { mode: "real" },
+  };
+  await page.route("**/diagnosis/jobs", async (route) => {
     diagnosisRequest = route.request().postDataJSON() as Record<string, unknown>;
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ data: {
-        diagnosisId: "diagnosis-chain-e2e",
-        run_id: "rag-run-chain-e2e",
-        diagnosis: { title: "柑橘膨果期风险调查", risk_level: "medium", confidence: 0.86, summary: "需要结合天气与历史农情继续调查。" },
-        claims: [], evidence: [], recommendations: [], retrieval_summary: {}, metadata: { mode: "real" },
-      } }),
-    });
+    await route.fulfill({ json: { data: { jobId: "diagnosis-job-e2e", status: "QUEUED", stage: "QUEUED" } } });
   });
+  await page.route("**/diagnosis/jobs/diagnosis-job-e2e", (route) => route.fulfill({
+    json: { data: { jobId: "diagnosis-job-e2e", status: "COMPLETED", stage: "COMPLETED", diagnosisId: diagnosisResult.diagnosisId, result: diagnosisResult } },
+  }));
   await page.route("**/api/agent/runs", async (route) => {
     agentRequest = route.request().postDataJSON() as Record<string, unknown>;
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ runId: "agent-chain-e2e", status: "planning" }) });
@@ -77,10 +77,10 @@ test("AI diagnosis creates a diagnosis before creating an Agent Run", async ({ p
   expect(diagnosisRequest?.imageUrls).toEqual([]);
   await expect.poll(() => agentRequest?.diagnosisId).toBe("diagnosis-chain-e2e");
   await expect(page).toHaveURL(/\/analysis\/agent-chain-e2e\?diagnosisId=diagnosis-chain-e2e$/);
-  await expect(page.getByRole("heading", { name: "农业 AI 分析工作区" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "农业 Agent 调查台" })).toBeVisible();
 });
 
-test("AI diagnosis navigation opens the investigation entry point", async ({ page }) => {
+test("AI diagnosis remains accessible as a professional view without a primary navigation entry", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("token", "diagnosis-navigation-e2e-token");
     localStorage.setItem("user", JSON.stringify({
@@ -101,8 +101,9 @@ test("AI diagnosis navigation opens the investigation entry point", async ({ pag
     body: JSON.stringify({ data: [] }),
   }));
 
-  await page.goto("overview");
-  await page.getByRole("link", { name: /AI 农情诊断/ }).click();
+  await page.goto("workspace");
+  await expect(page.locator(".agent-shell__nav").getByRole("link", { name: /AI 农情诊断/ })).toHaveCount(0);
+  await page.goto("diagnosis/new");
   await expect(page).toHaveURL(/\/diagnosis\/new$/);
   await expect(page.getByRole("heading", { name: "AI 农情诊断" })).toBeVisible();
 });
@@ -173,13 +174,13 @@ test("Agent Workspace restores server-owned context and source states after refr
   await page.goto("analysis/agent-workspace-refresh-e2e");
   await expect(page.getByText("云阳", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("phase-e-runtime-20260907-031950", { exact: true }).first()).toBeVisible();
-  await expect(page.locator(".fm-agent-data-sources").getByText("READY_EMPTY", { exact: true })).toBeVisible();
-  await page.getByText("Technical Details", { exact: true }).click();
+  await expect(page.locator(".fm-agent-data-sources")).toContainText("READY_EMPTY · 未找到结果");
+  await page.getByText("技术详情", { exact: true }).click();
   await expect(page.getByText("qwen3.6-plus", { exact: true })).toBeVisible();
   await expect(page.getByText("diagnosis-workspace-refresh-e2e", { exact: true })).toBeVisible();
   await expect(page.getByText("EVD-KNOWLEDGE-001", { exact: true })).toHaveCount(0);
 
   await page.reload();
   await expect(page.getByText("phase-e-runtime-20260907-031950", { exact: true }).first()).toBeVisible();
-  await expect(page.locator(".fm-agent-data-sources").getByText("READY_EMPTY", { exact: true })).toBeVisible();
+  await expect(page.locator(".fm-agent-data-sources")).toContainText("READY_EMPTY · 未找到结果");
 });

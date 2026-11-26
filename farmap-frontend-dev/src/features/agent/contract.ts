@@ -34,6 +34,7 @@ export type AgentAction = {
   type: string;
   title: string;
   detail: string;
+  scheduledFor?: string | null;
   toolName: string;
   approvalRequired: boolean;
   approvalState: AgentApprovalState;

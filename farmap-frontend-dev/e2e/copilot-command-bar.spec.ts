@@ -53,32 +53,39 @@ test("Copilot Command Bar reads real priorities and keeps image-only case retrie
     contentType: "application/json",
     body: JSON.stringify({ data: { answer: "已根据当前返回的业务信息整理。", model: "e2e-model", grounded: true } }),
   }));
+  await page.route("**/api/copilot/chat", (route) => route.fulfill({ contentType: "text/event-stream", body: [
+    'event: route\ndata: {"intent":"KNOWLEDGE_QUERY","resolutionStatus":"RESOLVED"}\n\n',
+    'event: knowledge\ndata: {"count":1,"status":"READY"}\n\n',
+    'event: content.delta\ndata: {"delta":"花期高温时应关注土壤水分。"}\n\n',
+    'event: done\ndata: {"status":"COMPLETED"}\n\n',
+  ].join("") }));
   await page.route("**/api/historical-cases/search", async (route) => {
     historicalSearchCalled = true;
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { status: "READY", items: [{ caseId: "CASE-REAL-001", similarityScore: 87.2 }] } }) });
   });
 
-  await page.goto("diagnosis/new");
-  await page.getByRole("button", { name: "FarMap Copilot" }).click();
-  await page.getByPlaceholder("例如：A-12 地块近期需要关注什么？").fill("今天最需要处理什么？");
-  await page.getByRole("button", { name: "发送" }).click();
+  await page.goto("workspace");
+  await page.locator(".agent-shell__field-select").click();
+  await page.locator(".ant-select-dropdown:visible .ant-select-item-option-content").getByText("A-12", { exact: true }).click();
+  const ask = async (message: string) => {
+    await page.getByPlaceholder("描述你的农事需求，或上传作物图片……").fill(message);
+    await page.getByRole("button", { name: "发送消息" }).click();
+  };
+  await ask("今天最需要处理什么？");
   await expect(page.locator(".farmap-copilot__command-result .ant-card-head-title").filter({ hasText: "今日优先事项" })).toBeVisible();
   await expect(page.getByText("花期异常风险", { exact: true })).toBeVisible();
   await expect(page.getByText("B-03 病虫害巡查", { exact: true })).toBeVisible();
 
-  await page.getByPlaceholder("例如：A-12 地块近期需要关注什么？").fill("今天农场怎么样？");
-  await page.getByRole("button", { name: "发送" }).click();
+  await ask("今天农场怎么样？");
   await expect(page.locator(".farmap-copilot__command-result .ant-card-head-title").filter({ hasText: "当前农场状态" })).toBeVisible();
   await expect(page.getByText("当前农场已接入 1 个地块", { exact: true })).toBeVisible();
-  await expect(page.getByText("查看当前风险", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "查看病虫害风险", exact: true })).toBeVisible();
 
-  await page.getByPlaceholder("例如：A-12 地块近期需要关注什么？").fill("柑橘花期高温怎么办？");
-  await page.getByRole("button", { name: "发送" }).click();
+  await ask("柑橘花期高温怎么办？");
   await expect(page.locator(".farmap-copilot__command-result .ant-card-head-title").filter({ hasText: "Knowledge RAG" })).toHaveCount(0);
-  await expect(page.locator(".farmap-copilot__knowledge-note").filter({ hasText: "根据当前知识库找到" })).toBeVisible();
+  await expect(page.locator(".farmap-chat-activity").getByText("知识库返回 1 条信息")).toBeVisible();
 
-  await page.getByPlaceholder("例如：A-12 地块近期需要关注什么？").fill("找一下和这次情况最像的历史病例");
-  await page.getByRole("button", { name: "发送" }).click();
+  await ask("找一下和这次情况最像的历史病例");
   await expect(page.getByText("需要现场图片", { exact: true })).toBeVisible();
   expect(historicalSearchCalled).toBe(false);
 });

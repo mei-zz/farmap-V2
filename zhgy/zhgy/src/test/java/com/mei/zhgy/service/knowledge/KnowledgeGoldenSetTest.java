@@ -50,7 +50,13 @@ class KnowledgeGoldenSetTest {
             assertTrue(rewritten.query().contains("作物：" + crop.name()), item.id() + " must inject Chinese crop label");
             assertFalse(rewritten.query().contains("作物：" + crop.code()), item.id() + " must not inject English crop code");
             assertNotNull(rewritten.topK(), item.id());
-            assertTrue(rewritten.topK() >= 3 && rewritten.topK() <= 5, item.id() + " dynamic topK out of policy");
+            int expectedTopK = switch (rewritten.queryType()) {
+                case "MANAGEMENT_GUIDANCE" -> 6;
+                case "PHENOLOGY_FACT" -> 3;
+                case "DIAGNOSIS_OR_THRESHOLD" -> 5;
+                default -> 4;
+            };
+            assertEquals(expectedTopK, rewritten.topK(), item.id() + " dynamic topK out of policy");
             if (rewritten.cropLabel() != null) rewrittenCrop++;
             if (rewritten.stageLabel() != null) rewrittenStage++;
             if (rewritten.referenceExpanded()) expandedReferences++;

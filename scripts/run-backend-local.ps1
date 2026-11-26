@@ -47,6 +47,11 @@ if ($env:APIKEY) {
 if ($env:BASEURL) {
     $env:BAILIAN_API_BASE_URL = $env:BASEURL
 }
+# The repository's local .env may opt into the single-model OpenCode path.
+# Keep the Bailian aliases above for the existing knowledge embeddings/reranking.
+if (-not $env:FARMAP_OPENCODE_ENABLED -and -not [string]::IsNullOrWhiteSpace($env:opencode_apikey)) {
+    $env:FARMAP_OPENCODE_ENABLED = 'true'
+}
 $env:RAG_GENERATION_MODE = $GenerationMode
 New-Item -ItemType Directory -Force -Path $JavaTempDir | Out-Null
 $env:TEMP = $JavaTempDir
@@ -104,6 +109,18 @@ if (-not $env:FARMAP_AGENT_PERSISTENCE) { $env:FARMAP_AGENT_PERSISTENCE = "mysql
 # Production deployments can explicitly set this flag to false.
 if (-not $env:FARMAP_PRESENTATION_DATA_ENABLED) { $env:FARMAP_PRESENTATION_DATA_ENABLED = "true" }
 
+# Install locked runtime dependencies only when missing. The worker is launched
+# by the backend from its working directory, not by this script.
+$piRuntimeDir = Join-Path $backendRoot "pi-runtime"
+if ($env:FARMAP_PI_ENABLED -ne 'false' -and
+    -not $env:FARMAP_PI_WORKER -and
+    -not (Test-Path -LiteralPath (Join-Path $piRuntimeDir "node_modules\.package-lock.json") -PathType Leaf)) {
+    Push-Location $piRuntimeDir
+    try {
+        & npm ci --omit=dev --ignore-scripts
+        if ($LASTEXITCODE -ne 0) { throw "Pi runtime dependency installation failed." }
+    } finally { Pop-Location }
+}
 Push-Location $backendRoot
 try {
     if ($PackagedJar) {

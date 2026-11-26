@@ -17,12 +17,6 @@ bailian:
   workspace-id: ${BAILIAN_WORKSPACE_ID:}
 
 farmap:
-  agent:
-    planner:
-      # REAL runs already carry a persisted, server-owned Diagnosis snapshot;
-      # keep the bounded deterministic plan as the default until a validated
-      # AgentPlan JSON contract is enabled explicitly.
-      model-enabled: ${FARMAP_AGENT_PLANNER_MODEL_ENABLED:false}
   knowledge:
     embedding:
       # Production vectors are imported from Bailian and must not be mixed
@@ -36,6 +30,11 @@ farmap:
       candidate-top-n: ${FARMAP_KNOWLEDGE_CANDIDATE_TOP_N:20}
       final-top-k: ${FARMAP_KNOWLEDGE_FINAL_TOP_K:5}
   ai:
+    opencode:
+      enabled: ${FARMAP_OPENCODE_ENABLED:false}
+      api-key: ${opencode_apikey:}
+      url: ${FARMAP_OPENCODE_URL:https://opencode.ai/inference/go/openai/v1/chat/completions}
+      model: ${FARMAP_OPENCODE_MODEL:deepseek-v4.1-flash}
     router:
       enabled: ${FARMAP_MODEL_ROUTER_ENABLED:true}
       # The dated default is preserved as the final fallback when the pool is

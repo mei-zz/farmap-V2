@@ -101,6 +101,11 @@ farmap:
     max-tool-calls: ${FARMAP_AGENT_MAX_TOOL_CALLS:12}
     max-replans: ${FARMAP_AGENT_MAX_REPLANS:1}
     timeout-ms: ${FARMAP_AGENT_TIMEOUT_MS:120000}
+    pi:
+      enabled: ${FARMAP_PI_ENABLED:true}
+      node: ${FARMAP_PI_NODE:node}
+      worker: ${FARMAP_PI_WORKER:pi-runtime/worker.mjs}
+      timeout-ms: ${FARMAP_PI_TIMEOUT_MS:125000}
     max-recovery-attempts: ${FARMAP_AGENT_MAX_RECOVERY_ATTEMPTS:1}
     tool:
       max-attempts: ${FARMAP_AGENT_TOOL_MAX_ATTEMPTS:2}

@@ -2,6 +2,7 @@ import { permanence } from "@/utils/permanence";
 import { HttpRequestError, req } from "@/utils/reqeust";
 import { readServerSentEvents, requestUrl, type ServerSentEvent } from "@/utils/sse";
 import { toCopilotContext, type AIContext } from "@/store/aiContext";
+import { useCopilotStore } from "@/store/copilot";
 import type { OverviewCopilotContext } from "@/features/overview/copilot/context";
 import type { CopilotChatRequest, CopilotConversationListItem, CopilotConversationView, CopilotMemoryView, CopilotPageContext, CopilotRouteRequest, CopilotRouteResult } from "./contract";
 
@@ -54,10 +55,14 @@ function positiveFarmId(value: number | undefined): string | undefined {
 /** Sends only stable page IDs. Weather, evidence, titles and client state never become routing authority. */
 export function toCopilotPageContext(context: AIContext, discussion?: OverviewCopilotContext): CopilotPageContext {
   const canonical = toCopilotContext(context);
+  const analysis = useCopilotStore.getState().analysis;
   return {
     route: canonical.pageKey,
+    referenceDate: context.referenceDate?.slice(0, 10),
     farmId: positiveFarmId(canonical.farmId),
     fieldId: canonical.fieldId,
+    cameraId: context.selectedDevice?.farmId === canonical.farmId ? context.selectedDevice.id : undefined,
+    analysisRunId: analysis?.farmId === canonical.farmId ? analysis.runId : undefined,
     diagnosisId: canonical.diagnosisId || discussion?.diagnosis?.id,
     recommendationId: context.selectedDiagnosis?.sourceRecommendationId || discussion?.recommendation?.id,
     taskId: canonical.taskId || discussion?.operation?.taskId,
@@ -122,6 +127,29 @@ export async function streamCopilotChat(
   });
 }
 
+/** Best-effort cancellation is scoped to the route of the active stream. */
+export async function abortCopilotAgent(conversationId: string, contextVersion: number): Promise<void> {
+  return controlCopilotAgent(conversationId, contextVersion, "abort");
+}
+
+export async function controlCopilotAgent(
+  conversationId: string,
+  contextVersion: number,
+  operation: "abort" | "continue" | "steer" | "followUp",
+  onEvent?: (event: ServerSentEvent) => void,
+  message?: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch(requestUrl(`/api/copilot/conversations/${encodeURIComponent(conversationId)}/agent-control`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream", ...auth() },
+    body: JSON.stringify({ operation, contextVersion, ...(message ? { message } : {}) }),
+    signal,
+  });
+  if (!response.ok) throw new Error(`无法控制本次对话（${response.status}）。`);
+  await readServerSentEvents(response, (event) => onEvent?.(event));
+}
+
 export async function loadCopilotConversation(): Promise<CopilotConversationView | undefined> {
   const conversationId = getCopilotConversationId();
   if (!conversationId) return undefined;
@@ -165,11 +193,10 @@ export function clearCopilotConversation(): void {
   window.sessionStorage.removeItem(continuationKey);
 }
 
-export async function listCopilotMemories(context: AIContext): Promise<CopilotMemoryView[]> {
-  const page = toCopilotPageContext(context);
+export async function listCopilotMemories(farmId: number, fieldId?: string): Promise<CopilotMemoryView[]> {
   const query = new URLSearchParams();
-  if (page.farmId) query.set("farmId", page.farmId);
-  if (page.fieldId) query.set("fieldId", page.fieldId);
+  if (farmId > 0) query.set("farmId", String(farmId));
+  if (fieldId) query.set("fieldId", fieldId);
   return req.get<CopilotMemoryView[]>(`/api/copilot/memories${query.toString() ? `?${query.toString()}` : ""}`, auth());
 }
 

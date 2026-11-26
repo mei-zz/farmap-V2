@@ -10,6 +10,35 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class ModelGatewayTest {
     @Test
+    void openCodePinsEveryGenerationTaskEvenWhenARequestAsksForAnotherModel() {
+        String model = "deepseek-v4.1-flash";
+        ModelCapabilityRegistry capabilities = new ModelCapabilityRegistry();
+        BailianModelClient client = new BailianModelClient(new ObjectMapper()) {
+            @Override
+            public ModelCallResult call(String selectedModel, ModelCallRequest request, ModelRole role) {
+                assertEquals(model, selectedModel);
+                return ModelCallResult.builder().success(true).selectedModel(selectedModel).content("{}").build();
+            }
+
+            @Override
+            public ModelCallResult stream(String selectedModel, ModelCallRequest request, ModelRole role,
+                                          java.util.function.Consumer<String> onDelta) {
+                return call(selectedModel, request, role);
+            }
+        };
+        ReflectionTestUtils.setField(client, "opencodeEnabled", true);
+        ModelGateway gateway = new ModelGateway(new ModelRouter(new ModelRoutingPolicy(), new ModelEscalationPolicy(), capabilities),
+                capabilities, new ModelAvailabilityRegistry(capabilities), client, new ModelUsageRecorder());
+
+        for (AiTaskType type : AiTaskType.values()) {
+            var request = ModelCallRequest.builder().taskType(type).userPrompt("test")
+                    .context(java.util.Map.of("modelPolicy", "force_vl32")).build();
+            assertEquals(java.util.List.of(model), gateway.complete(request).getFallbackChain());
+            assertEquals(java.util.List.of(model), gateway.stream(request, ignored -> {}).getFallbackChain());
+        }
+    }
+
+    @Test
     void fallsBackFromExpertToReasoner() {
         ModelCapabilityRegistry capabilities = new ModelCapabilityRegistry();
         ModelAvailabilityRegistry availability = new ModelAvailabilityRegistry(capabilities);

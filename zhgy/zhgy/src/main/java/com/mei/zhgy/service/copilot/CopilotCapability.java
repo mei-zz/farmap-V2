@@ -4,6 +4,7 @@ package com.mei.zhgy.service.copilot;
 public enum CopilotCapability {
     CONTEXTUAL_QA,
     FARM_CONTEXT_READ,
+    FARM_MATURITY_READ,
     FIELD_CONTEXT_READ,
     PRIORITIES_READ,
     HISTORICAL_CASE_READ,

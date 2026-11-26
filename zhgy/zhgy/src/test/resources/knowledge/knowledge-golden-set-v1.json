@@ -11,7 +11,7 @@
   {"id":"plum-10","crop":"脆李","stage":"dormancy","query":"休眠期冬季修剪要注意什么","expectedQueryType":"GENERAL_KNOWLEDGE","expectedTerms":["作物：脆李","当前物候期：休眠期","冬季修剪"],"expectedConclusion":"按树形和枝势实施冬季修剪","expectedStructured":true},
   {"id":"plum-11","crop":"脆李","stage":"post_harvest","query":"叶片黄化可能是什么原因","expectedQueryType":"DIAGNOSIS_OR_THRESHOLD","expectedTerms":["作物：脆李","当前物候期：采后恢复期","叶片黄化"],"expectedConclusion":"结合叶龄、叶脉、根区水分和病斑判断","expectedStructured":true},
   {"id":"plum-12","crop":"脆李","stage":"post_harvest","query":"连续降雨后要检查什么","expectedQueryType":"DIAGNOSIS_OR_THRESHOLD","expectedTerms":["作物：脆李","当前物候期：采后恢复期","连续降雨"],"expectedConclusion":"检查积水、病斑和秋梢长势","expectedStructured":true},
-  {"id":"plum-13","crop":"青脆李","stage":"post_harvest","query":"这个阶段要注意什么","expectedQueryType":"GENERAL_KNOWLEDGE","expectedTerms":["作物：脆李","当前物候期：采后恢复期","上文对象："],"expectedConclusion":"补全上文对象后返回采后恢复期管理要点","expectedStructured":false},
+  {"id":"plum-13","crop":"青脆李","stage":"post_harvest","query":"这个阶段要注意什么","expectedQueryType":"MANAGEMENT_GUIDANCE","expectedTerms":["作物：脆李","当前物候期：采后恢复期","上文对象："],"expectedConclusion":"补全上文对象后返回采后恢复期管理要点","expectedStructured":false},
 
   {"id":"citrus-01","crop":"柑橘","stage":"fruit_development","query":"现在是什么物候期","expectedQueryType":"PHENOLOGY_FACT","expectedTerms":["作物：柑橘","当前物候期：果实膨大期"],"expectedConclusion":"按柑橘物候历确定当前期","expectedStructured":false},
   {"id":"citrus-02","crop":"沃柑","stage":"fruit_development","query":"膨果期病虫怎么查","expectedQueryType":"DIAGNOSIS_OR_THRESHOLD","expectedTerms":["作物：柑橘","当前物候期：果实膨大期","膨果期病虫"],"expectedConclusion":"记录病斑、虫口和落果后再防治","expectedStructured":true},

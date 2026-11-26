@@ -98,6 +98,8 @@ class AgentV2Phase15ShortTermMemoryEvaluationTest {
 
         CopilotRouteResult m09a = routes.route(request("帮我安排一下", null, "m09-1", page("field-owner", "diagnosis-1", null, null, null)), 42L);
         CopilotRouteResult m09b = routes.route(request("第一条", m09a.getConversationId(), "m09-2", null), 42L);
+        assertTrue(m09a.isRequiresClarification(), m09a::toString);
+        assertEquals(CopilotIntent.ACTION_REQUEST, m09b.getIntent(), m09b::toString);
         cases.put("M09_pending_clarification_continuation", m09a.isRequiresClarification() && m09b.getIntent() == CopilotIntent.ACTION_REQUEST && "recommendation-1".equals(m09b.getResolvedContext().getRecommendationId()));
 
         CopilotRouteResult m10a = routes.route(request("帮我安排一下", null, "m10-1", page("field-owner", "diagnosis-1", null, null, null)), 42L);

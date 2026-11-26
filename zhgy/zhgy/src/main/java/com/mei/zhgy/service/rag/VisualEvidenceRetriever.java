@@ -61,7 +61,7 @@ public class VisualEvidenceRetriever implements DiagnosisRetriever {
             return Collections.emptyList();
         }
 
-        // The commercial path uses the same Qwen ModelGateway as Copilot and
+        // The commercial path uses the same ModelGateway as Copilot and
         // grounded diagnosis. The old Flask/Hunyuan adapter is retained only
         // for backwards-compatible tests and legacy endpoints.
         if (modelGateway != null) {
@@ -86,13 +86,14 @@ public class VisualEvidenceRetriever implements DiagnosisRetriever {
                 ModelCallResult response = modelGateway.complete(modelRequest);
                 if (!isVisionModel(response.getSelectedModel())) {
                     throw new ModelCallException("vision_model_unavailable",
-                            "当前账号未授权 Qwen-VL，已切换到文本证据链路");
+                            "当前生成模型没有可用的视觉能力，已切换到文本证据链路");
                 }
+                boolean openCodeVision = "deepseek-v4.1-flash".equalsIgnoreCase(response.getSelectedModel());
                 Map<String, Object> metadata = new LinkedHashMap<>();
-                metadata.put("sourceMode", "REAL_QWEN_MODEL_GATEWAY");
+                metadata.put("sourceMode", openCodeVision ? "REAL_OPENCODE_MODEL_GATEWAY" : "REAL_QWEN_MODEL_GATEWAY");
                 metadata.put("visionStatus", "READY");
                 metadata.put("visionModel", response.getSelectedModel());
-                metadata.put("retrievalType", "QWEN_VL_IMAGE_UNDERSTANDING");
+                metadata.put("retrievalType", openCodeVision ? "DEEPSEEK_IMAGE_UNDERSTANDING" : "QWEN_VL_IMAGE_UNDERSTANDING");
                 metadata.put("latencyMs", response.getLatencyMs());
                 metadata.put("routingReason", response.getRoutingReason());
                 metadata.put("fallbackChain", response.getFallbackChain());
@@ -106,7 +107,7 @@ public class VisualEvidenceRetriever implements DiagnosisRetriever {
                 evidence.add(DiagnosisEvidenceVO.builder()
                         .id("camera_vision_1")
                         .modality("camera")
-                        .title("Qwen 多模态视觉分析")
+                        .title(openCodeVision ? "DeepSeek 多模态视觉分析" : "Qwen 多模态视觉分析")
                         .summary(response.getContent())
                         .score(0.90D)
                         .source(DiagnosisEvidenceVO.Source.builder()
@@ -121,10 +122,10 @@ public class VisualEvidenceRetriever implements DiagnosisRetriever {
                 evidence.addAll(similarImageEvidence(request));
                 return evidence;
             } catch (ModelCallException error) {
-                log.warn("Qwen visual evidence unavailable for field {}: {}", request.getFieldId(), error.getErrorType());
+                log.warn("Model visual evidence unavailable for field {}: {}", request.getFieldId(), error.getErrorType());
                 markVisionStatus(request, "VISION_UNAVAILABLE");
             } catch (RuntimeException error) {
-                log.warn("Qwen visual evidence unavailable for field {}: {}", request.getFieldId(), error.getClass().getSimpleName());
+                log.warn("Model visual evidence unavailable for field {}: {}", request.getFieldId(), error.getClass().getSimpleName());
                 markVisionStatus(request, "VISION_UNAVAILABLE");
             }
         }
@@ -266,7 +267,8 @@ public class VisualEvidenceRetriever implements DiagnosisRetriever {
     }
 
     private boolean isVisionModel(String model) {
-        return model != null && model.toLowerCase().startsWith("qwen3-vl-");
+        return model != null && (model.toLowerCase(java.util.Locale.ROOT).startsWith("qwen3-vl-")
+                || "deepseek-v4.1-flash".equalsIgnoreCase(model));
     }
 
     @SuppressWarnings("unchecked")

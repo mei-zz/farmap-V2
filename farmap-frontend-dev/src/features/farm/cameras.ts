@@ -40,6 +40,19 @@ export type FarmCameraCapture = {
   imageUrl: string;
 };
 
+export const farmMaturityPrompt = "请用摄像头画面评估当前农场的果实成熟度，并展示全农场成熟度分布。";
+
+export async function uploadFarmCameraFrame(cameraId: string, file: File): Promise<FarmCameraCapture> {
+  if (!cameraId) throw new Error("请先选择截图对应的摄像头");
+  const form = new FormData();
+  form.set("cameraId", cameraId);
+  form.set("file", file);
+  const response = await req.postForm<ApiEnvelope<FarmCameraCapture>>("/monitor/upload-frame", form,
+    { Authorization: `Bearer ${permanence.token.useToken()}` });
+  if (!response.data?.imageUrl) throw new Error(response.msg || "监控截图上传失败");
+  return response.data;
+}
+
 /** Demo-only cameras keep the read-only showcase coherent with the real contract. */
 export const demoFarmCameras: FarmCamera[] = [
   {

@@ -46,8 +46,11 @@ public class WebMvcConfiguration implements WebMvcConfigurer {
                 .addPathPatterns("/api/historical-cases/**") // Historical case retrieval and ingestion require authentication
                 .addPathPatterns("/api/knowledge/**") // Knowledge source/document/version boundary
                 .addPathPatterns("/api/admin/knowledge/**") // Administrator-curated knowledge ingestion boundary
+                .addPathPatterns("/api/runtime/admin/**")
+                .addPathPatterns("/api/maturity/**")
                 .addPathPatterns("/api/farms/**") // Real farm/field context boundary
                 .addPathPatterns("/api/fields/**") // Server assembled field context
+                .excludePathPatterns("/api/copilot/guest/chat") // Isolated public chat only
                 .excludePathPatterns("/user/login")  // 放行登录接口
                 .excludePathPatterns("/user/register")  // 放行注册接口
                 .excludePathPatterns("/user/validate-token")  // 放行token验证接口
@@ -80,3 +83,4 @@ public class WebMvcConfiguration implements WebMvcConfigurer {
         registry.addResourceHandler("/uploads/**").addResourceLocations(location);
     }
 }
+

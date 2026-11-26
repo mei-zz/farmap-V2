@@ -25,6 +25,8 @@ public class AgentToolRequest {
     private String goal;
     private AgentContext context;
     private boolean approvalGranted;
+    /** Set by the approval engine from the persisted action. */
+    private AgentRuntime.TaskDraft approvedTaskDraft;
     @Builder.Default private Map<String, Object> priorOutputs = new LinkedHashMap<>();
     @Builder.Default private Map<String, Object> attributes = new LinkedHashMap<>();
 }

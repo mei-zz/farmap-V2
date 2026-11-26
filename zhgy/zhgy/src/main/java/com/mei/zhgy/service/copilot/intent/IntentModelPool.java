@@ -13,6 +13,10 @@ import java.util.function.DoubleSupplier;
 public class IntentModelPool {
     private final IntentModelProperties properties;
     private final DoubleSupplier random;
+    @org.springframework.beans.factory.annotation.Value("${farmap.ai.opencode.enabled:false}")
+    private boolean opencodeEnabled;
+    @org.springframework.beans.factory.annotation.Value("${farmap.ai.opencode.model:deepseek-v4.1-flash}")
+    private String opencodeModel = "deepseek-v4.1-flash";
 
     @Autowired
     public IntentModelPool(IntentModelProperties properties) {
@@ -25,6 +29,7 @@ public class IntentModelPool {
     }
 
     public List<ModelChoice> primaryCandidates() {
+        if (opencodeEnabled) return List.of(new ModelChoice(opencodeModel, "PRIMARY", true));
         List<ModelChoice> choices = new ArrayList<>();
         boolean hasPrimary = properties != null && properties.getPrimaryModel() != null && !properties.getPrimaryModel().isBlank();
         List<String> flash = properties == null ? List.of() : properties.getFlashPool();
@@ -46,6 +51,7 @@ public class IntentModelPool {
     }
 
     public List<ModelChoice> strongCandidates() {
+        if (opencodeEnabled) return List.of();
         List<String> strong = properties == null ? List.of() : properties.getStrongPool();
         if (strong.isEmpty()) return List.of();
         int first = index(strong.size());

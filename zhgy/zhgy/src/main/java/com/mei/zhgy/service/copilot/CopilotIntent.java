@@ -4,6 +4,7 @@ package com.mei.zhgy.service.copilot;
 public enum CopilotIntent {
     GENERAL_QA,
     FARM_STATUS_QUERY,
+    FARM_MATURITY_SCAN,
     FIELD_STATUS_QUERY,
     PRIORITIES_QUERY,
     HISTORICAL_CASE_QUERY,

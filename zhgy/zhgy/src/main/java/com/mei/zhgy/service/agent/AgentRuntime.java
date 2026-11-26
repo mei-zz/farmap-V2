@@ -7,6 +7,7 @@ import com.mei.zhgy.service.operations.OperationsWriteException;
 import com.mei.zhgy.service.diagnosis.DiagnosisPersistenceService;
 import com.mei.zhgy.service.agriculture.FieldFacts;
 import com.mei.zhgy.service.agriculture.FieldFactsService;
+import com.mei.zhgy.service.field.FieldAccessException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import lombok.extern.slf4j.Slf4j;
@@ -16,6 +17,8 @@ import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -32,6 +35,24 @@ import java.util.concurrent.TimeUnit;
 @Service
 @Slf4j
 public class AgentRuntime {
+    private static final String PI_DRAFT = "pi-tool-draft";
+
+    public record TaskDraft(String title, String detail, String scheduledFor) {
+        public TaskDraft {
+            if (title == null || title.isBlank() || title.length() > 120
+                    || detail == null || detail.isBlank() || detail.length() > 1200) {
+                throw new IllegalArgumentException("Invalid task draft title or detail");
+            }
+            title = title.trim();
+            detail = detail.trim();
+            if (scheduledFor != null) {
+                if (!scheduledFor.matches("\\d{4}-\\d{2}-\\d{2}")) throw new IllegalArgumentException("ISO task date required");
+                try { scheduledFor = LocalDate.parse(scheduledFor).toString(); }
+                catch (java.time.format.DateTimeParseException error) { throw new IllegalArgumentException("Invalid task date", error); }
+            }
+        }
+    }
+
     private final AgentPlanner planner;
     private final ToolExecutor toolExecutor;
     private final AgentRunRepository repository;
@@ -125,23 +146,82 @@ public class AgentRuntime {
     }
 
     public AgentRun createRun(String goal, AgentContext context, String mode, Long userId) {
-        if (goal == null || goal.isBlank()) throw new IllegalArgumentException("goal 不能为空");
-        Instant now = Instant.now();
         AgentContext stableContext = context == null ? new AgentContext() : context;
         enrichFieldFacts(stableContext, mode, userId);
         validateProvenance(stableContext, mode, userId);
+        AgentRun run = newRun(goal, stableContext, mode, userId);
+        repository.save(run);
+        recordCreated(run);
+        repository.save(run);
+        return run;
+    }
+
+    private AgentRun newRun(String goal, AgentContext stableContext, String mode, Long userId) {
+        if (goal == null || goal.isBlank()) throw new IllegalArgumentException("goal 不能为空");
+        Instant now = Instant.now();
         Map<String, Object> runMetadata = new LinkedHashMap<>(Map.of("runtime", "agent-core-v1", "toolPolicy", "read-auto-write-approval", "maxLoop", 12));
         if (stableContext.getDiagnosisId() != null && !stableContext.getDiagnosisId().isBlank()) runMetadata.put("diagnosisId", stableContext.getDiagnosisId());
         if (stableContext.getSourceRecommendationId() != null && !stableContext.getSourceRecommendationId().isBlank()) runMetadata.put("sourceRecommendationId", stableContext.getSourceRecommendationId());
-        AgentRun run = AgentRun.builder().runId("agent-" + UUID.randomUUID()).goal(goal.trim())
+        return AgentRun.builder().runId("agent-" + UUID.randomUUID()).goal(goal.trim())
                 .context(stableContext).mode(mode == null ? "real" : mode).ownerUserId(userId)
                 .status(RunStatus.CREATED).approvalState(ApprovalState.NONE).createdAt(now).updatedAt(now)
                 .metadata(runMetadata).build();
-        repository.save(run);
+    }
+
+    private void recordCreated(AgentRun run) {
+        AgentContext context = run.getContext();
         Map<String, Object> runTrace = new LinkedHashMap<>(); runTrace.put("runId", run.getRunId()); runTrace.put("status", run.getStatus().name());
-        if (stableContext.getDiagnosisId() != null) runTrace.put("diagnosisId", stableContext.getDiagnosisId());
-        if (stableContext.getSourceRecommendationId() != null) runTrace.put("sourceRecommendationId", stableContext.getSourceRecommendationId());
-        traceRecorder.record(run, "run.created", runTrace); repository.save(run);
+        if (context.getDiagnosisId() != null) runTrace.put("diagnosisId", context.getDiagnosisId());
+        if (context.getSourceRecommendationId() != null) runTrace.put("sourceRecommendationId", context.getSourceRecommendationId());
+        traceRecorder.record(run, "run.created", runTrace);
+    }
+
+    /** Receives a model proposal from the authenticated Copilot action route. */
+    public AgentRun prepareTaskDraft(String goal, AgentContext scope, Long ownerId, TaskDraft draft) {
+        if (ownerId == null) throw AgentAccessException.unauthenticated();
+        if (draft == null || scope == null || scope.getFieldId() == null || scope.getFieldId().isBlank()) {
+            throw new IllegalArgumentException("A field and a task draft are required");
+        }
+        if (draft.scheduledFor() != null && LocalDate.parse(draft.scheduledFor()).isBefore(LocalDate.now(ZoneId.of("Asia/Shanghai")))) {
+            throw new IllegalArgumentException("Task draft date is in the past");
+        }
+        if (fieldFactsService == null) throw new IllegalStateException("Field facts service is unavailable");
+        FieldFacts facts = fieldFactsService.forField(scope.getFieldId(), ownerId);
+        if (facts == null || !facts.ready() || facts.farmId() == null || !scope.getFieldId().equals(facts.fieldId())
+                || (scope.getFarmId() != null && !scope.getFarmId().equals(facts.farmId().toString()))) {
+            throw new FieldAccessException(422, "FIELD_FACTS_UNAVAILABLE", "无法验证草稿所属的地块和农场。");
+        }
+        AgentContext canonical = AgentContext.builder().fieldId(facts.fieldId()).farmId(facts.farmId().toString()).build();
+        canonical.applyFieldFacts(facts);
+        AgentRun run = newRun(goal, canonical, "real", ownerId);
+        run.getMetadata().put("taskDraftSource", PI_DRAFT);
+        addDirectTaskContextEvidence(run, Map.of("field-context", Map.of(
+                "fieldFactsStatus", facts.status(), "fieldName", text(canonical.getFieldName(), facts.fieldId()),
+                "cropLabel", text(facts.cropLabel(), "当前作物"), "phenologyStageLabel", text(facts.currentGrowthStageLabel(), "未登记"))));
+        return prepareApproval(run, draft);
+    }
+
+    /** Uses the persisted diagnosis evidence without invoking another read-tool loop. */
+    public AgentRun prepareDiagnosisApproval(String goal, String diagnosisId, String recommendationId, Long ownerId) {
+        if (ownerId == null) throw AgentAccessException.unauthenticated();
+        if (diagnosisPersistence == null) throw new IllegalStateException("Diagnosis persistence is unavailable");
+        AgentContext canonical = diagnosisPersistence.buildAgentContext(diagnosisId, recommendationId, ownerId, null);
+        return prepareApproval(newRun(goal, canonical, "real", ownerId), null);
+    }
+
+    private AgentRun prepareApproval(AgentRun run, TaskDraft draft) {
+        AgentPlanStep step = AgentPlanStep.builder().id("task").title("确认农事任务")
+                .description("经人工确认后创建任务").toolName("task").required(true).readOnly(false).status(StepStatus.PENDING).build();
+        AgentPlan plan = AgentPlan.builder().steps(new ArrayList<>(List.of(step))).maxSteps(1).maxToolCalls(1)
+                .timeoutMs(120_000).plannerModel("approval-only").schemaVersion("agent-plan-v1").build();
+        run.setInitialPlan(copyPlan(plan));
+        run.setCurrentPlan(plan);
+        run.setPlan(plan);
+        run.setSteps(plan.getSteps());
+        run.getMetadata().put("runtime", "approval-engine");
+        recordCreated(run);
+        traceRecorder.record(run, "plan.created", Map.of("steps", 1, "schemaVersion", plan.getSchemaVersion(), "planVersion", 0));
+        prepareTaskAction(run, step, Map.of(), draft);
         return run;
     }
 
@@ -170,11 +250,10 @@ public class AgentRuntime {
     public AgentRun execute(String runId) {
         AgentRun run = require(runId);
         synchronized (run) {
-            if (run.getStatus() == RunStatus.CANCELLED || run.getStatus() == RunStatus.COMPLETED) return run;
+            if (run.getStatus() == RunStatus.CANCELLED || run.getStatus() == RunStatus.COMPLETED
+                    || run.getStatus() == RunStatus.WAITING_FOR_APPROVAL
+                    || "approval-engine".equals(run.getMetadata().get("runtime"))) return run;
             transition(run, RunStatus.PLANNING, "run.planning");
-            // Persist the transition before the planner calls a thinking model.
-            // Planning can take tens of seconds; clients must not observe CREATED
-            // while a real Agent is already running in the background.
             repository.save(run);
             try {
                 AgentPlan plan = planner.plan(run);
@@ -214,48 +293,8 @@ public class AgentRuntime {
             }
 
             if (!step.isReadOnly()) {
-                // Write-capable steps remain a ProposedAction and never become a
-                // direct replanner execution target.
-                if (!"evaluation".equalsIgnoreCase(run.getMode())) {
-                    if (!toolExecutor.supportsWrite(step.getToolName())) {
-                        step.setStatus(StepStatus.SKIPPED);
-                        traceRecorder.record(run, "action.blocked.unsupported_tool", Map.of("tool", String.valueOf(step.getToolName()), "reason", "WRITE_TOOL_NOT_REGISTERED_OR_NOT_WRITE_CAPABLE"));
-                        complete(run, prior); return;
-                    }
-                    if (isDirectTaskRequest(run) && run.getEvidence().isEmpty()) {
-                        addDirectTaskContextEvidence(run, prior);
-                    }
-                    EvidenceResolution evidence = resolveEvidence(run);
-                    EvidenceSufficiencyDecision decision = evidenceSufficiencyEvaluator.evaluate(true, evidence.evidence(), recommendationId(run),
-                            evidence.recommendationEvidenceIds(), null, evidence.unavailableDependencies(), evidence.emptyObserved());
-                    run.setEvidenceSufficiency(decision);
-                    Map<String, Object> gateTrace = new LinkedHashMap<>();
-                    gateTrace.put("status", decision.getStatus().name()); gateTrace.put("allowsWrite", decision.isAllowsWrite());
-                    gateTrace.put("reasonCodes", decision.getReasonCodes()); gateTrace.put("evidenceIds", decision.getAvailableEvidenceIds());
-                    gateTrace.put("planVersion", run.getPlanVersion());
-                    traceRecorder.record(run, "evidence.sufficiency.evaluated", gateTrace);
-                    if (!decision.isAllowsWrite()) {
-                        step.setStatus(StepStatus.COMPLETED);
-                        Map<String, Object> blockedTrace = new LinkedHashMap<>();
-                        blockedTrace.put("status", decision.getStatus().name()); blockedTrace.put("reasonCodes", decision.getReasonCodes());
-                        blockedTrace.put("diagnosisId", diagnosisId(run) == null ? "" : diagnosisId(run));
-                        if (recommendationId(run) != null) blockedTrace.put("recommendationId", recommendationId(run));
-                        traceRecorder.record(run, "action.blocked.insufficient_evidence", blockedTrace);
-                        complete(run, prior); return;
-                    }
-                }
-                Map<String, Object> recommendation = selectedRecommendation(run);
-                String actionTitle = text(recommendation.get("title"), directTaskTitle(run));
-                String actionDetail = text(recommendation.get("detail"), directTaskDetail(run));
-                Map<String, Object> actionPayload = new LinkedHashMap<>(prior);
-                if (!recommendation.isEmpty()) actionPayload.put("recommendation", recommendation);
-                ProposedAction action = ProposedAction.builder().id("action-" + run.getRunId() + "-" + step.getId()).type("operations_task").title(actionTitle)
-                        .detail(actionDetail).toolName(step.getToolName()).approvalRequired(true)
-                        .diagnosisId(diagnosisId(run)).recommendationId(recommendationId(run)).evidenceIds(actionEvidenceIds(run))
-                        .approvalState(ApprovalState.REQUIRED).payload(actionPayload).build();
-                run.getActions().add(action); run.setApprovalState(ApprovalState.REQUIRED); step.setStatus(StepStatus.PENDING);
-                traceRecorder.record(run, "approval.required", provenance(action));
-                transition(run, RunStatus.WAITING_FOR_APPROVAL, "run.waiting_for_approval"); persist(run); return;
+                prepareTaskAction(run, step, prior, null);
+                return;
             }
 
             step.setStatus(StepStatus.RUNNING);
@@ -277,6 +316,52 @@ public class AgentRuntime {
             index++;
         }
         complete(run, prior);
+    }
+
+    private void prepareTaskAction(AgentRun run, AgentPlanStep step, Map<String, Object> prior, TaskDraft draft) {
+        // Write-capable steps remain a ProposedAction and never become a
+        // direct replanner execution target.
+        if (!"evaluation".equalsIgnoreCase(run.getMode())) {
+            if (!toolExecutor.supportsWrite(step.getToolName())) {
+                step.setStatus(StepStatus.SKIPPED);
+                traceRecorder.record(run, "action.blocked.unsupported_tool", Map.of("tool", String.valueOf(step.getToolName()), "reason", "WRITE_TOOL_NOT_REGISTERED_OR_NOT_WRITE_CAPABLE"));
+                complete(run, prior); return;
+            }
+            if (draft == null && isDirectTaskRequest(run) && run.getEvidence().isEmpty()) {
+                addDirectTaskContextEvidence(run, prior);
+            }
+            EvidenceResolution evidence = resolveEvidence(run);
+            EvidenceSufficiencyDecision decision = evidenceSufficiencyEvaluator.evaluate(true, evidence.evidence(), recommendationId(run),
+                    evidence.recommendationEvidenceIds(), null, evidence.unavailableDependencies(), evidence.emptyObserved());
+            run.setEvidenceSufficiency(decision);
+            Map<String, Object> gateTrace = new LinkedHashMap<>();
+            gateTrace.put("status", decision.getStatus().name()); gateTrace.put("allowsWrite", decision.isAllowsWrite());
+            gateTrace.put("reasonCodes", decision.getReasonCodes()); gateTrace.put("evidenceIds", decision.getAvailableEvidenceIds());
+            gateTrace.put("planVersion", run.getPlanVersion());
+            traceRecorder.record(run, "evidence.sufficiency.evaluated", gateTrace);
+            if (!decision.isAllowsWrite()) {
+                step.setStatus(StepStatus.COMPLETED);
+                Map<String, Object> blockedTrace = new LinkedHashMap<>();
+                blockedTrace.put("status", decision.getStatus().name()); blockedTrace.put("reasonCodes", decision.getReasonCodes());
+                blockedTrace.put("diagnosisId", diagnosisId(run) == null ? "" : diagnosisId(run));
+                if (recommendationId(run) != null) blockedTrace.put("recommendationId", recommendationId(run));
+                traceRecorder.record(run, "action.blocked.insufficient_evidence", blockedTrace);
+                complete(run, prior); return;
+            }
+        }
+        Map<String, Object> recommendation = selectedRecommendation(run);
+        String actionTitle = draft == null ? text(recommendation.get("title"), directTaskTitle(run)) : draft.title();
+        String actionDetail = draft == null ? text(recommendation.get("detail"), directTaskDetail(run)) : draft.detail();
+        Map<String, Object> actionPayload = new LinkedHashMap<>(prior);
+        if (!recommendation.isEmpty()) actionPayload.put("recommendation", recommendation);
+        ProposedAction action = ProposedAction.builder().id("action-" + run.getRunId() + "-" + step.getId()).type("operations_task").title(actionTitle)
+                .detail(actionDetail).scheduledFor(draft == null ? null : draft.scheduledFor()).toolName(step.getToolName()).approvalRequired(true)
+                .diagnosisId(diagnosisId(run)).recommendationId(recommendationId(run)).evidenceIds(actionEvidenceIds(run))
+                .approvalState(ApprovalState.REQUIRED).payload(actionPayload).build();
+        run.getActions().add(action); run.setApprovalState(ApprovalState.REQUIRED); step.setStatus(StepStatus.PENDING);
+        traceRecorder.record(run, "approval.required", provenance(action));
+        transition(run, RunStatus.WAITING_FOR_APPROVAL, "run.waiting_for_approval");
+        persist(run);
     }
 
     private ToolResult executeReadWithRecovery(AgentRun run, AgentPlanStep step, Map<String, Object> prior, int[] calls) {
@@ -529,8 +614,11 @@ public class AgentRuntime {
         transition(run, RunStatus.RUNNING, "run.resumed");
         Map<String, Object> attributes = new LinkedHashMap<>();
         attributes.put("evidenceIds", run.getEvidence().stream().map(DiagnosisEvidenceVO::getId).filter(java.util.Objects::nonNull).collect(java.util.stream.Collectors.toList()));
+        TaskDraft approvedDraft = PI_DRAFT.equals(run.getMetadata().get("taskDraftSource"))
+                ? new TaskDraft(action.getTitle(), action.getDetail(), action.getScheduledFor()) : null;
         AgentToolRequest request = AgentToolRequest.builder().runId(run.getRunId()).actionId(action.getId()).goal(run.getGoal()).context(run.getContext()).ownerUserId(run.getOwnerUserId()).actorId(run.getOwnerUserId() == null ? "current-user" : String.valueOf(run.getOwnerUserId()))
-                .diagnosisId(action.getDiagnosisId()).recommendationId(action.getRecommendationId()).approvalGranted(true).attributes(attributes).priorOutputs(run.getOutput()).build();
+                .diagnosisId(action.getDiagnosisId()).recommendationId(action.getRecommendationId()).approvalGranted(true)
+                .approvedTaskDraft(approvedDraft).attributes(attributes).priorOutputs(run.getOutput()).build();
         Instant startedAt = Instant.now();
         ToolResult result = toolExecutor.execute(action.getToolName(), request);
         AgentToolCall call = AgentToolCall.builder().id("toolcall-" + UUID.randomUUID()).toolName(action.getToolName()).status(result.getStatus())

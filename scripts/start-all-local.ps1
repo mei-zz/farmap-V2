@@ -10,7 +10,6 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $runtimeDir = Join-Path $repoRoot ".runtime\local-services"
-$python = "D:\anaconda\envs\llm\python.exe"
 $milvusCompose = Join-Path $repoRoot "zhgy\zhgy\docker-compose-milvus.yml"
 
 New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
@@ -33,7 +32,8 @@ function Import-EnvFile([string]$path) {
 Import-EnvFile (Join-Path $repoRoot "deployment\.env")
 Import-EnvFile (Join-Path $repoRoot ".env")
 if (-not $env:API_KEYS -and $env:APIKEY) { $env:API_KEYS = $env:APIKEY }
-if (-not $env:FARMAP_INTELLIGENCE_SERVICE_TOKEN) { $env:FARMAP_INTELLIGENCE_ALLOW_UNAUTHENTICATED_LOCAL = "true" }
+$python = @($env:FARMAP_LOCAL_AI_PYTHON, "E:\anaconda\envs\llm\python.exe", "D:\anaconda\envs\llm\python.exe") |
+    Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
 # The local launcher uses the host-side vision process. The packaged Docker
 # compose defaults (tree-analyzer:5000) are only valid inside the compose
 # network, so set the local endpoints before spawning the backend child.
@@ -45,6 +45,15 @@ if (-not $env:FARMAP_PRESENTATION_DATA_ENABLED) { $env:FARMAP_PRESENTATION_DATA_
 
 function Test-Port([int]$port) {
     return $null -ne (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
+}
+
+# A fresh local stack shares one ephemeral credential without writing it to disk.
+if (-not $env:FARMAP_INTELLIGENCE_SERVICE_TOKEN -and -not $SkipLocalAi -and -not $SkipBackend -and
+        -not (Test-Port 8001) -and -not (Test-Port 8080)) {
+    $bytes = New-Object byte[] 32
+    $random = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $random.GetBytes($bytes) } finally { $random.Dispose() }
+    $env:FARMAP_INTELLIGENCE_SERVICE_TOKEN = [Convert]::ToBase64String($bytes)
 }
 
 function Start-PowershellService([string]$name, [string]$scriptPath, [int]$port, [object[]]$arguments = @()) {
@@ -65,7 +74,7 @@ function Start-PythonService([string]$name, [string]$workingDirectory, [string[]
     if (Test-Port $port) {
         return [ordered]@{ name = $name; status = "ALREADY_LISTENING"; port = $port; log = $stdout }
     }
-    if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw "Python runtime not found: $python" }
+    if (-not $python) { throw "找不到本地 AI Python，请在 FARMAP_LOCAL_AI_PYTHON 指定已安装依赖的 Python 路径。" }
     $process = Start-Process -FilePath $python -WorkingDirectory $workingDirectory -WindowStyle Hidden -PassThru `
         -ArgumentList $arguments -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     return [ordered]@{ name = $name; status = "STARTED"; pid = $process.Id; port = $port; log = $stdout }

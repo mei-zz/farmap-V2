@@ -46,6 +46,30 @@ public class BailianModelClient {
     private final RestTemplate restTemplate;
     @org.springframework.beans.factory.annotation.Value("${farmap.ai.generation.global-max-output-tokens:8192}")
     private int globalMaxOutputTokens = 8192;
+    @org.springframework.beans.factory.annotation.Value("${farmap.ai.opencode.enabled:false}")
+    private boolean opencodeEnabled;
+    @org.springframework.beans.factory.annotation.Value("${farmap.ai.opencode.api-key:}")
+    private String opencodeKey = "";
+    @org.springframework.beans.factory.annotation.Value("${farmap.ai.opencode.url:https://opencode.ai/inference/go/openai/v1/chat/completions}")
+    private String opencodeUrl = "https://opencode.ai/inference/go/openai/v1/chat/completions";
+    @org.springframework.beans.factory.annotation.Value("${farmap.ai.opencode.model:deepseek-v4.1-flash}")
+    private String opencodeModel = "deepseek-v4.1-flash";
+
+    public boolean isOpencodeEnabled() { return opencodeEnabled; }
+    public String getOpencodeModel() { return opencodeModel; }
+    public boolean isChatConfigured() { return opencodeEnabled ? StringUtils.hasText(opencodeKey) : isConfigured(); }
+    private String chatUrl() { return opencodeEnabled ? opencodeUrl : properties.getChatCompletionsUrl(); }
+    private HttpHeaders chatHeaders(ModelCallRequest request) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(opencodeEnabled ? opencodeKey : properties.getApiKey());
+        if (opencodeEnabled) {
+            String id = StringUtils.hasText(request.getRunId()) ? request.getRunId() : request.getRequestId();
+            headers.set("x-opencode-session", StringUtils.hasText(id) ? id : java.util.UUID.randomUUID().toString());
+            headers.set("User-Agent", "FarMap/1.0");
+        }
+        return headers;
+    }
 
     @Autowired
     public BailianModelClient(ObjectMapper objectMapper, BailianProperties properties) {
@@ -233,18 +257,17 @@ public class BailianModelClient {
 
     /** Streams content deltas from the OpenAI-compatible chat endpoint. */
     public ModelCallResult stream(String model, ModelCallRequest request, ModelRole role, Consumer<String> onDelta) {
+        if (opencodeEnabled && !opencodeModel.equals(model)) return stream(opencodeModel, request, role, onDelta);
         long start = System.currentTimeMillis();
-        if (!isConfigured()) throw new ModelCallException("missing_api_key", "BAILIAN_API_KEY / DASHSCOPE_API_KEY 未配置");
+        if (!isChatConfigured()) throw new ModelCallException("missing_api_key", "模型 API key 未配置");
         AtomicBoolean emitted = new AtomicBoolean(false);
         try {
             Map<String, Object> body = requestBody(model, request);
             body.put("stream", true);
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpHeaders headers = chatHeaders(request);
             headers.setAccept(Collections.singletonList(MediaType.TEXT_EVENT_STREAM));
-            headers.setBearerAuth(properties.getApiKey());
             ModelCallResult result = restTemplate.execute(
-                    properties.getChatCompletionsUrl(), HttpMethod.POST,
+                    chatUrl(), HttpMethod.POST,
                     clientRequest -> {
                         clientRequest.getHeaders().putAll(headers);
                         objectMapper.writeValue(clientRequest.getBody(), body);
@@ -276,7 +299,7 @@ public class BailianModelClient {
                                 }
                                 JsonNode usageNode = root.path("usage");
                                 if (usageNode.isObject()) {
-                                    usage = ModelUsageMetadata.builder().provider("alibaba-bailian")
+                                    usage = ModelUsageMetadata.builder().provider(opencodeEnabled ? "opencode" : "alibaba-bailian")
                                             .model(root.path("model").asText(model))
                                             .inputTokens(longValue(usageNode, "prompt_tokens"))
                                             .outputTokens(longValue(usageNode, "completion_tokens"))
@@ -289,7 +312,7 @@ public class BailianModelClient {
                         if (usage != null) usage.setFinishReason(finishReason);
                         String finalContent = stripPrivateReasoning(content.toString());
                         if (!StringUtils.hasText(finalContent)) throw new ModelCallException("invalid_response", "百炼流式响应缺少可展示结果");
-                        if (usage == null) usage = ModelUsageMetadata.builder().provider("alibaba-bailian").model(model).finishReason(finishReason).build();
+                        if (usage == null) usage = ModelUsageMetadata.builder().provider(opencodeEnabled ? "opencode" : "alibaba-bailian").model(model).finishReason(finishReason).build();
                         return ModelCallResult.builder().success(true).content(finalContent).selectedModel(model)
                                 .modelRole(role).latencyMs(System.currentTimeMillis() - start).usage(usage).build();
                     });
@@ -323,20 +346,19 @@ public class BailianModelClient {
     }
 
     private ModelCallResult callInternal(String model, ModelCallRequest request, ModelRole role, boolean allowRetry) {
+        if (opencodeEnabled) model = opencodeModel;
         long start = System.currentTimeMillis();
-        if (!isConfigured()) {
-            throw new ModelCallException("missing_api_key", "BAILIAN_API_KEY / DASHSCOPE_API_KEY 未配置");
+        if (!isChatConfigured()) {
+            throw new ModelCallException("missing_api_key", "模型 API key 未配置");
         }
         int maxRetries = allowRetry ? properties.getMaxRetries() : 0;
         for (int attempt = 0; ; attempt++) {
             try {
                 Map<String, Object> body = requestBody(model, request);
 
-                HttpHeaders headers = new HttpHeaders();
-                headers.setContentType(MediaType.APPLICATION_JSON);
-                headers.setBearerAuth(properties.getApiKey());
+                HttpHeaders headers = chatHeaders(request);
                 ResponseEntity<String> response = restTemplate.exchange(
-                        properties.getChatCompletionsUrl(),
+                        chatUrl(),
                         HttpMethod.POST,
                         new HttpEntity<>(body, headers),
                         String.class);
@@ -346,9 +368,7 @@ public class BailianModelClient {
                 return parseResponse(model, role, response.getBody(), System.currentTimeMillis() - start);
             } catch (HttpStatusCodeException exception) {
                 ModelCallException failure = new ModelCallException(classifyStatus(exception.getRawStatusCode()), "百炼模型调用失败，HTTP " + exception.getRawStatusCode(), exception);
-                String providerBody = exception.getResponseBodyAsString();
-                if (providerBody != null && providerBody.length() > 600) providerBody = providerBody.substring(0, 600);
-                log.warn("Qwen Model Studio request rejected: model={}, status={}, type={}, body={}", model, exception.getRawStatusCode(), failure.getErrorType(), providerBody);
+                log.warn("Model request rejected: model={}, status={}, type={}", model, exception.getRawStatusCode(), failure.getErrorType());
                 if (attempt < maxRetries && isRetryable(failure.getErrorType())) {
                     backoff(attempt);
                     continue;
@@ -379,7 +399,8 @@ public class BailianModelClient {
         body.put("temperature", Double.isFinite(temperature) ? Math.max(0D, Math.min(2D, temperature)) : 0.1D);
         body.put("max_tokens", boundedMaxTokens(request));
         // Copilot and evidence synthesis never expose hidden reasoning.
-        body.put("enable_thinking", thinkingEnabled(model, request));
+        if (opencodeEnabled) body.put("thinking", Collections.singletonMap("type", "disabled"));
+        else body.put("enable_thinking", thinkingEnabled(model, request));
         if (request.isStructuredOutput()) body.put("response_format", Collections.singletonMap("type", "json_object"));
         return body;
     }
@@ -507,7 +528,7 @@ public class BailianModelClient {
             }
             JsonNode usage = root.path("usage");
             ModelUsageMetadata usageMetadata = ModelUsageMetadata.builder()
-                    .provider("alibaba-bailian")
+                    .provider(opencodeEnabled ? "opencode" : "alibaba-bailian")
                     .model(root.path("model").asText(requestedModel))
                     .inputTokens(longValue(usage, "prompt_tokens"))
                     .outputTokens(longValue(usage, "completion_tokens"))

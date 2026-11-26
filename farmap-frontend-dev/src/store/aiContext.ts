@@ -110,6 +110,8 @@ export type AIContext = {
   selectedDiagnosis?: AIDiagnosisContext;
   currentPage: string;
   pageKey?: string;
+  /** Shanghai local date shared by the workspace and the business views. */
+  referenceDate?: string;
   agentRunId?: string;
   taskId?: string;
   /** Provenance labels copied from a server-assembled FieldContext. */
@@ -130,8 +132,8 @@ export const mockAIContext: AIContext = {
   selectedImages: [],
   selectedDevice: undefined,
   selectedDiagnosis: undefined,
-  currentPage: "/overview",
-  pageKey: "/overview",
+  currentPage: "/workspace",
+  pageKey: "/workspace",
   agentRunId: undefined,
   taskId: undefined,
   sourceModes: { field: "UNAVAILABLE", weather: "UNAVAILABLE", gis: "UNAVAILABLE", camera: "UNAVAILABLE", knowledge: "UNAVAILABLE", historical: "UNAVAILABLE" },

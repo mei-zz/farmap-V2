@@ -10,6 +10,7 @@ export type OperationsTaskTraceability = {
   diagnosisId?: string;
   recommendationId?: string;
   agentRunId?: string;
+  analysisRunId?: string;
   evidenceCount?: number;
 };
 
@@ -40,6 +41,7 @@ export type OperationsTaskViewModel = {
   createdAt?: string;
   updatedAt?: string;
   approvedAt?: string;
+  scheduledFor?: string;
   approvedBy?: string;
   assignee?: string;
   assignedAt?: string;
@@ -57,9 +59,12 @@ export type OperationsTaskRaw = {
   taskId?: unknown;
   title?: unknown;
   fieldId?: unknown;
+  fieldName?: unknown;
   diagnosisId?: unknown;
   recommendationId?: unknown;
   agentRunId?: unknown;
+  analysisRunId?: unknown;
+  scheduledFor?: unknown;
   status?: unknown;
   priority?: unknown;
   source?: unknown;

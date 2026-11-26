@@ -1,0 +1,184 @@
+.agent-shell.ant-layout {
+  height: 100vh;
+  min-height: 100vh;
+  flex-direction: row;
+  background: #f7f8f6;
+  color: #1c2923;
+}
+.agent-shell.ant-layout:has(.agent-shell__content.is-workspace) {
+  height: 100dvh;
+  min-height: 0;
+}
+.agent-shell__rail {
+  width: 64px;
+  flex: 0 0 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: #fff;
+  border-right: 1px solid #e5eae6;
+  z-index: 2;
+}
+.agent-shell__rail-mark {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin: 12px 0 25px;
+  border-radius: 10px;
+  background: #176b4d;
+  color: white;
+  font-size: 19px;
+  font-weight: 700;
+  text-decoration: none;
+}
+.agent-shell__rail-mark:hover {
+  color: white;
+}
+.agent-shell__nav {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.agent-shell__nav-link {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  color: #78877e;
+  font-size: 19px;
+  transition:
+    background 0.2s,
+    color 0.2s;
+}
+.agent-shell__nav-link:hover,
+.agent-shell__nav-link.is-active {
+  color: #176b4d;
+  background: #eaf3ed;
+}
+.agent-shell__main.ant-layout {
+  min-width: 0;
+  min-height: 0;
+  background: #f7f8f6;
+}
+.agent-shell__header.ant-layout-header {
+  height: 56px;
+  min-height: 56px;
+  padding: 0 24px;
+  line-height: normal;
+  background: #fff;
+  border-bottom: 1px solid #e5eae6;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+.agent-shell__header-left,
+.agent-shell__header-right {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.agent-shell__header-left {
+  gap: 14px;
+}
+.agent-shell__brand {
+  white-space: nowrap;
+  color: #1c2923;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+}
+.agent-shell__brand:hover {
+  color: #176b4d;
+}
+.agent-shell__brand span {
+  margin-left: 8px;
+  color: #8a968e;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.agent-shell__separator {
+  width: 1px;
+  height: 20px;
+  background: #e5eae6;
+}
+.agent-shell__farm-select {
+  min-width: 145px;
+}
+.agent-shell__farm-select .ant-select-selector {
+  border: 0 !important;
+  box-shadow: none !important;
+  background: #f5f8f5 !important;
+  border-radius: 8px !important;
+  font-weight: 500;
+}
+.agent-shell__field {
+  padding: 5px 9px;
+  color: #66776c;
+  background: #f5f8f5;
+  border-radius: 7px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.agent-shell__weather,
+.agent-shell__date {
+  color: #738178;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.agent-shell__weather .anticon,
+.agent-shell__date .anticon {
+  margin-right: 4px;
+  color: #8b9b90;
+}
+.agent-shell__user.ant-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px;
+  color: #35473c;
+}
+.agent-shell__user .ant-avatar {
+  background: #e9f2eb;
+  color: #176b4d;
+}
+.agent-shell__content.ant-layout-content {
+  min-height: 0;
+  overflow: auto;
+}
+.agent-shell__content.is-workspace {
+  padding: 0;
+  overflow: hidden;
+}
+@media (max-width: 1000px) {
+  .agent-shell__brand span,
+  .agent-shell__weather span,
+  .agent-shell__date,
+  .agent-shell__field {
+    display: none;
+  }
+}
+@media (max-width: 600px) {
+  .agent-shell__header.ant-layout-header {
+    padding: 0 12px;
+  }
+  .agent-shell__header-left {
+    gap: 8px;
+  }
+  .agent-shell__brand {
+    font-size: 15px;
+  }
+  .agent-shell__farm-select {
+    min-width: 110px;
+    max-width: 125px;
+  }
+  .agent-shell__weather,
+  .agent-shell__user span:not(.ant-avatar):not(.anticon) {
+    display: none;
+  }
+}

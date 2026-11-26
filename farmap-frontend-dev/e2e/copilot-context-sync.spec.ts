@@ -49,33 +49,32 @@ test("Copilot context follows field selection and farm switching", async ({ page
     body: JSON.stringify({ data: { farmId: 8, cropObservations: { status: "READY" }, historicalTemperature: { status: "READY" }, recentDiagnoses: { status: "READY", items: [] } } }),
   }));
 
-  await page.goto("diagnosis/new");
-  await expect(page.getByText("A-12", { exact: true }).first()).toBeVisible();
-  await page.getByRole("button", { name: "FarMap Copilot" }).click();
+  const scopes: Array<{ farmId?: string; fieldId?: string }> = [];
+  await page.route("**/api/copilot/chat", (route) => {
+    scopes.push(route.request().postDataJSON().pageContext);
+    return route.fulfill({ contentType: "text/event-stream", body: 'event: content.delta\ndata: {"delta":"已读取当前范围。"}\n\nevent: done\ndata: {"status":"COMPLETED"}\n\n' });
+  });
+  await page.goto("workspace");
+  const select = async (kind: "farm" | "field", name: string) => {
+    await page.locator(`.agent-shell__${kind}-select`).click();
+    await page.locator(".ant-select-dropdown:visible .ant-select-item-option-content").getByText(name, { exact: true }).click();
+  };
+  const send = async (expectedTurns: number) => {
+    await page.getByPlaceholder("描述你的农事需求，或上传作物图片……").fill("请简要说明当前作物的物候期。");
+    await page.getByRole("button", { name: "发送消息" }).click();
+    await expect(page.getByText("已读取当前范围。", { exact: true })).toHaveCount(expectedTurns);
+  };
 
-  const contextGrid = page.locator(".farmap-copilot__context-grid");
-  await expect(contextGrid.getByText("云阳", { exact: true })).toBeVisible();
-  await expect(contextGrid.getByText("A-12", { exact: true })).toBeVisible();
-  await expect(contextGrid.getByText("柑橘", { exact: true })).toBeVisible();
-
-  await page.locator(".ant-drawer-close").click();
-  const fieldSelect = page.getByLabel("选择地块");
-  await fieldSelect.click();
-  await page.locator(".ant-select-item-option").filter({ hasText: "A-13" }).evaluate((element) => (element as HTMLElement).click());
-  await expect(page.getByText("A-13", { exact: true }).first()).toBeVisible();
-
-  await page.getByRole("button", { name: "FarMap Copilot" }).click();
-  await expect(contextGrid.getByText("A-13", { exact: true })).toBeVisible();
-  await expect(contextGrid.getByText("A-12", { exact: true })).toHaveCount(0);
-  await page.locator(".ant-drawer-close").click();
-  const farmSelect = page.getByLabel("当前农场");
-  await farmSelect.click();
-  await expect(page.locator(".ant-select-item-option").filter({ hasText: "大足" })).toBeVisible();
-  await page.locator(".ant-select-item-option").filter({ hasText: "大足" }).evaluate((element) => (element as HTMLElement).click());
-  await expect(page.getByText("B-03", { exact: true }).first()).toBeVisible();
-  await page.getByRole("button", { name: "FarMap Copilot" }).click();
-  await expect(contextGrid.getByText("大足", { exact: true })).toBeVisible();
-  await expect(contextGrid.getByText("B-03", { exact: true })).toBeVisible();
-  await expect(contextGrid.getByText("云阳", { exact: true })).toHaveCount(0);
-  await expect(contextGrid.getByText("A-13", { exact: true })).toHaveCount(0);
+  await select("field", "A-12");
+  await send(1);
+  await select("field", "A-13");
+  await send(2);
+  await select("farm", "大足");
+  await select("field", "B-03");
+  await send(3);
+  expect(scopes.map(({ farmId, fieldId }) => ({ farmId, fieldId }))).toEqual([
+    { farmId: "1", fieldId: "field-yunyang-a12" },
+    { farmId: "1", fieldId: "field-yunyang-a13" },
+    { farmId: "8", fieldId: "field-dazu-b03" },
+  ]);
 });

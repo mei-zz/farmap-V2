@@ -38,6 +38,9 @@ public class AIModelController {
 
     @Autowired(required = false)
     private UploadedImageAssetIndexService uploadedImageAssetIndexService;
+
+    @Autowired(required = false)
+    private com.mei.zhgy.service.field.FarmFieldService farmFieldService;
     
     @Value("${zhgy.upload.dir:./uploads}")
     private String uploadDir;
@@ -57,16 +60,31 @@ public class AIModelController {
             if (files == null || files.isEmpty() || files.size() > 5) {
                 return Result.error("请上传1-5张图片");
             }
+            for (MultipartFile file : files) {
+                String contentType = file.getContentType();
+                if (file.isEmpty() || file.getSize() > 10 * 1024 * 1024L || !("image/jpeg".equals(contentType) || "image/png".equals(contentType))) {
+                    return Result.error("仅支持不超过10MB的 JPG/PNG 图片");
+                }
+            }
+            if (farmFieldService != null && (farmId != null || fieldId != null && !fieldId.isBlank())) {
+                Long actor = com.mei.zhgy.context.BaseContext.getCurrentId();
+                try {
+                    if (farmId != null) farmFieldService.requireFarm(farmId, actor);
+                    if (fieldId != null && !fieldId.isBlank()) {
+                        var field = farmFieldService.get(fieldId, actor);
+                        if (farmId != null && !farmId.equals(field.getFarmId())) return Result.error("图片关联地块与农场不一致");
+                        farmId = field.getFarmId();
+                    }
+                } catch (com.mei.zhgy.service.field.FieldAccessException denied) {
+                    return Result.error("无权将图片关联到该农场或地块");
+                }
+            }
 
             Path root = Paths.get(uploadDir).toAbsolutePath().normalize();
             Files.createDirectories(root);
             List<String> urls = new ArrayList<>();
             for (MultipartFile file : files) {
                 String contentType = file.getContentType();
-                if (file.isEmpty() || file.getSize() > 10 * 1024 * 1024L ||
-                        !("image/jpeg".equals(contentType) || "image/png".equals(contentType))) {
-                    return Result.error("仅支持不超过10MB的 JPG/PNG 图片");
-                }
                 String objectKey = null;
                 if (tencentCosStorageService != null && tencentCosStorageService.configured()) {
                     TencentCosStorageService.UploadResult stored = tencentCosStorageService.uploadDiagnosis(
@@ -84,11 +102,13 @@ public class AIModelController {
                     urls.add(uploadBaseUrl.replaceAll("/$", "") + "/" + fileName);
                 }
                 if (uploadedImageAssetIndexService != null) {
-                    UploadedImageAssetIndexService.IndexResult index = uploadedImageAssetIndexService.index(
-                            urls.get(urls.size() - 1),
-                            new UploadedImageAssetIndexService.Metadata(farmId, fieldId, pointId, cameraId,
-                                    "manual_upload", objectKey, file.getOriginalFilename(), contentType));
-                    log.info("现场图片已进入多模态图像索引，status={}, assetId={}", index.status(), index.assetId());
+                    try {
+                        uploadedImageAssetIndexService.queueIndex(urls.get(urls.size() - 1),
+                                new UploadedImageAssetIndexService.Metadata(farmId, fieldId, pointId, cameraId,
+                                        "manual_upload", objectKey, file.getOriginalFilename(), contentType));
+                    } catch (RuntimeException indexFailure) {
+                        log.warn("现场图片已保存，索引暂不可用: {}", indexFailure.getClass().getSimpleName());
+                    }
                 }
             }
             return Result.success(urls);

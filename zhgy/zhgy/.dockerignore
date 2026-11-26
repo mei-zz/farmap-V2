@@ -6,3 +6,5 @@ uploads
 volumes
 *.jar
 *.bak
+
+pi-runtime/node_modules

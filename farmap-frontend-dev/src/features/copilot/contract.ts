@@ -1,6 +1,7 @@
 export type CopilotIntent =
   | "GENERAL_QA"
   | "FARM_STATUS_QUERY"
+  | "FARM_MATURITY_SCAN"
   | "FIELD_STATUS_QUERY"
   | "PRIORITIES_QUERY"
   | "HISTORICAL_CASE_QUERY"
@@ -21,6 +22,7 @@ export type CopilotIntent =
 export type CopilotCapability =
   | "CONTEXTUAL_QA"
   | "FARM_CONTEXT_READ"
+  | "FARM_MATURITY_READ"
   | "FIELD_CONTEXT_READ"
   | "PRIORITIES_READ"
   | "HISTORICAL_CASE_READ"
@@ -90,7 +92,13 @@ export type CopilotStableContext = {
   outcomeId?: string;
 };
 
-export type CopilotPageContext = CopilotStableContext & { route?: string };
+export type CopilotPageContext = CopilotStableContext & {
+  route?: string;
+  referenceDate?: string;
+  cameraId?: string;
+  cameraIds?: string[];
+  analysisRunId?: string;
+};
 
 export type CopilotRouteRequest = {
   message: string;
@@ -155,6 +163,10 @@ export type CopilotConversationTurn = {
   createdAt?: string;
   responseMetadata?: {
     schemaVersion?: number;
+    uiBlocks?: unknown[];
+    presentation?: unknown;
+    knowledgeCount?: number | null;
+    knowledgeStatus?: string | null;
     referenceImages?: Array<{ refId: string; label: string; imageUrl: string; match?: string }>;
     referenceImageNotice?: string;
     referenceImageStatus?: string;
@@ -176,6 +188,10 @@ export type CopilotConversationView = {
   recentTurns: CopilotConversationTurn[];
   /** Full transcript for the history UI; recentTurns remains the bounded model context. */
   historyTurns?: CopilotConversationTurn[];
+  runtimeActivity?: {
+    events?: Array<{ type: string; runId?: string; toolName?: string; status?: string; at?: string }>;
+    pendingInputs?: Array<{ type: "input"; requestId: string; operation: "steer" | "followUp"; message: string; status: "requested" | "delivered" | "uncertain"; at?: string }>;
+  };
 };
 
 export type CopilotConversationListItem = {

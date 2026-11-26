@@ -24,4 +24,5 @@ public class CopilotConversationView {
     /** Full owner-scoped transcript for display; recentTurns remains the bounded model context. */
     List<CopilotConversationTurn> historyTurns;
     List<CopilotMemoryView> relevantLongTermMemories;
+    java.util.Map<String, Object> runtimeActivity;
 }

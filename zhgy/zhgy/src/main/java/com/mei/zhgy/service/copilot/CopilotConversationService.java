@@ -69,15 +69,37 @@ public class CopilotConversationService {
         return repository.create(snapshot);
     }
 
+    private CopilotActivityJournal activityJournal;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setActivityJournal(CopilotActivityJournal journal) { this.activityJournal = journal; }
+
+    public void recordActivity(String conversationId, Long userId, Map<String, Object> event) {
+        load(conversationId, userId);
+        if (activityJournal != null) {
+            Map<String, Object> safe = new LinkedHashMap<>(event);
+            if (safe.get("message") instanceof String text) safe.put("message", redact(text));
+            activityJournal.append(conversationId, userId, safe);
+        }
+    }
+
     public CopilotConversationView view(String conversationId, Long userId) {
+        return view(conversationId, userId, true);
+    }
+
+    public CopilotConversationView runtimeView(String conversationId, Long userId) {
+        return view(conversationId, userId, false);
+    }
+
+    private CopilotConversationView view(String conversationId, Long userId, boolean includeHistory) {
         CopilotConversationSnapshot snapshot = resumeIfExpired(load(conversationId, userId));
-        CopilotContextAssembler.AssembledContext context = assembler.assemble(snapshot, null);
+        CopilotContextAssembler.AssembledContext context = assembler.assemble(snapshot, null, includeHistory);
         return CopilotConversationView.builder().conversationId(snapshot.getConversationId()).status(snapshot.getStatus())
                 .activeContext(context.activeContext()).lastIntent(snapshot.getLastIntent()).summary(snapshot.getSummary())
                 .summaryVersion(snapshot.getSummaryVersion()).turnCount(snapshot.getTurnCount()).contextVersion(snapshot.getVersion())
                 .pendingClarification(context.pendingClarification()).recentTurns(context.recentTurns())
-                .historyTurns(exposeResponseMetadata(repository.allTurns(conversationId, userId)))
-                .relevantLongTermMemories(context.relevantLongTermMemories()).build();
+                .historyTurns(includeHistory ? exposeResponseMetadata(repository.allTurns(conversationId, userId)) : null)
+                .relevantLongTermMemories(context.relevantLongTermMemories())
+                .runtimeActivity(includeHistory && activityJournal != null ? activityJournal.read(conversationId, userId) : null).build();
     }
 
     /** Returns only rows owned by this user. No cross-user conversation lookup is possible. */
@@ -182,6 +204,22 @@ public class CopilotConversationService {
                 .createdAt(Instant.now()).build());
     }
 
+    public void updateAssistantUiBlocks(String conversationId, Long userId, String traceId, List<Map<String, Object>> blocks) {
+        load(conversationId, userId);
+        List<CopilotConversationTurn> turns = repository.allTurns(conversationId, userId);
+        for (int i = turns.size() - 1; i >= 0; i--) {
+            CopilotConversationTurn turn = turns.get(i);
+            if (!"ASSISTANT".equalsIgnoreCase(turn.getRole()) || !java.util.Objects.equals(traceId, turn.getTraceId())) continue;
+            try {
+                Map<String, Object> metadata = turn.getResultJson() == null ? new LinkedHashMap<>()
+                        : mapper.readValue(turn.getResultJson(), new TypeReference<>() {});
+                metadata.put("uiBlocks", blocks);
+                repository.updateResult(conversationId, turn.getTurnId(), userId, mapper.writeValueAsString(metadata));
+            } catch (Exception error) { throw new IllegalStateException("Unable to persist UI blocks", error); }
+            return;
+        }
+    }
+
     private List<CopilotConversationTurn> exposeResponseMetadata(List<CopilotConversationTurn> turns) {
         if (turns == null || turns.isEmpty()) return List.of();
         return turns.stream().map(this::exposeResponseMetadata).toList();
@@ -195,9 +233,13 @@ public class CopilotConversationService {
             Map<String, Object> safe = new LinkedHashMap<>();
             copyResponseField(persisted, safe, "schemaVersion");
             copyResponseField(persisted, safe, "referenceImages");
+            copyResponseField(persisted, safe, "uiBlocks");
+            copyResponseField(persisted, safe, "presentation");
             copyResponseField(persisted, safe, "referenceImageNotice");
             copyResponseField(persisted, safe, "referenceImageStatus");
             copyResponseField(persisted, safe, "referenceImageMatch");
+            copyResponseFieldIncludingNull(persisted, safe, "knowledgeCount");
+            copyResponseFieldIncludingNull(persisted, safe, "knowledgeStatus");
             if (!safe.isEmpty()) turn.setResponseMetadata(safe);
         } catch (Exception ignored) {
             // Older assistant turns and malformed optional metadata remain
@@ -208,6 +250,10 @@ public class CopilotConversationService {
 
     private void copyResponseField(Map<String, Object> source, Map<String, Object> target, String field) {
         if (source != null && source.containsKey(field) && source.get(field) != null) target.put(field, source.get(field));
+    }
+
+    private void copyResponseFieldIncludingNull(Map<String, Object> source, Map<String, Object> target, String field) {
+        if (source != null && source.containsKey(field)) target.put(field, source.get(field));
     }
 
     private String writeResponseMetadata(Map<String, Object> responseMetadata) {

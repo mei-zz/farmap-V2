@@ -1,0 +1,450 @@
+.farmap-copilot-workspace {
+  min-height: 0;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+  background: #f7f8f6;
+  color: #1c2923;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 0 32px 24px;
+}
+.farmap-copilot-workspace.is-empty { overflow-y: auto; }
+.farmap-copilot-workspace__toolbar {
+  flex: none;
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 12px 0;
+}
+.farmap-copilot-workspace__toolbar .farmap-copilot__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.farmap-copilot-workspace__toolbar .farmap-copilot__header-identity {
+  display: none;
+}
+.farmap-copilot-workspace__toolbar .ant-space {
+  margin-left: auto;
+}
+.farmap-copilot-workspace__welcome {
+  margin: auto auto 30px;
+  text-align: center;
+}
+.farmap-copilot-workspace__eyebrow {
+  color: #6c8e7c;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  font-weight: 700;
+}
+.farmap-copilot-workspace__welcome h1 {
+  margin: 12px 0 10px;
+  color: #183c2b;
+  font-size: 30px;
+  font-weight: 600;
+}
+.farmap-copilot-workspace__welcome p {
+  margin: 0;
+  color: #77847c;
+  font-size: 15px;
+}
+.farmap-copilot-workspace .farmap-copilot__context-header,
+.farmap-copilot-workspace .farmap-copilot__tools-row,
+.farmap-copilot-workspace .farmap-copilot__secondary-context,
+.farmap-copilot-workspace > .ant-divider {
+  display: none;
+}
+.farmap-copilot-workspace .farmap-copilot__history,
+.farmap-copilot-workspace .farmap-copilot__diagnosis-proposal,
+.farmap-copilot-workspace .farmap-copilot__inline-results,
+.farmap-copilot-workspace .farmap-copilot__processing-status {
+  width: 100%;
+  max-width: 800px;
+  margin: 12px auto;
+}
+.farmap-copilot__transcript {
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+  scrollbar-width: thin;
+}
+.farmap-copilot-workspace.is-empty > .farmap-copilot__transcript {
+  flex: 0 1 auto;
+}
+.farmap-copilot__transcript > .farmap-copilot__messages {
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 8px 0 16px;
+  overflow: visible;
+  scrollbar-gutter: auto;
+}
+.farmap-copilot-workspace.is-empty .farmap-copilot__messages,
+.farmap-copilot-workspace.is-empty .farmap-copilot__inline-results {
+  display: none;
+}
+.farmap-copilot__messages > .farmap-copilot__message {
+  box-sizing: border-box;
+  min-width: 0;
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.farmap-copilot__messages > .farmap-copilot__message--assistant {
+  align-self: flex-start;
+  width: 100%;
+  max-width: 100%;
+  padding: 8px 0;
+}
+.farmap-copilot__messages > .farmap-copilot__message--assistant:where(:not(.farmap-copilot__message--knowledge, .farmap-copilot__message--guided, .farmap-copilot__message--agent)) {
+  background: transparent;
+}
+.farmap-copilot__messages > .farmap-copilot__message--assistant:is(.farmap-copilot__message--knowledge, .farmap-copilot__message--guided, .farmap-copilot__message--agent) {
+  padding-inline: 12px;
+}
+.farmap-copilot__messages > .farmap-copilot__message--user {
+  align-self: flex-end;
+  width: fit-content;
+  max-width: 83%;
+  padding: 8px 14px;
+  white-space: pre-wrap;
+  background: #e8f1eb;
+  border-radius: 15px 15px 4px 15px;
+}
+.farmap-copilot__message--user p { margin: 0; }
+.farmap-copilot__markdown-message :last-child { margin-bottom: 0; }
+.farmap-copilot__markdown-message img { height: auto; max-width: 100%; }
+.farmap-copilot-workspace .farmap-copilot__message-mode {
+  color: #176b4d;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.farmap-copilot-workspace .farmap-copilot__composer {
+  flex: none;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 800px;
+  margin: 4px auto 0;
+  padding: 14px 16px 10px;
+  background: #fff;
+  border: 1px solid #dfe8e1;
+  border-radius: 16px;
+  box-shadow: 0 8px 30px #1e50300a;
+}
+.farmap-copilot-workspace .farmap-copilot__composer textarea.ant-input {
+  border: 0;
+  box-shadow: none;
+  resize: none;
+  padding: 4px;
+}
+.farmap-copilot-workspace .farmap-copilot__composer .ant-btn-primary {
+  background: #176b4d;
+}
+.farmap-copilot-workspace .farmap-copilot__composer-note {
+  display: block;
+  color: #9ba79f;
+  font-size: 11px;
+  margin-top: 8px;
+}
+.farmap-copilot-workspace__suggestions {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  width: 100%;
+  max-width: 800px;
+  margin: 16px auto auto;
+}
+@media (min-width: 701px) {
+  .farmap-copilot-workspace:not(.farmap-guest) .farmap-copilot-workspace__suggestions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.farmap-copilot-workspace:not(.farmap-guest) .farmap-copilot-workspace__suggestions { margin-bottom: 16px; }
+.farmap-copilot-workspace__data-views {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+  width: 100%; max-width: 800px; margin: 0 auto auto; padding: 12px 0;
+  border-top: 1px solid #dce6df; color: #496457; font-size: 13px;
+}
+.farmap-copilot-workspace__data-views a { color: #176b4d; }
+.farmap-copilot-workspace__suggestions button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+  min-height: 55px;
+  padding: 12px 14px;
+  background: #fff;
+  border: 1px solid #e5eae6;
+  border-radius: 12px;
+  color: #455b4c;
+  cursor: pointer;
+}
+.farmap-copilot-workspace__suggestions button:hover {
+  border-color: #82b29a;
+  color: #176b4d;
+}
+.farmap-copilot-workspace__suggestions span {
+  color: #8ba397;
+}
+.farmap-copilot-workspace .farmap-copilot__follow-ups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.farmap-copilot-workspace .farmap-copilot__pending-images {
+  display: flex;
+  gap: 8px;
+}
+.farmap-copilot-workspace .farmap-copilot__history-list button {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  text-align: left;
+  border: 0;
+  background: white;
+  padding: 12px;
+  cursor: pointer;
+}
+.farmap-copilot-workspace .farmap-copilot__history-list small {
+  display: block;
+  color: #77847c;
+}
+@media (max-width: 700px) {
+  .farmap-copilot-workspace {
+    padding: 0 16px 16px;
+  }
+  .farmap-copilot-workspace__welcome h1 {
+    font-size: 25px;
+  }
+  .farmap-copilot-workspace__suggestions {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.farmap-copilot-workspace__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  color: #176b4d;
+  background: #e5f0e8;
+  border-radius: 15px;
+}
+.farmap-copilot-workspace .farmap-copilot__composer .ant-btn-primary:disabled {
+  background: #e3ebe5;
+  border-color: #e3ebe5;
+  color: #718678;
+}
+.farmap-copilot-workspace__suggestions button {
+  justify-content: flex-start;
+  gap: 9px;
+}
+.farmap-copilot-workspace__suggestion-icon {
+  color: #52866b !important;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.farmap-copilot-workspace__suggestion-arrow {
+  margin-left: auto;
+}
+@media (max-width: 700px) {
+  .farmap-copilot-workspace__suggestions button {
+    font-size: 13px;
+    padding: 10px;
+  }
+}
+
+.farmap-copilot-drawer .ant-drawer-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px 16px;
+}
+.farmap-copilot-drawer .farmap-copilot__composer {
+  flex: none;
+  margin: 4px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid #dfe8e1;
+}
+.farmap-copilot__jump {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  align-self: center;
+  margin: 4px auto;
+  padding: 3px 10px;
+  border: 1px solid #c9ded1;
+  border-radius: 20px;
+  background: #fff;
+  color: #176b4d;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.farmap-copilot__jump-row {
+  display: grid;
+  flex: 0 0 30px;
+  place-items: center;
+}
+.farmap-copilot__jump-row .farmap-copilot__jump { margin: 0; }
+
+.farmap-response__summary {
+  margin: 8px 0 14px;
+  color: #18362a;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.65;
+}
+.farmap-response__analysis {
+  margin-top: 17px;
+  padding-top: 12px;
+  border-top: 1px solid #dae6de;
+  color: #34493e;
+}
+.farmap-response__analysis h3 { margin: 0 0 5px; color: #203b2e; font-size: 14px; }
+.farmap-response__followups { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 3px; }
+.farmap-response__followups button {
+  padding: 5px 12px;
+  border: 1px solid #cadcd1;
+  border-radius: 999px;
+  background: #fff;
+  color: #235641;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.farmap-response__followups button:hover { background: #eaf4ee; border-color: #8cbaa4; }
+
+.farmap-chat-activity {
+  margin: 0 0 10px;
+  color: #52695b;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.farmap-chat-activity__status,
+.farmap-chat-activity__knowledge,
+.farmap-chat-activity summary,
+.farmap-chat-activity li,
+.farmap-chat-activity li span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.farmap-chat-activity__status { min-height: 24px; color: #176b4d; }
+.farmap-chat-activity__status svg { animation: farmap-chat-spin 1s linear infinite; }
+.farmap-chat-activity summary { width: fit-content; cursor: pointer; list-style: none; }
+.farmap-chat-activity summary::-webkit-details-marker { display: none; }
+.farmap-chat-activity details[open] summary > svg { transform: rotate(180deg); }
+.farmap-chat-activity summary span { padding-left: 4px; color: #617568; }
+.farmap-chat-activity ul { width: fit-content; margin: 5px 0 6px 6px; padding: 2px 0 2px 12px; border-left: 1px solid #c9ded1; }
+.farmap-chat-activity li { padding: 2px 0; }
+.farmap-chat-activity li span { margin-left: 8px; }
+@keyframes farmap-chat-spin { to { transform: rotate(1turn); } }
+@media (prefers-reduced-motion: reduce) { .farmap-chat-activity__status svg { animation: none; } }
+
+.farmap-copilot-workspace__activity {
+  width: 100%;
+  max-width: 800px;
+  margin: 12px auto;
+  color: #647a6b;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.farmap-copilot-workspace__activity summary {
+  cursor: pointer;
+  color: #42725a;
+}
+
+.farmap-copilot-workspace__saved-input {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  overflow-wrap: anywhere;
+}
+
+.farmap-copilot-workspace__queue-notice {
+  color: #52745e;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.farmap-analysis-shell {
+  display: grid;
+  grid-template-columns: minmax(325px, 34%) minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.farmap-analysis-shell.is-chat-collapsed {
+  grid-template-columns: 96px minmax(0, 1fr);
+}
+
+.farmap-analysis-shell__chat {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--fm-line, #e5eae6);
+}
+
+.farmap-analysis-shell__chat > .farmap-copilot-workspace {
+  min-height: 0;
+  padding-inline: 12px;
+}
+
+.farmap-analysis-shell__chat-toggle {
+  justify-self: start;
+  margin: 8px 12px 0;
+  padding: 5px 8px;
+  color: var(--fm-green, #176b4d);
+  background: #fff;
+  border: 1px solid var(--fm-line, #e5eae6);
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.farmap-analysis-shell__report {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--fm-bg, #f7f8f6);
+}
+
+.farmap-analysis-shell__pending {
+  margin: 24px;
+  padding: 16px;
+  color: var(--fm-ink, #26352d);
+  background: #fff;
+  border-radius: 12px;
+}
+
+@media (max-width: 760px) {
+  .farmap-analysis-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(230px, 43%) minmax(0, 1fr);
+  }
+
+  .farmap-analysis-shell.is-chat-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .farmap-analysis-shell__chat {
+    border-right: 0;
+    border-bottom: 1px solid var(--fm-line, #e5eae6);
+  }
+}

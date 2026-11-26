@@ -15,7 +15,8 @@ function setToken(token: string): void {
 function useUserStore(): UserStoreState | void {
   const user = localStorage.getItem("user");
   if (!user) return;
-  return JSON.parse(user);
+  try { return JSON.parse(user); }
+  catch { return; }
 }
 function setUserStore(user: UserStoreState): void {
   const userStr = JSON.stringify(user);

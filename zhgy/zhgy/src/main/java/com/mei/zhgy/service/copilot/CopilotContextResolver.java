@@ -17,6 +17,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -71,6 +72,44 @@ public class CopilotContextResolver {
         }
 
         try {
+            if (intent == CopilotIntent.FARM_STATUS_QUERY && CopilotOperationQuery.farmDirectory(message)) {
+                return new Resolution(CopilotResolutionStatus.RESOLVED, CopilotStableContext.builder().build(), null);
+            }
+            if (intent == CopilotIntent.OPERATIONS_STATUS_QUERY && CopilotOperationQuery.viewOf(message) != null
+                    || intent == CopilotIntent.RECOMMENDATION_QUERY && CopilotOperationQuery.adviceView(message)) {
+                String farmId = hints.getFarmId();
+                String fieldId = hints.getFieldId();
+                if (blank(farmId) && !blank(fieldId)) farmId = String.valueOf(fields.get(fieldId, userId).getFarmId());
+                if (blank(farmId)) return clarify("请先选择要查询的农场。");
+                fields.requireFarm(Integer.valueOf(farmId), userId);
+                if (CopilotOperationQuery.farmWide(message)) fieldId = null;
+                else if (!blank(fieldId) && !farmId.equals(String.valueOf(fields.get(fieldId, userId).getFarmId()))) return stale("所选地块不属于当前农场。");
+                return new Resolution(CopilotResolutionStatus.RESOLVED, CopilotStableContext.builder().farmId(farmId).fieldId(fieldId).build(), null);
+            }
+            if (intent == CopilotIntent.ACTION_REQUEST && CopilotOperationQuery.harvestPlan(message) && !blank(hints.getFarmId())) {
+                int farmId = Integer.parseInt(hints.getFarmId());
+                List<FarmField> available = fields.list(farmId, userId);
+                List<FarmField> named = available.stream().filter(field -> CopilotOperationQuery.mentionsField(message, field.getFieldId(), field.getName())).toList();
+                if (named.size() > 1) return clarify("匹配到多个地块，请指定一个地块。", hints);
+                if (named.size() == 1) hints.setFieldId(named.get(0).getFieldId());
+                if (CopilotOperationQuery.farmWide(message) && named.isEmpty()) hints.setFieldId(null);
+                if (!blank(hints.getFieldId()) && available.stream().noneMatch(field -> hints.getFieldId().equals(field.getFieldId()))) return stale("所选地块不属于当前农场。");
+                sanitizeForIntent(hints, intent);
+                return new Resolution(CopilotResolutionStatus.RESOLVED, hints, null);
+            }
+            if (intent == CopilotIntent.FARM_MATURITY_SCAN) {
+                if (blank(hints.getFarmId()) && !blank(hints.getFieldId())) {
+                    FarmField field = fields.get(hints.getFieldId(), userId);
+                    if (field.getFarmId() != null) hints.setFarmId(String.valueOf(field.getFarmId()));
+                }
+                if (blank(hints.getFarmId())) return clarify("请先在顶部选择要评估成熟度的农场。");
+                fields.requireFarm(Integer.valueOf(hints.getFarmId()), userId);
+                if (!blank(hints.getFieldId())) {
+                    FarmField field = fields.get(hints.getFieldId(), userId);
+                    if (!java.util.Objects.equals(String.valueOf(field.getFarmId()), hints.getFarmId())) return stale("当前地块与农场上下文不一致，请重新选择地块。");
+                }
+                return new Resolution(CopilotResolutionStatus.RESOLVED, hints, null);
+            }
             if (requiresFieldValidation(intent, hints, message)) {
                 if (blank(hints.getFieldId())) return clarify("请先打开或明确要处理的地块。");
                 FarmField field = fields.get(hints.getFieldId(), userId);
@@ -228,7 +267,7 @@ public class CopilotContextResolver {
                 && !contains(normalized, "不要创建", "不创建", "无需创建", "只分析", "仅分析", "do not create", "without executing");
     }
     private boolean isAgentPlanningRequest(String normalized) {
-        boolean planningObject = contains(normalized, "农事计划", "农事安排", "作业计划", "管理计划", "一周计划", "周计划", "未来一周", "本周计划", "farm plan", "weekly plan");
+        boolean planningObject = contains(normalized, "农事计划", "农事安排", "作业计划", "管理计划", "采收计划", "一周计划", "周计划", "未来一周", "本周计划", "farm plan", "weekly plan");
         boolean directive = contains(normalized, "帮我制定", "请制定", "给我制定", "制定一份", "帮我生成", "请生成", "给我生成", "生成一份",
                 "帮我规划", "请规划", "给我规划", "规划一份", "create a plan", "make a plan");
         return planningObject && directive;

@@ -38,6 +38,10 @@ public class CopilotRouteService {
     }
 
     public CopilotRouteResult route(CopilotRouteRequest request, Long userId, boolean hasUserImages) {
+        return route(request, userId, hasUserImages, true);
+    }
+
+    public CopilotRouteResult route(CopilotRouteRequest request, Long userId, boolean hasUserImages, boolean includePreferences) {
         String traceId = "trace-" + UUID.randomUUID();
         CopilotRouteRequest safeRequest = request == null ? new CopilotRouteRequest() : request;
         CopilotConversationService.ConversationHandle conversation = conversations == null ? null : conversations.begin(safeRequest, userId);
@@ -95,7 +99,7 @@ public class CopilotRouteService {
         if (resolution.status() == CopilotResolutionStatus.RESOLVED && conversation == null) sessions.update(safeRequest.getSessionId(), resolution.context(), intent);
         CopilotRouteResult routed = withIntentDiagnostics(result(traceId, intent, resolution.status(), resolution.context(), capability, clarification, question, nextAction, classification.safeRoute(), classification.confidence()), hybrid,
                 safeRequest.getMessage(), effectiveMessage, hasUserImages);
-        if (longTermMemory != null) routed.setRelevantLongTermMemories(longTermMemory.retrieve(userId, mergeStable(safeRequest, session), safeRequest.getPageContext()).stream().map(CopilotMemoryView::from).toList());
+        if (includePreferences && longTermMemory != null) routed.setRelevantLongTermMemories(longTermMemory.retrieve(userId, mergeStable(safeRequest, session), safeRequest.getPageContext()).stream().map(CopilotMemoryView::from).toList());
         return persist(conversation, safeRequest, routed);
     }
 
@@ -157,9 +161,13 @@ public class CopilotRouteService {
     }
 
     private boolean pendingRecommendationContinuation(CopilotConversationSnapshot snapshot, String message) {
-        if (snapshot == null || snapshot.getPendingClarification() == null || !"RECOMMENDATION".equals(snapshot.getPendingClarification().getType()) || message == null) return false;
-        String normalized = message.toLowerCase(java.util.Locale.ROOT);
-        return message.contains("第一条") || normalized.contains("first recommendation") || normalized.matches(".*\\bfirst\\b.*");
+        if (snapshot == null || snapshot.getPendingClarification() == null || message == null) return false;
+        String type = snapshot.getPendingClarification().getType();
+        boolean awaitingRecommendation = "RECOMMENDATION".equals(type) || ("ACTION".equals(type)
+                && snapshot.getActiveContext() != null && !blank(snapshot.getActiveContext().getDiagnosisId()));
+        if (!awaitingRecommendation) return false;
+        String normalized = message.trim().toLowerCase(Locale.ROOT).replaceAll("[，。！？!?、.]+$", "").trim();
+        return normalized.matches("^(?:选|就|用)?第一条(?:建议)?$") || normalized.matches("^(?:the )?first(?: recommendation)?$");
     }
 
     private boolean isPendingActionConfirmation(CopilotConversationSnapshot snapshot, String message) {
@@ -236,6 +244,7 @@ public class CopilotRouteService {
         return switch (intent) {
             case GENERAL_QA -> CopilotCapability.CONTEXTUAL_QA;
             case FARM_STATUS_QUERY -> CopilotCapability.FARM_CONTEXT_READ;
+            case FARM_MATURITY_SCAN -> CopilotCapability.FARM_MATURITY_READ;
             case FIELD_STATUS_QUERY -> CopilotCapability.FIELD_CONTEXT_READ;
             case PRIORITIES_QUERY -> CopilotCapability.PRIORITIES_READ;
             case HISTORICAL_CASE_QUERY -> CopilotCapability.HISTORICAL_CASE_READ;
@@ -262,6 +271,7 @@ public class CopilotRouteService {
         return switch (intent) {
             case GENERAL_QA -> "ANSWER_WITH_CONTEXT";
             case FARM_STATUS_QUERY -> "READ_FARM_CONTEXT";
+            case FARM_MATURITY_SCAN -> "SCAN_FARM_MATURITY";
             case FIELD_STATUS_QUERY -> "READ_FIELD_CONTEXT";
             case PRIORITIES_QUERY -> "READ_PRIORITIES";
             case HISTORICAL_CASE_QUERY -> "READ_HISTORICAL_CASES";

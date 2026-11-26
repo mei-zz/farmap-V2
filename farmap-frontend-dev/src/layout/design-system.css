@@ -1,0 +1,42 @@
+:root {
+  --fm-bg: #f7f8f6;
+  --fm-surface: #ffffff;
+  --fm-green: #176b4d;
+  --fm-ink: #26352d;
+  --fm-muted: #829087;
+  --fm-line: #e5eae6;
+  --fm-muted-readable: #606e64;
+  --fm-space: 24px;
+  --fm-radius-card: 12px;
+  --fm-radius-container: 16px;
+}
+
+.agent-shell__login-description { color: var(--fm-muted-readable); margin: 0 0 16px; }
+.agent-shell__login-error { margin-bottom: 14px; }
+.agent-shell__nav-link:focus-visible, .agent-shell__rail-mark:focus-visible { outline: 2px solid var(--fm-green); outline-offset: 3px; }
+.agent-shell__scope { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.agent-shell__scope select { min-width: 100px; }
+.agent-shell__scope-label { color: var(--fm-muted-readable); white-space: nowrap; font-size: 12px; }
+.agent-shell__field-select { width: 130px; }
+.agent-shell__date-picker input { border: 0; color: var(--fm-ink); background: transparent; font: inherit; }
+.agent-shell__login-entry { display: inline-flex; align-items: center; gap: 8px; }
+.agent-shell__login-entry .ant-avatar { color: var(--fm-green); background: #e9f2eb; }
+.agent-shell .agent-shell__takeover.ant-btn { border-radius: 8px; color: var(--fm-green); border-color: var(--fm-line); }
+
+@media (max-width: 760px) {
+  .agent-shell__scope-label, .agent-shell__takeover-text { display: none; }
+  .agent-shell__scope { gap: 4px; }
+}
+
+@media (max-width: 480px) {
+  .agent-shell.has-account .agent-shell__rail { width: 43px; flex-basis: 43px; }
+  .agent-shell.has-account .agent-shell__nav-link { width: 33px; height: 36px; font-size: 17px; }
+  .agent-shell.has-account .agent-shell__header.ant-layout-header { position: relative; height: 90px; min-height: 90px; align-items: flex-start; padding-top: 6px; }
+  .agent-shell.has-account .agent-shell__header-left { min-height: 34px; }
+  .agent-shell.has-account .agent-shell__header-right { gap: 3px !important; }
+  .agent-shell__scope { position: absolute; top: 46px; left: 12px; right: 114px; }
+  .agent-shell__scope .ant-select { flex: 1; min-width: 0; width: auto; }
+  .agent-shell.has-account .agent-shell__date-picker { display: block; position: absolute; right: 8px; top: 54px; }
+  .agent-shell.has-account .agent-shell__date-picker .anticon { display: none; }
+  .agent-shell.has-account .agent-shell__date-picker input { width: 102px; }
+}

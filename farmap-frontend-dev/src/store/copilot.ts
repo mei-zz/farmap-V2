@@ -1,11 +1,16 @@
+import type { AgentUiBlock } from "@/features/copilot/uiBlocks";
 import { create } from "zustand";
 import type { OverviewCopilotContext } from "@/features/overview/copilot/context";
 import type { CopilotResponseMetadata, CopilotResponseMode } from "@/features/copilot/contract";
+import type { ChatActivity } from "@/features/copilot/chatActivity";
+import type { MessagePresentation } from "@/features/copilot/presentation";
 
 export type CopilotMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  activity?: ChatActivity;
+  presentation?: MessagePresentation;
   /**
    * Presentation is intentionally a UI concern. The server stays the source
    * of truth for intent, authorization and tool routing; this only prevents
@@ -14,10 +19,17 @@ export type CopilotMessage = {
   responseMode?: CopilotResponseMode;
   responseLabel?: string;
   responseMeta?: CopilotResponseMetadata;
+  uiBlocks?: AgentUiBlock[];
   imageAttachments?: Array<{ id: string; name: string; url: string }>;
-  knowledgeCount?: number;
   referenceImages?: Array<{ refId: string; label: string; imageUrl: string; match?: string }>;
   referenceImageNotice?: string;
+};
+
+export type CopilotAnalysisSelection = {
+  runId: string;
+  farmId: number;
+  fieldId?: string;
+  view?: "history" | "ranking";
 };
 
 type CopilotStore = {
@@ -25,6 +37,9 @@ type CopilotStore = {
   draft: string;
   context?: OverviewCopilotContext;
   messages: CopilotMessage[];
+  analysis?: CopilotAnalysisSelection;
+  openAnalysis: (selection: CopilotAnalysisSelection) => void;
+  closeAnalysis: () => void;
   open: () => void;
   close: () => void;
   toggle: () => void;
@@ -49,6 +64,9 @@ export const useCopilotStore = create<CopilotStore>((set) => ({
   draft: "",
   context: undefined,
   messages: initialMessages,
+  analysis: undefined,
+  openAnalysis: (analysis) => set({ analysis, isOpen: true }),
+  closeAnalysis: () => set({ analysis: undefined }),
   open: () => set({ isOpen: true }),
   close: () => set({ isOpen: false }),
   toggle: () => set((state) => ({ isOpen: !state.isOpen })),
@@ -64,5 +82,5 @@ export const useCopilotStore = create<CopilotStore>((set) => ({
       : [...state.messages, message],
   })),
   setMessages: (messages) => set({ messages }),
-  clearMessages: () => set({ messages: initialMessages }),
+  clearMessages: () => set({ messages: initialMessages, analysis: undefined }),
 }));

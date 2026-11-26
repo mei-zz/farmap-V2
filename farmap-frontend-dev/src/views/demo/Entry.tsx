@@ -13,7 +13,7 @@ export default function DemoEntry() {
     }
 
     createDemoSession();
-    navigate("/overview", { replace: true });
+    navigate("/workspace", { replace: true });
   }, [navigate]);
 
   return (

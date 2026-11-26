@@ -1,8 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Card, Empty, Skeleton, Tag, Typography } from "antd";
-import { ReadOutlined } from "@ant-design/icons";
-import { useNavigate } from "react-router";
-import { useFarmStore } from "@/store/farm";
+import { useNavigate, useSearchParams } from "react-router";
 import { useAIContextStore } from "@/store/aiContext";
 import { useCopilotStore } from "@/store/copilot";
 import { openOverviewCopilot, normalizeOverviewEvidenceSources } from "@/features/overview/copilot/context";
@@ -12,95 +9,56 @@ import type { OperationsOutcome, OperationsTaskRaw, OperationsTaskViewModel, Ope
 import { permanence } from "@/utils/permanence";
 import { req } from "@/utils/reqeust";
 import { loadGuidanceContext, type FarmGuidanceContext } from "@/features/agricultural/context";
+import { listDiagnosisFields } from "@/features/diagnosis/service";
 
-const { Text } = Typography;
 type OperationsTasksResult = { code: number; data?: { items?: OperationsTaskRaw[]; count?: number } };
 type OperationsOutcomeResult = { code: number; data?: OperationsOutcome };
-type FarmContextInput = { id: number; name: string; address: string; type: string };
 
 const guidanceLabels: Record<string, string> = { body: "树体管理", fertite: "水肥管理", pest: "病虫管理", park: "清园操作" };
 
-function getFarmContext(stored: FarmContextInput | undefined, current: FarmContextInput) {
-  return {
-    id: stored?.id ?? current.id,
-    name: stored?.name || current.name || "当前农场",
-    address: stored?.address || current.address,
-    type: stored?.type ?? current.type,
-  };
-}
-
 function GuidanceContent({ guidance }: { guidance: FarmGuidanceContext }) {
-  if (guidance.status !== "READY" || guidance.entries.length === 0) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前农场暂无本月农业指导" />;
+  if (guidance.status !== "READY" || guidance.entries.length === 0) return null;
   const groups = new Map<string, FarmGuidanceContext["entries"]>();
   guidance.entries.forEach((entry) => {
     const key = entry.guidanceType ?? "other";
     groups.set(key, [...(groups.get(key) ?? []), entry]);
   });
-  return <div className="fm-current-guidance__grid">{[...groups.entries()].map(([type, entries]) => <details key={type} open className="fm-current-guidance__group">
-    <summary><Tag>{guidanceLabels[type] ?? "农业指导"}</Tag><span>{entries.length} 条</span></summary>
+  return <section aria-label="月度农事指导"><h3>{guidance.month + 1} 月农事指导</h3><div className="fm-current-guidance__grid">{[...groups.entries()].map(([type, entries]) => <details key={type} className="fm-current-guidance__group">
+    <summary>{guidanceLabels[type] ?? "农业指导"}<span>{entries.length} 条</span></summary>
     <div>{entries.map((entry) => <p key={entry.id ?? `${type}-${entry.text.slice(0, 14)}`}><b>{entry.formula ? "配方推荐：" : "操作建议："}</b>{entry.text}</p>)}</div>
-  </details>)}</div>;
+  </details>)}</div></section>;
 }
 
 export default function Operations() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const showRecommendations = params.get("view") === "recommendations";
   const token = permanence.token.useToken();
-  const storedFarm = permanence.farm.useFarmStore();
-  const aiCurrentFarm = useAIContextStore((state) => state.context.currentFarm);
-  const currentFarmId = useFarmStore((state) => state.id);
-  const currentFarmName = useFarmStore((state) => state.name);
-  const currentFarmAddress = useFarmStore((state) => state.address);
-  const currentFarmType = useFarmStore((state) => state.type);
-  const storedFarmId = storedFarm?.id;
-  const storedFarmName = storedFarm?.name;
-  const storedFarmAddress = storedFarm?.address;
-  const storedFarmType = storedFarm?.type;
-  const farm = useMemo(() => {
-    const storeFarm: FarmContextInput = {
-      id: currentFarmId,
-      name: currentFarmName,
-      address: currentFarmAddress,
-      type: currentFarmType,
-    };
-    const selectedFarm = currentFarmId > 0
-      ? storeFarm
-      : aiCurrentFarm.id > 0
-        ? { id: aiCurrentFarm.id, name: aiCurrentFarm.name, address: aiCurrentFarm.address, type: currentFarmType }
-        : undefined;
-    const persistedFarm = storedFarmId === undefined
-      ? undefined
-      : { id: storedFarmId, name: storedFarmName ?? "", address: storedFarmAddress ?? "", type: storedFarmType ?? "" };
-    return selectedFarm ? getFarmContext(undefined, selectedFarm) : getFarmContext(persistedFarm, storeFarm);
-  }, [
-    storedFarmId,
-    storedFarmName,
-    storedFarmAddress,
-    storedFarmType,
-    currentFarmId,
-    currentFarmName,
-    currentFarmAddress,
-    currentFarmType,
-    aiCurrentFarm.id,
-    aiCurrentFarm.name,
-    aiCurrentFarm.address,
-  ]);
+  const currentFarm = useAIContextStore((state) => state.context.currentFarm);
+  const fieldId = useAIContextStore((state) => state.context.currentField?.id);
+  const farm = useMemo(() => ({ ...currentFarm, type: "" }), [currentFarm]);
   const [viewModel, setViewModel] = useState<OperationsViewModel>(() => getUnavailableOperationsViewModel(farm, "正在读取 Operations 任务…"));
   const [guidance, setGuidance] = useState<FarmGuidanceContext>();
-  const [guidanceLoading, setGuidanceLoading] = useState(true);
-  const [guidanceError, setGuidanceError] = useState<string>();
   const setAIContext = useAIContextStore((state) => state.setContext);
   const setCopilotContext = useCopilotStore((state) => state.setContext);
   const setDraft = useCopilotStore((state) => state.setDraft);
   const openCopilot = useCopilotStore((state) => state.open);
-  const month = new Date().getMonth();
+  const referenceDate = useAIContextStore((state) => state.context.referenceDate);
+  const monthValue = referenceDate ? Number(referenceDate.slice(5, 7)) : 0;
+  const month = monthValue >= 1 && monthValue <= 12 ? monthValue - 1 : new Date().getMonth();
 
   useEffect(() => {
     let cancelled = false;
+    setViewModel(getUnavailableOperationsViewModel(farm, farm.id > 0 ? "正在读取当前范围的任务。" : "请先选择农场。"));
     if (farm.id <= 0) return () => { cancelled = true; };
-    req.get<OperationsTasksResult>("/api/operations/tasks", { Authorization: `Bearer ${token}` })
-      .then(async (response) => {
+    Promise.all([listDiagnosisFields(farm.id), req.get<OperationsTasksResult>("/api/operations/tasks", { Authorization: `Bearer ${token}` })])
+      .then(async ([fields, response]) => {
         if (cancelled) return;
-        const items = Array.isArray(response.data?.items) ? response.data.items : [];
+        const fieldNames = new Map(fields.map((field) => [field.fieldId, field.name]));
+        const items = Array.isArray(response.data?.items) ? response.data.items.flatMap((item) => {
+          const id = typeof item.fieldId === "string" ? item.fieldId : "";
+          return fieldNames.has(id) && (!fieldId || id === fieldId) ? [{ ...item, fieldName: fieldNames.get(id) }] : [];
+        }) : [];
         const enriched = await Promise.all(items.map(async (item) => {
           if (String(item.status ?? "").toUpperCase() !== "COMPLETED" || typeof item.taskId !== "string" || !item.taskId) return item;
           try {
@@ -116,23 +74,17 @@ export default function Operations() {
         if (!cancelled) setViewModel(getUnavailableOperationsViewModel(farm));
       });
     return () => { cancelled = true; };
-  }, [farm, token]);
+  }, [farm, fieldId, token]);
 
   useEffect(() => {
     let cancelled = false;
     setGuidance(undefined);
-    setGuidanceError(undefined);
-    if (farm.id <= 0) {
-      setGuidanceLoading(false);
-      return () => { cancelled = true; };
-    }
-    setGuidanceLoading(true);
+    if (farm.id <= 0 || !showRecommendations) return () => { cancelled = true; };
     loadGuidanceContext(farm.id, token, month)
-      .then((value) => { if (!cancelled) { setGuidance(value); setGuidanceError(undefined); } })
-      .catch((error: unknown) => { if (!cancelled) setGuidanceError(error instanceof Error ? error.message : "农业指导不可用"); })
-      .finally(() => { if (!cancelled) setGuidanceLoading(false); });
+      .then((value) => { if (!cancelled) setGuidance(value); })
+      .catch(() => undefined);
     return () => { cancelled = true; };
-  }, [farm.id, month, token]);
+  }, [farm.id, month, showRecommendations, token]);
 
   const openTaskCopilot = (task: OperationsTaskViewModel) => {
     const copilotMode = viewModel.mode === "DEMO" || viewModel.mode === "STALE" || viewModel.mode === "UNAVAILABLE" ? viewModel.mode : "REAL";
@@ -148,6 +100,7 @@ export default function Operations() {
       evidence: normalizeOverviewEvidenceSources([], copilotMode),
       freshness: viewModel.freshness,
     }, { setAIContext, setCopilotContext, setDraft, open: openCopilot });
+    if (task.taskId && !task.isDemo) setDraft(`打开当前农事任务「${task.title}」，查看进度和执行反馈。`);
   };
 
   const selectTask = (task: OperationsTaskViewModel) => {
@@ -160,11 +113,17 @@ export default function Operations() {
     });
   };
   return <div className="fm-page fm-operations-page">
-    <OperationsCenter viewModel={viewModel} onSelectTask={selectTask} onAskAi={openTaskCopilot} onOpenDiagnosis={(id) => navigate(`/diagnosis/${id}`)} onOpenAgent={(id) => navigate(`/analysis/${id}`)} />
-    <div className="fm-operations-support">
-      <Card title={<><ReadOutlined />&nbsp;当前农业指导</>} bordered={false} className="fm-operations-guidance-card">
-        {guidanceLoading ? <Skeleton active paragraph={{ rows: 4 }} /> : guidanceError ? <div className="fm-operations-state"><span>{guidanceError}</span></div> : guidance ? <><Text type="secondary">第 {guidance.month + 1} 月 · 只展示当前农场真实指导</Text><GuidanceContent guidance={guidance} /></> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前农场暂无本月农业指导" />}
-      </Card>
-    </div>
+    <OperationsCenter viewModel={viewModel} onSelectTask={selectTask} onAskAi={openTaskCopilot}
+      onOpenDiagnosis={(id) => navigate(`/diagnosis/${id}`)} onOpenAgent={(id) => navigate(`/analysis/${id}`)}
+      onOpenAnalysis={(runId, selectedField) => useCopilotStore.getState().openAnalysis({ runId, farmId: farm.id, fieldId: selectedField })}
+      onPlanInAgent={() => {
+        useCopilotStore.getState().closeAnalysis();
+        setAIContext({ taskId: undefined, agentRunId: undefined, currentPage: "/planning" });
+        setCopilotContext(undefined);
+        setDraft("请结合当前农场和地块的情况，帮我制定一份农事计划草稿。");
+        openCopilot();
+      }}
+      guidanceSection={guidance ? <GuidanceContent guidance={guidance} /> : undefined} />
   </div>;
 }
+

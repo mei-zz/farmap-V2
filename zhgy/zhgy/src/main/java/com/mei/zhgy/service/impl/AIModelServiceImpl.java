@@ -53,13 +53,17 @@ public class AIModelServiceImpl implements AIModelService {
     @Autowired(required = false)
     private IntelligenceGateway intelligenceGateway;
 
-    /** All live image answers use the configured Qwen Model Studio gateway. */
+    /** All live image answers use the configured model gateway. */
     @Autowired(required = false)
     private ModelGateway modelGateway;
     
     /** Kept as a compatibility field for the legacy interface methods; all active calls use ModelGateway. */
     @Value("${farmap.ai.router.multimodal-model:qwen3-vl-32b-thinking}")
     private String activeVisionModel;
+    @Value("${farmap.ai.opencode.enabled:false}")
+    private boolean openCodeEnabled;
+    @Value("${farmap.ai.opencode.model:deepseek-v4.1-flash}")
+    private String openCodeModel;
 
     // Legacy direct-call fields remain only so older interface methods can be
     // loaded without breaking binary compatibility. No active controller path
@@ -422,7 +426,7 @@ public class AIModelServiceImpl implements AIModelService {
                 .requestId(requestId)
                 .jsonData(jsonData)
                 .generateTime(LocalDateTime.now())
-                .modelVersion(activeVisionModel)
+                .modelVersion(openCodeEnabled ? openCodeModel : activeVisionModel)
                 .build();
         
         initialResultMapper.insert(initialResult);

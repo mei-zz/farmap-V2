@@ -42,6 +42,7 @@ public class KnowledgeController {
     @PostMapping("/documents/{documentId}/enable") public Result<Map<String,Object>> enableDocument(@PathVariable String documentId){return Result.success(knowledge.setDocumentStatus(documentId,"ACTIVE",adminActor()));}
     @GetMapping("/health")
     public ResponseEntity<Result<Map<String,Object>>> health(){
+        adminActor();
         Map<String,Object> report = knowledge.health();
         HttpStatus status = "UNAVAILABLE".equals(report.get("status")) ? HttpStatus.SERVICE_UNAVAILABLE : HttpStatus.OK;
         return ResponseEntity.status(status).body(Result.success(report));

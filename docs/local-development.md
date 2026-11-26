@@ -20,6 +20,8 @@
 5. Terminal 3 执行 `scripts\run-frontend-local.ps1 -RagMode real`。
 6. 浏览器打开 `http://127.0.0.1:5173/farmap/`。
 
+本地 `.env` 配置 `opencode_apikey` 后，`run-backend-local.ps1` 会启用 OpenCode Go，统一使用 `deepseek-v4.1-flash` 执行农事助手的对话、意图分类、视觉和诊断生成。嵌入和重排沿用原有知识库配置。登录管理员账号后可在系统管理中核对模型与索引状态。
+
 ### 一键启动本地全部服务
 
 Docker Desktop 保持运行时，可以在项目根目录执行：

@@ -23,6 +23,24 @@ public class ModelAvailabilityService {
 
     public List<Map<String, Object>> probeAll() {
         List<Map<String, Object>> results = new ArrayList<>();
+        if (bailianModelClient.isOpencodeEnabled()) {
+            String model = bailianModelClient.getOpencodeModel();
+            Map<String, Object> item = new java.util.LinkedHashMap<>();
+            item.put("model", model);
+            item.put("role", ModelRole.DEFAULT_MODEL.name());
+            try {
+                long start = System.currentTimeMillis();
+                bailianModelClient.probe(model);
+                availabilityRegistry.markAvailable(model, System.currentTimeMillis() - start);
+                item.put("status", "VERIFIED");
+            } catch (ModelCallException exception) {
+                availabilityRegistry.markUnavailable(model, exception.getErrorType());
+                item.put("status", verificationStatus(exception.getErrorType()));
+                item.put("errorType", exception.getErrorType());
+            }
+            results.add(item);
+            return results;
+        }
         capabilityRegistry.all().forEach(definition -> {
             java.util.LinkedHashMap<String, Object> item = new java.util.LinkedHashMap<>();
             item.put("model", definition.getModel());

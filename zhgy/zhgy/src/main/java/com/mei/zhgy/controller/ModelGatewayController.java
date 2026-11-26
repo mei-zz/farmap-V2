@@ -1,6 +1,7 @@
 package com.mei.zhgy.controller;
 
 import com.mei.zhgy.result.Result;
+import com.mei.zhgy.service.WorkspaceAdminAccess;
 import com.mei.zhgy.service.ai.BailianModelClient;
 import com.mei.zhgy.service.ai.ModelAvailabilityRegistry;
 import com.mei.zhgy.service.ai.ModelAvailabilityService;
@@ -22,18 +23,30 @@ public class ModelGatewayController {
     private final ModelAvailabilityRegistry availabilityRegistry;
     private final BailianModelClient bailianModelClient;
     private final ModelAvailabilityService modelAvailabilityService;
+    private final WorkspaceAdminAccess workspaceAdminAccess;
 
     public ModelGatewayController(ModelAvailabilityRegistry availabilityRegistry,
                                   BailianModelClient bailianModelClient,
-                                  ModelAvailabilityService modelAvailabilityService) {
+                                  ModelAvailabilityService modelAvailabilityService,
+                                  WorkspaceAdminAccess workspaceAdminAccess) {
         this.availabilityRegistry = availabilityRegistry;
         this.bailianModelClient = bailianModelClient;
         this.modelAvailabilityService = modelAvailabilityService;
+        this.workspaceAdminAccess = workspaceAdminAccess;
     }
 
     @GetMapping("/availability")
     public Result<Map<String, Object>> availability() {
+        workspaceAdminAccess.requireAdmin();
         Map<String, Object> result = new LinkedHashMap<>();
+        if (bailianModelClient.isOpencodeEnabled()) {
+            String model = bailianModelClient.getOpencodeModel();
+            result.put("provider", "opencode");
+            result.put("configured", bailianModelClient.isChatConfigured());
+            result.put("models", List.of(Map.of("model", model, "role", "DEFAULT_MODEL",
+                    "status", availabilityRegistry.status(model))));
+            return Result.success(result);
+        }
         result.put("provider", "alibaba-bailian");
         result.put("configured", bailianModelClient.isConfigured());
         result.put("region", bailianModelClient.getRegion());
@@ -44,8 +57,9 @@ public class ModelGatewayController {
 
     @PostMapping("/availability/probe")
     public Result<List<Map<String, Object>>> probe() {
+        workspaceAdminAccess.requireAdmin();
         List<Map<String, Object>> results = modelAvailabilityService.probeAll();
-        log.info("Bailian model availability probe completed for {} models", results.size());
+        log.info("Model availability probe completed for {} models", results.size());
         return Result.success(results);
     }
 }

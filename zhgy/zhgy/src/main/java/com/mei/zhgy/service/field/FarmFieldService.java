@@ -187,6 +187,14 @@ public class FarmFieldService {
         return farm;
     }
 
+    public List<com.mei.zhgy.vo.SimplifiedFarmVO> accessibleFarms(Long actorId) {
+        if (actorId == null) throw new FieldAccessException(401, "UNAUTHENTICATED", "需要登录后查看农场");
+        var user = userMapper == null ? null : userMapper.getById(actorId.intValue());
+        if (user == null) throw new FieldAccessException(403, "FARM_ACCESS_DENIED", "当前用户无权查看农场");
+        List<Integer> ids = "admin".equalsIgnoreCase(user.getRole()) ? userMapper.getAllFarmIds() : userMapper.getFarmIdsByUserId(user.getId());
+        return ids == null ? List.of() : ids.stream().distinct().map(farmMapper::getSimpleFarmById).filter(java.util.Objects::nonNull).toList();
+    }
+
     private Map<String, Object> location(FarmField field, UserLoginResponseVO.FarmVO farm) {
         Double longitude = field.getLongitude();
         Double latitude = field.getLatitude();

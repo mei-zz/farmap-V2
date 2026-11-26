@@ -34,6 +34,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import javax.annotation.PreDestroy;
 
 /**
  * Indexes user-provided camera screenshots and field detail photos separately
@@ -51,6 +56,12 @@ public class UploadedImageAssetIndexService {
     private final JdbcTemplate jdbc;
     private final ImageEmbeddingProvider embeddings;
     private final MilvusServiceClient milvus;
+    private final ThreadPoolExecutor indexingQueue = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(32), task -> {
+                var thread = new Thread(task, "uploaded-image-index");
+                thread.setDaemon(true);
+                return thread;
+            });
     private volatile boolean schemaChecked;
 
     @Autowired
@@ -62,15 +73,30 @@ public class UploadedImageAssetIndexService {
         this.milvus = milvus;
     }
 
+    public void queueIndex(String imageUrl, Metadata metadata) {
+        if (milvus == null || metadata == null || metadata.farmId() == null) return;
+        try {
+            indexingQueue.execute(() -> {
+                IndexResult result = index(imageUrl, metadata);
+                if (!"READY".equals(result.status())) log.info("现场图片已保存，相似图片索引未完成，status={}", result.status());
+            });
+        } catch (RejectedExecutionException busy) {
+            log.warn("图片索引队列繁忙，上传图片仍可用于本轮分析");
+        }
+    }
+
+    @PreDestroy
+    void stopIndexQueue() { indexingQueue.shutdownNow(); }
+
     public IndexResult index(String imageUrl, Metadata metadata) {
         if (imageUrl == null || imageUrl.isBlank()) throw new IllegalArgumentException("imageUrl 不能为空");
         if (milvus == null) return IndexResult.pending("MILVUS_UNAVAILABLE");
-        EmbeddingProvider.EmbeddingResult embedding = embeddings.embedImage(imageUrl);
-        if (embedding == null || embedding.getVector() == null || embedding.getVector().size() != DIMENSION) {
-            return IndexResult.pending("IMAGE_EMBEDDING_UNAVAILABLE");
-        }
         String assetId = "asset-" + UUID.randomUUID();
         try {
+            EmbeddingProvider.EmbeddingResult embedding = embeddings.embedImage(imageUrl);
+            if (embedding == null || embedding.getVector() == null || embedding.getVector().size() != DIMENSION) {
+                return IndexResult.pending("IMAGE_EMBEDDING_UNAVAILABLE");
+            }
             ensureSchema();
             ensureCollection();
             List<InsertParam.Field> fields = Arrays.asList(
@@ -94,10 +120,10 @@ public class UploadedImageAssetIndexService {
     }
 
     public List<SimilarAsset> search(String imageUrl, Integer farmId, String fieldId, int topK) {
-        if (milvus == null || imageUrl == null || imageUrl.isBlank()) return Collections.emptyList();
-        EmbeddingProvider.EmbeddingResult embedding = embeddings.embedImage(imageUrl);
-        if (embedding == null || embedding.getVector() == null || embedding.getVector().size() != DIMENSION) return Collections.emptyList();
+        if (milvus == null || farmId == null || imageUrl == null || imageUrl.isBlank()) return Collections.emptyList();
         try {
+            EmbeddingProvider.EmbeddingResult embedding = embeddings.embedImage(imageUrl);
+            if (embedding == null || embedding.getVector() == null || embedding.getVector().size() != DIMENSION) return Collections.emptyList();
             ensureSchema();
             ensureCollection();
             SearchParam search = SearchParam.newBuilder().withCollectionName(COLLECTION)
@@ -114,8 +140,8 @@ public class UploadedImageAssetIndexService {
                 Map<String, Object> row = jdbc.query("SELECT asset_id,farm_id,field_id,point_id,camera_id,source,image_url,file_name,created_at FROM farmap_image_assets WHERE asset_id=?",
                         ps -> ps.setString(1, assetId), rs -> rs.next() ? row(rs) : null);
                 if (row == null) continue;
-                if (farmId != null && row.get("farm_id") instanceof Number n && n.intValue() != farmId) continue;
-                if (fieldId != null && row.get("field_id") != null && !fieldId.equals(String.valueOf(row.get("field_id")))) continue;
+                if (!(row.get("farm_id") instanceof Number n) || n.intValue() != farmId) continue;
+                if (fieldId != null && !fieldId.equals(row.get("field_id"))) continue;
                 double distance = id.getScore();
                 output.add(new SimilarAsset(row, 1D / (1D + Math.max(0D, distance))));
                 if (output.size() >= topK) break;

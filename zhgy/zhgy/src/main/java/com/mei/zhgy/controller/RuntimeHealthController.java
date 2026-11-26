@@ -1,6 +1,7 @@
 package com.mei.zhgy.controller;
 
 import com.mei.zhgy.result.Result;
+import com.mei.zhgy.service.WorkspaceAdminAccess;
 import com.mei.zhgy.service.ai.LocalAiClient;
 import com.mei.zhgy.service.ai.IntelligenceGateway;
 import com.mei.zhgy.service.agent.AgentRuntime;
@@ -43,10 +44,14 @@ public class RuntimeHealthController {
     private final BailianModelClient bailianModelClient;
     private final ModelAvailabilityRegistry modelAvailability;
     private UploadedImageAssetIndexService uploadedImageAssets;
+    @Autowired private WorkspaceAdminAccess workspaceAdminAccess;
     @Value("${milvus.host:127.0.0.1}") private String milvusHost;
     @Value("${milvus.port:19530}") private int milvusPort;
     @Value("${farmap.ai.router.default-model:qwen-plus-2025-07-28}") private String defaultModel;
     @Value("${farmap.ai.router.multimodal-model:qwen3-vl-32b-thinking}") private String multimodalModel;
+    @Value("${farmap.ai.opencode.enabled:false}") private boolean openCodeEnabled;
+    @Value("${farmap.ai.opencode.model:deepseek-v4.1-flash}") private String openCodeModel;
+    @Value("${farmap.ai.opencode.url:https://opencode.ai/inference/go/openai/v1/chat/completions}") private String openCodeUrl;
 
     public RuntimeHealthController(LocalAiClient localAi, AgentRuntime agentRuntime, OperationsTaskService operations, HistoricalVectorStoreInitializer historicalVectorStore) {
         this.localAi = localAi; this.intelligenceGateway = null; this.agentRuntime = agentRuntime; this.operations = operations;
@@ -65,6 +70,16 @@ public class RuntimeHealthController {
     }
 
     @GetMapping("/health")
+    public Result<Map<String, Object>> publicHealth() {
+        return Result.success(Map.of("backend", "REAL", "status", "READY"));
+    }
+
+    @GetMapping("/admin/health")
+    public Result<Map<String, Object>> adminHealth() {
+        workspaceAdminAccess.requireAdmin();
+        return health();
+    }
+
     public Result<Map<String, Object>> health() {
         Map<String, Object> output = new LinkedHashMap<>();
         output.put("backend", "REAL");
@@ -83,29 +98,30 @@ public class RuntimeHealthController {
         } catch (Exception error) {
             output.put("localAi", "UNAVAILABLE");
         }
-        // Production text and vision calls now go through the verified Qwen
-        // Model Studio gateway. Keep the legacy local/Flask adapter details
-        // out of the product health contract so an unused Hunyuan adapter
-        // cannot make the live model appear unavailable.
+        String llmProvider = openCodeEnabled ? "opencode-go" : "qwen-model-studio";
+        String activeTextModel = openCodeEnabled ? openCodeModel : defaultModel;
+        String activeVisionModel = openCodeEnabled ? openCodeModel : multimodalModel;
         Map<String, Object> llm = new LinkedHashMap<>();
-        llm.put("provider", "qwen-model-studio");
-        llm.put("defaultModel", defaultModel);
-        llm.put("multimodalModel", multimodalModel);
-        llm.put("status", modelStatus(defaultModel));
+        llm.put("provider", llmProvider);
+        llm.put("defaultModel", activeTextModel);
+        llm.put("multimodalModel", activeVisionModel);
+        llm.put("status", modelStatus(activeTextModel));
         llm.put("verification", modelAvailability == null ? "UNAVAILABLE" : "SEE_AVAILABILITY");
-        if (modelAvailability != null) llm.put("models", modelAvailability.snapshot());
+        if (openCodeEnabled) llm.put("models", java.util.List.of(Map.of("model", activeTextModel, "status", modelStatus(activeTextModel))));
+        else if (modelAvailability != null) llm.put("models", modelAvailability.snapshot());
         output.put("llm", llm);
         Map<String, Object> vision = new LinkedHashMap<>();
-        vision.put("provider", "qwen-model-studio");
-        vision.put("model", multimodalModel);
+        vision.put("provider", llmProvider);
+        vision.put("model", activeVisionModel);
         vision.put("mode", "MODEL_GATEWAY");
-        vision.put("status", modelStatus(multimodalModel));
+        vision.put("status", modelStatus(activeVisionModel));
         output.put("vision", vision);
         output.put("intelligencePlane", "READY");
         output.put("bailian", "QWEN_MODEL_STUDIO");
         output.put("modelGateway", bailianModelClient == null
                 ? Map.of("status", "UNAVAILABLE")
-                : Map.of("status", bailianModelClient.isConfigured(), "endpoint", bailianModelClient.getApiUrl()));
+                : Map.of("status", bailianModelClient.isChatConfigured(),
+                        "endpoint", openCodeEnabled ? openCodeUrl : bailianModelClient.getApiUrl()));
         Map<String, Object> vector = new LinkedHashMap<>();
         vector.put("endpoint", milvusHost + ":" + milvusPort);
         vector.put("collection", "farmap_image_vectors_new");
@@ -164,6 +180,7 @@ public class RuntimeHealthController {
     }
 
     private String modelStatus(String model) {
+        if (openCodeEnabled && (bailianModelClient == null || !bailianModelClient.isChatConfigured())) return "UNAVAILABLE";
         if (modelAvailability == null) return "CONFIGURED";
         String status = modelAvailability.status(model);
         if ("available".equals(status)) return "READY";

@@ -55,7 +55,7 @@ function HistoricalCasesPanel({ graph }: { graph: KnowledgeGraphResponse }) {
   );
 }
 
-export default function KnowledgeExpertCenter() {
+export default function KnowledgeExpertCenter({ reviewOnly = false }: { reviewOnly?: boolean } = {}) {
   const location = useLocation();
   const isDemo = Boolean(getDemoSession());
   const [model, setModel] = useState<KnowledgeExpertViewModel>(() => buildKnowledgeExpertViewModel({ mode: isDemo ? "DEMO" : "REAL" }));
@@ -72,7 +72,7 @@ export default function KnowledgeExpertCenter() {
   const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([]);
   const [sourcesLoading, setSourcesLoading] = useState(!isDemo);
   const [sourceError, setSourceError] = useState<string>();
-  const [activeTab, setActiveTab] = useState(() => location.pathname.endsWith("/expert-review") ? "review" : location.pathname.endsWith("/cases") ? "history" : "graph");
+  const [activeTab, setActiveTab] = useState(() => reviewOnly ? "review" : location.pathname.endsWith("/expert-review") ? "review" : location.pathname.endsWith("/cases") ? "history" : "graph");
   const setAIContext = useAIContextStore((state) => state.setContext);
   const currentFarm = useAIContextStore((state) => state.context.currentFarm);
   const setCopilotContext = useCopilotStore((state) => state.setContext);
@@ -132,7 +132,7 @@ export default function KnowledgeExpertCenter() {
     return () => { active = false; };
   }, [isDemo]);
 
-  useEffect(() => { void refreshReviews(); void refreshGraph(); }, [refreshReviews, refreshGraph]);
+  useEffect(() => { void refreshReviews(); if (!reviewOnly) void refreshGraph(); }, [refreshReviews, refreshGraph, reviewOnly]);
 
   useEffect(() => { setSelectedGraphId(undefined); }, [activeFarmId, scopedKnowledgeSource?.sourceId]);
 
@@ -170,6 +170,8 @@ export default function KnowledgeExpertCenter() {
   const selectGraphNode = (node?: KnowledgeGraphNode) => setSelectedGraphId(node?.id);
   const graphBody = graphLoading ? <Card className="fm-knowledge-card fm-knowledge-loading"><Spin description="正在读取当前农场知识关系与运行时状态…" /></Card> : graphError ? <Alert type="error" showIcon title="当前农场知识图谱暂不可用" description={graphError} action={<Button onClick={() => void refreshGraph()}>重试</Button>} /> : <><KnowledgeSummaryCards graph={graph} /><KnowledgeGraphCanvas graph={graph} selectedId={selectedGraphId} scopeLabel={knowledgeProfile?.corpusFolder} onSelectNode={selectGraphNode} /></>;
   const statusBody = graphLoading ? <Card className="fm-knowledge-card fm-knowledge-loading"><Spin description="正在读取知识库状态…" /></Card> : graphError ? <Alert type="error" showIcon title="Knowledge Base 状态暂不可用" description={graphError} /> : <><KnowledgeSummaryCards graph={graph} /><KnowledgeStatusPanel graph={graph} onSelectNode={(node) => { setSelectedGraphId(node?.id); setActiveTab("graph"); }} /></>;
+
+  if (reviewOnly) return <>{notice && <Alert closable onClose={() => setNotice(undefined)} type={notice.includes("失败") || notice.includes("不可用") ? "error" : "success"} title={notice} />}<ExpertReviewPanel isDemo={isDemo} model={model} loading={loading} selectedId={selectedId} selected={selected} expertDiagnosis={expertDiagnosis} saving={saving} graphNodes={graph.nodes} onSelect={setSelectedId} onDiagnosisChange={setExpertDiagnosis} onSave={(decision) => void saveReview(decision)} onFocusKnowledge={focusKnowledge} /></>;
 
   return (
     <div className="fm-page fm-knowledge-center">

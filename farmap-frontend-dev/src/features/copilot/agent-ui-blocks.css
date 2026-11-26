@@ -1,0 +1,88 @@
+.farmap-blocks { display: grid; gap: .75rem; margin: .85rem 0 .25rem; }
+.farmap-block { border: 1px solid #e3e9e3; border-radius: 14px; background: #fff; overflow: hidden; color: #1c2923; }
+.farmap-block__heading { display: flex; min-height: 53px; align-items: center; gap: 9px; padding: 10px 14px; }
+.farmap-block__heading h3 { margin: 0; flex: 1; min-width: 0; font-size: 14px; line-height: 1.4; font-weight: 650; }
+.farmap-block__icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: #eef5ed; color: #176b4d; flex: none; }
+.farmap-block__tag { padding: 2px 7px; border-radius: 6px; background: #eef5ed; color: #30634c; font-size: 11px; white-space: nowrap; }
+.farmap-block[data-status="needs-input"] .farmap-block__tag { color: #855918; background: #fcf1da; }
+.farmap-block[data-status="failed"] .farmap-block__tag { color: #ab3d35; background: #fcefee; }
+.farmap-block[data-status="unavailable"] .farmap-block__tag { color: #575f59; background: #f1f3f0; }
+.farmap-block__icon-button { display: grid; place-items: center; width: 27px; height: 27px; flex: none; border: 0; background: transparent; border-radius: 6px; color: #5d6e63; cursor: pointer; }
+.farmap-block__icon-button:hover { background: #eef4ee; }
+.farmap-block__icon-button[aria-expanded="false"] svg { transform: rotate(-90deg); }
+.farmap-block__body { display: grid; gap: 12px; padding: 0 15px 14px; font-size: 13px; color: #34463b; line-height: 1.55; }
+.farmap-block__body > p, .farmap-block__plot { margin: 0; }
+.farmap-block__summary { white-space: pre-wrap; overflow-wrap: anywhere; }
+.farmap-block__metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(104px, 100%), 1fr)); gap: 12px; margin: 0; border-radius: 10px; padding: 12px; background: #f6f8f4; }
+.farmap-block__metrics dt { color: #637068; font-size: 12px; }
+.farmap-block__metrics dd { margin: 2px 0 0; font-weight: 650; color: #1c3d2a; font-size: 16px; overflow-wrap: anywhere; }
+.farmap-block__rows { margin: 0; }
+.farmap-block__rows > div { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; padding: 7px 0; border-bottom: 1px solid #edf0ec; }
+.farmap-block__rows dt { color: #435548; font-weight: 560; }
+.farmap-block__rows dd { flex: 1 1 45%; min-width: 0; margin: 0; text-align: right; color: #596b5e; overflow-wrap: anywhere; }
+.farmap-block__rows dd .farmap-block__tag { margin-inline-start: 5px; }
+.farmap-block__plot svg { display: block; width: 100%; max-height: 240px; background: #f6f8f4; border-radius: 10px; }
+.farmap-block__plot figcaption { margin-bottom: 5px; font-weight: 600; }
+.farmap-block__axis { display: flex; justify-content: space-between; gap: 10px; color: #68766c; font-size: 11px; padding: 3px 4px; }
+.farmap-block__sources summary { cursor: pointer; color: #435f50; }
+.farmap-block__sources ul { padding-inline-start: 1.1rem; margin-bottom: 2px; }
+.farmap-block__sources small { display: block; overflow-wrap: anywhere; color: #68766c; }
+.farmap-block__actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.farmap-block__actions button, .farmap-block__form button, .farmap-block__workflow > button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-height: 32px; padding: 4px 11px; border: 1px solid #dae5db; border-radius: 8px; background: #fff; color: #23543e; font-size: 12px; cursor: pointer; }
+.farmap-block__actions button:hover, .farmap-block__workflow > button:hover { background: #f0f5ef; }
+.farmap-block__form .farmap-block__primary, .farmap-block__actions .farmap-block__primary { justify-self: start; color: #fff; background: #176b4d; border-color: #176b4d; }
+.farmap-block__actions button:disabled { opacity: .65; cursor: wait; }
+.farmap-block__form { display: grid; gap: 9px; }
+.farmap-block__form label { display: grid; gap: 3px; color: #425648; }
+.farmap-block__form input, .farmap-block__form select { width: 100%; min-width: 0; padding: 7px 9px; color: #203228; background: #fff; border: 1px solid #dce5db; border-radius: 7px; }
+.farmap-block__workflow p { margin: 0 0 6px; }
+.farmap-block__workflow ol { display: grid; gap: 6px; padding: 0; margin: 6px 0 10px; list-style: none; }
+.farmap-block__workflow li { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid #edf0ec; }
+.farmap-block__workflow li small { color: #68766c; }
+.farmap-block__approval { padding: 10px; border-radius: 10px; background: #f8f7f0; }
+.farmap-block-modal .ant-modal-container { min-height: 100dvh; border-radius: 0; }
+.farmap-block-modal .farmap-block__body { width: min(100%, 1040px); margin-inline: auto; padding: 16px 0; }
+.farmap-maturity { display: grid; gap: 10px; }
+.farmap-maturity__image-result { display: grid; gap: 8px; border-bottom: 1px solid #e5eae6; padding: 6px 0 10px; }
+.farmap-maturity__single-observation { display: flex; flex-wrap: wrap; gap: 10px; }
+.farmap-maturity__single-observation img { max-width: min(220px, 100%); max-height: 160px; object-fit: contain; border-radius: 8px; }
+.farmap-maturity__single-observation small { display: block; color: #596b5e; }
+.farmap-maturity p { margin: 0; overflow-wrap: anywhere; }
+.farmap-maturity__note { padding: 9px 11px; border-radius: 8px; background: #f8f6eb; color: #685c37; }
+.farmap-maturity__legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; }
+.farmap-maturity__legend span { display: inline-flex; gap: 5px; align-items: center; }
+.farmap-maturity__legend i { width: 10px; height: 10px; border-radius: 50%; }
+.farmap-maturity__parcels, .farmap-maturity__observations { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.farmap-maturity__parcels > li { padding: 10px; border: 1px solid #e3e9e3; border-radius: 9px; overflow-wrap: anywhere; }
+.farmap-maturity__parcel-heading { display: flex; justify-content: space-between; gap: 12px; }
+.farmap-maturity__parcels small { display: inline-block; margin-right: 10px; color: #68766c; }
+.farmap-maturity__parcels summary { cursor: pointer; color: #23543e; }
+.farmap-maturity__observations { margin-top: 8px; }
+.farmap-maturity__observations li { padding-top: 7px; border-top: 1px solid #edf0ec; }
+.farmap-maturity__observations img { display: block; max-width: min(100%, 320px); max-height: 220px; object-fit: contain; margin-top: 6px; border-radius: 6px; }
+.farmap-inspection progress { width: 100%; height: 8px; accent-color: #176b4d; }
+.farmap-inspection__metrics { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 6px 0; }
+.farmap-inspection__metrics span { font-size: 12px; color: #496256; }
+.farmap-inspection__metrics b { margin-left: 4px; color: #233c2d; }
+.farmap-inspection__samples { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.farmap-inspection__samples figure { width: min(123px, 100%); margin: 0; }
+.farmap-inspection__samples img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; }
+.farmap-inspection__samples figcaption { margin-top: 3px; color: #496256; font-size: 11px; overflow-wrap: anywhere; }
+.farmap-block.farmap-block--info { background: #fbfdfb; border-color: #dce7df; }
+.farmap-block.farmap-block--analysis { background: #fff; border-color: #d0e2d6; box-shadow: 0 3px 14px #2442340b; }
+.farmap-block.farmap-block--analysis .farmap-block__icon { background: #dceee2; color: #146347; }
+.farmap-block.farmap-block--action { background: #fff; border-color: #dce7df; border-inline-start: 3px solid #82b39a; }
+.farmap-block.farmap-block--action[data-status="needs-input"] { border-inline-start-color: #ce9d58; }
+.farmap-block.farmap-block--action .farmap-block__icon { background: #e4f0e9; color: #225e45; }
+.farmap-block.farmap-block--progress { padding: 8px 10px; background: #f1f6f2; border-color: #e2ede5; color: #375849; }
+.farmap-block--progress > p { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 0 0 4px; font-size: 12px; }
+.farmap-block--progress > p span { color: #4b6a59; }
+.farmap-block--progress .farmap-inspection__metrics { margin: 3px 0 0; }
+.farmap-farm-directory { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.farmap-farm-directory li { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 10px; border-radius: 8px; background: #edf5ef; color: #214836; }
+.farmap-farm-directory li svg { flex: none; }
+.farmap-farm-directory strong { overflow-wrap: anywhere; }
+.farmap-parcel-overview > strong { color: #234936; font-size: 16px; }
+.farmap-parcel-overview dl { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 9px 0 0; }
+.farmap-parcel-overview dt { color: #4c6658; font-size: 12px; }
+.farmap-parcel-overview dd { margin: 3px 0 0; color: #263e33; font-weight: 600; }

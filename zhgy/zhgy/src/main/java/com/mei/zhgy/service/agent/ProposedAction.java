@@ -17,6 +17,7 @@ public class ProposedAction {
     private String type;
     private String title;
     private String detail;
+    private String scheduledFor;
     private String toolName;
     private String diagnosisId;
     private String recommendationId;

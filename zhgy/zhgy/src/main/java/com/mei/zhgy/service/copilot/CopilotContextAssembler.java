@@ -31,6 +31,10 @@ public class CopilotContextAssembler {
     }
 
     public AssembledContext assemble(CopilotConversationSnapshot snapshot, CopilotPageContext pageContext) {
+        return assemble(snapshot, pageContext, true);
+    }
+
+    AssembledContext assemble(CopilotConversationSnapshot snapshot, CopilotPageContext pageContext, boolean includePreferences) {
         List<CopilotConversationTurn> selected = new ArrayList<>();
         int used = 0;
         List<CopilotConversationTurn> source = snapshot.getRecentTurns() == null ? List.of() : snapshot.getRecentTurns().stream()
@@ -49,7 +53,8 @@ public class CopilotContextAssembler {
             used += bounded.length();
         }
         CopilotStableContext active = snapshot.getActiveContext() == null ? new CopilotStableContext() : snapshot.getActiveContext().copy();
-        List<CopilotMemoryView> longTerm = longTermMemory == null ? List.of() : longTermMemory.retrieve(snapshot.getUserId(), active, pageContext).stream().map(CopilotMemoryView::from).toList();
+        List<CopilotMemoryView> longTerm = longTermMemory == null || !includePreferences ? List.of()
+                : longTermMemory.retrieve(snapshot.getUserId(), active, pageContext).stream().map(CopilotMemoryView::from).toList();
         return new AssembledContext(active, selected, snapshot.getSummary(), snapshot.getPendingClarification(), pageContext, longTerm, maxRecentTurns, maxContextChars);
     }
 

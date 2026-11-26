@@ -174,7 +174,7 @@ public class FarmCameraService {
             Instant now = Instant.now();
             for (CameraSeed camera : INVENTORY) {
                 FieldSeed presentationField = presentationDataEnabled ? presentationField(camera.serial()) : null;
-                MapPoint nearest = presentationField == null ? nearest(camera, points) : new MapPoint(cameraPointId(camera.serial()), camera.longitude(), camera.latitude());
+                MapPoint nearest = presentationField == null ? null : new MapPoint(cameraPointId(camera.serial()), camera.longitude(), camera.latitude());
                 double distance = nearest == null ? 0D : distanceMeters(camera.longitude(), camera.latitude(), nearest.longitude(), nearest.latitude());
                 boolean bound = nearest != null && (presentationField != null || distance <= maxBindingDistanceMeters);
                 String fieldId = presentationField == null ? null : presentationField.fieldId();
@@ -185,14 +185,14 @@ public class FarmCameraService {
                         bound ? "BOUND" : "UNBOUND", method,
                         "ACTIVE", Timestamp.from(now), Timestamp.from(now));
                 if (presentationField != null) {
-                    jdbc.update("UPDATE farm_cameras SET farm_id=?,field_id=?,point_id=?,longitude=?,latitude=?,source_longitude=?,source_latitude=?,binding_distance_meters=0,binding_status='BOUND',binding_method='CURATED_PRESENTATION_TOPOLOGY',status='ACTIVE',updated_at=? WHERE camera_id=?",
+                    jdbc.update("UPDATE farm_cameras SET farm_id=?,field_id=?,point_id=?,longitude=?,latitude=?,source_longitude=?,source_latitude=?,binding_distance_meters=0,binding_status='BOUND',binding_method='CURATED_PRESENTATION_TOPOLOGY',status='ACTIVE',updated_at=? WHERE camera_id=? AND binding_method<>'USER_CONFIRMED'",
                             farmId, presentationField.fieldId(), cameraPointId(camera.serial()), camera.longitude(), camera.latitude(), camera.longitude(), camera.latitude(), Timestamp.from(now), camera.serial());
                 }
             }
             // Reconcile rows created by an earlier runtime so a stale nearest
             // point can never remain an implicit AI relationship.
             if (!presentationDataEnabled) {
-                jdbc.update("UPDATE farm_cameras SET point_id=NULL,binding_status='UNBOUND',binding_method='SOURCE_COORDINATE_ONLY' WHERE farm_id=? AND (binding_distance_meters IS NULL OR binding_distance_meters>?)", farmId, maxBindingDistanceMeters);
+                jdbc.update("UPDATE farm_cameras SET point_id=NULL,binding_status='UNBOUND',binding_method='SOURCE_COORDINATE_ONLY' WHERE farm_id=? AND binding_method IN ('CURATED_REAL_COORDINATE','SOURCE_COORDINATE_ONLY')", farmId);
             }
             registrySeeded = true;
         }

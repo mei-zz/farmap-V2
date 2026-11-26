@@ -8,4 +8,8 @@ import lombok.Data;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class CopilotPageContext extends CopilotStableContext {
     private String route;
+    private String referenceDate;
+    private String cameraId;
+    private java.util.List<String> cameraIds;
+    private String analysisRunId;
 }

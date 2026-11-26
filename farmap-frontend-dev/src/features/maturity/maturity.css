@@ -1,0 +1,14 @@
+.maturity-workspace{padding:24px;overflow:auto;height:100%;background:#f8faf8;color:#20382d}.maturity-workspace header{display:flex;justify-content:space-between;align-items:start}.maturity-workspace h2{margin:6px 0}.maturity-workspace header button{border:0;background:none;font-size:28px;cursor:pointer}.maturity-note{color:#718077;font-size:13px}.maturity-grid{display:grid;grid-template-columns:minmax(160px,1fr) 2fr;gap:16px}.maturity-grid>div{background:#fff;border:1px solid #e1eae4;border-radius:12px;padding:16px}.maturity-parcel{display:flex;width:100%;justify-content:space-between;padding:12px;margin:6px 0;border:1px solid #e3ebe5;border-radius:8px;background:#fff;text-align:left;cursor:pointer}.maturity-parcel.selected{border-color:#16835b;background:#eff8f2}.maturity-evidence{border-top:1px solid #edf1ee;padding:12px 0}.maturity-evidence img{display:block;max-width:100%;max-height:220px;margin-top:8px;border-radius:8px}@media(max-width:700px){.maturity-grid{grid-template-columns:1fr}}
+.maturity-map { display: flex; flex-direction: column; min-height: 320px; }
+.farmap-maturity-schematic { display: grid; gap: 6px; margin: 0; padding: 10px; background: #edf3ef; border-radius: 12px; }
+.farmap-maturity-schematic svg { display: block; min-height: 160px; max-height: 320px; }
+.farmap-maturity-schematic figcaption { font-size: 12px; color: #52645a; }
+.maturity-overview, .maturity-legend { display: flex; flex-wrap: wrap; gap: 10px 20px; margin: 9px 0; }
+.maturity-overview b { color: var(--fm-green, #176b4d); font-size: 17px; }
+.maturity-legend span { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
+.maturity-legend i { width: 12px; height: 12px; border-radius: 3px; }
+.maturity-trend__row { display: grid; grid-template-columns: minmax(120px, auto) minmax(40px, 1fr) minmax(98px, auto); align-items: center; gap: 8px; margin: 6px 0; }
+.maturity-trend__track { position: relative; height: 9px; border-radius: 6px; overflow: hidden; background: #e5eae6; }
+.maturity-trend__track i, .maturity-trend__track b { position: absolute; inset-block: 0; inset-inline-start: 0; background: #8bc5a3; }
+.maturity-trend__track b { background: #e98966; }
+.maturity-history-select { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; }

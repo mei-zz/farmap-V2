@@ -1,26 +1,10 @@
-import { expect, test, type Page } from "@playwright/test";
-
-const username = process.env.FARMAP_PILOT_USERNAME;
-const password = process.env.FARMAP_PILOT_PASSWORD;
-
-async function openWushanCopilot(page: Page) {
-  if (!username || !password) throw new Error("Set FARMAP_PILOT_USERNAME and FARMAP_PILOT_PASSWORD for this browser smoke.");
-  await page.goto("login");
-  await page.getByLabel("账号").fill(username);
-  await page.getByLabel("密码").fill(password);
-  await page.getByRole("button", { name: "登录控制台" }).click();
-  await expect(page).toHaveURL(/\/farmap\/overview$/);
-  await page.getByRole("combobox", { name: "当前农场" }).click();
-  await page.locator(".ant-select-item-option-content").filter({ hasText: "巫山" }).click();
-  await expect(page.getByRole("button", { name: "打开 FarMap 多模态农业 Agent" })).toContainText("巫山");
-  await page.getByRole("button", { name: /FarMap (Copilot|Agent)/ }).first().click();
-}
+import { expect, test } from "@playwright/test";
+import { openLiveWushanCopilot } from "./helpers/liveCopilot";
 
 test("answers a normal plum knowledge question within the interactive deadline", async ({ page }) => {
-  await openWushanCopilot(page);
+  const input = await openLiveWushanCopilot(page);
   const assistantMessages = page.locator(".farmap-copilot__message--assistant");
   const initialCount = await assistantMessages.count();
-  const input = page.getByPlaceholder(/输入农事问题/);
   await input.fill("脆李有什么病虫害");
 
   const startedAt = Date.now();
@@ -35,7 +19,7 @@ test("answers a normal plum knowledge question within the interactive deadline",
 });
 
 test("lets the user stop an in-flight chat request", async ({ page }) => {
-  await openWushanCopilot(page);
+  const input = await openLiveWushanCopilot(page);
   let releaseRequest: (() => void) | undefined;
   const heldRequest = new Promise<void>((resolve) => { releaseRequest = resolve; });
   await page.route("**/api/copilot/chat", async (route) => {
@@ -52,7 +36,7 @@ test("lets the user stop an in-flight chat request", async ({ page }) => {
   });
 
   const requestStarted = page.waitForRequest((request) => request.url().includes("/api/copilot/chat"));
-  await page.getByPlaceholder(/输入农事问题/).fill("请检索脆李病虫害资料");
+  await input.fill("请检索脆李病虫害资料");
   await page.getByRole("button", { name: "发送消息" }).click();
   await requestStarted;
   const stopButton = page.getByRole("button", { name: "停止生成" });

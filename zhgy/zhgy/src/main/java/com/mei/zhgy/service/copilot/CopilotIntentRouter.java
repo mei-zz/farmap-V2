@@ -55,10 +55,16 @@ public class CopilotIntentRouter {
         if (contains(normalized, "记住", "请记住", "以后都", "以后给这个农场", "以后针对这个农场", "remember that", "remember my preference")) {
             return new Classification(CopilotIntent.MEMORY_WRITE_REQUEST, DETERMINISTIC_CONFIDENCE, null);
         }
+        if (CopilotOperationQuery.farmDirectory(normalized)) return new Classification(CopilotIntent.FARM_STATUS_QUERY, DETERMINISTIC_CONFIDENCE, null);
+        if (CopilotOperationQuery.viewOf(normalized) != null) return new Classification(CopilotIntent.OPERATIONS_STATUS_QUERY, DETERMINISTIC_CONFIDENCE, null);
+        if (CopilotOperationQuery.adviceView(normalized)) return new Classification(CopilotIntent.RECOMMENDATION_QUERY, DETERMINISTIC_CONFIDENCE, null);
+        if (CopilotOperationQuery.harvestPlan(normalized)) return new Classification(CopilotIntent.ACTION_REQUEST, DETERMINISTIC_CONFIDENCE, null);
+        if (isFarmMaturityScan(normalized)) return new Classification(CopilotIntent.FARM_MATURITY_SCAN, DETERMINISTIC_CONFIDENCE, null);
         boolean navigation = contains(normalized, "打开", "带我去", "跳转", "导航到", "open ", "go to", "navigate", "navigation");
-        boolean action = (contains(normalized, "安排", "执行", "启动agent", "启动 agent", "帮我处理", "落实", "schedule", "execute", "start agent")
-                || isTaskCreationRequest(normalized) || isAgentPlanningRequest(normalized))
-                && !hasNegatedActionConstraint(normalized);
+        boolean explicitDraft = isTaskCreationRequest(normalized);
+        boolean action = explicitDraft ? !contains(normalized, "不要创建", "不创建", "拒绝创建", "无需创建", "不要新建", "不新建", "不要生成", "不要安排", "不安排",
+                    "只分析", "仅分析", "只解释", "不要制定", "do not create", "analysis only")
+                : contains(normalized, "安排", "执行", "启动agent", "启动 agent", "帮我处理", "落实", "schedule", "execute", "start agent") && !hasNegatedActionConstraint(normalized);
         boolean priorities = contains(normalized, "今天最需要", "优先处理", "今天关注", "值得关注", "今日重点", "priority", "priorities", "what should i handle today", "what needs attention");
         boolean historicalCases = contains(normalized, "历史病例", "相似病例", "历史案例", "类似案例", "找病例", "similar case", "historical case");
         boolean farmStatus = contains(normalized, "今天农场怎么样", "农场状态", "农场概况", "farm status", "farm overview", "how is the farm");
@@ -139,7 +145,23 @@ public class CopilotIntentRouter {
      */
     public HybridClassification classifyHybrid(String rawMessage, HybridContext context, boolean hasUserImages) {
         Classification rule = classify(rawMessage);
-        if (hasUserImages && shouldTreatAsImageDiagnosis(rawMessage, rule)) {
+        if (rule.intent() == CopilotIntent.OPERATIONS_STATUS_QUERY && CopilotOperationQuery.viewOf(rawMessage) != null
+                || rule.intent() == CopilotIntent.FARM_STATUS_QUERY && CopilotOperationQuery.farmDirectory(rawMessage)) {
+            return new HybridClassification(rule, rule, null, null);
+        }
+        String imageText = rawMessage == null ? "" : rawMessage.toLowerCase(java.util.Locale.ROOT);
+        if ((!isProtected(rule.intent()) || rule.intent() == CopilotIntent.FARM_MATURITY_SCAN)
+                && context != null && context.pageContext() != null && context.pageContext().getAnalysisRunId() != null
+                && contains(imageText, "本次报告", "这份报告", "这次报告", "这份观测", "判断依据", "不确定性")
+                && !contains(imageText, "重新扫描", "重新分析", "再次扫描", "现在抓拍", "重新抓拍", "历史", "对比", "排名", "排行", "制定", "安排", "创建", "执行")) {
+            return new HybridClassification(rule, new Classification(CopilotIntent.GENERAL_QA, DETERMINISTIC_CONFIDENCE, null), null, null);
+        }
+        if (!isProtected(rule.intent()) && hasUserImages && contains(imageText, "成熟度", "是否成熟", "物候", "长势", "生长情况", "maturity", "phenology", "growth")
+                && contains(imageText, "分析", "判断", "评估", "看看", "看一下", "assess", "analyze")
+                && !contains(imageText, "如何", "怎么", "原理", "什么是", "不要分析", "不分析", "别分析", "do not analyze", "how to")) {
+            rule = new Classification(CopilotIntent.FARM_MATURITY_SCAN, DETERMINISTIC_CONFIDENCE, null);
+        }
+        if (hasUserImages && rule.intent() != CopilotIntent.FARM_MATURITY_SCAN && shouldTreatAsImageDiagnosis(rawMessage, rule)) {
             rule = new Classification(CopilotIntent.DIAGNOSIS_REQUEST, DETERMINISTIC_CONFIDENCE, rule.safeRoute());
         }
         if (hybridClassifier == null || !hybridClassifier.isEnabled() || !shouldDelegate(rawMessage, rule)) {
@@ -195,7 +217,7 @@ public class CopilotIntentRouter {
     }
 
     private boolean isProtected(CopilotIntent intent) {
-        return intent == CopilotIntent.UNSUPPORTED || intent == CopilotIntent.NAVIGATION_REQUEST
+        return intent == CopilotIntent.UNSUPPORTED || intent == CopilotIntent.NAVIGATION_REQUEST || intent == CopilotIntent.FARM_MATURITY_SCAN
                 || intent == CopilotIntent.ACTION_REQUEST || intent == CopilotIntent.MEMORY_WRITE_REQUEST
                 || intent == CopilotIntent.MEMORY_QUERY || intent == CopilotIntent.MEMORY_FORGET_REQUEST;
     }
@@ -203,6 +225,19 @@ public class CopilotIntentRouter {
     private boolean contains(String value, String... terms) {
         for (String term : terms) if (value.contains(term)) return true;
         return false;
+    }
+
+    private boolean isFarmMaturityScan(String text) {
+        if (isAgentPlanningRequest(text)) return false;
+        boolean visualTopic = contains(text, "成熟度", "熟没熟", "熟了没有", "是否成熟", "果实熟了", "可采收分布", "物候", "生长情况", "长势", "生长状态", "ripe", "ripeness", "maturity", "phenology", "growth", "适合采收", "采收排序", "采收排名");
+        boolean explicitCamera = contains(text, "摄像头", "camera") && contains(text, "分析", "评估", "查看", "看看", "比较", "对比", "analyze", "assess", "compare");
+        if (!visualTopic && !explicitCamera) return false;
+        if (contains(text, "不调用摄像头", "不要调用", "不用摄像头", "不使用摄像头", "不抓拍", "不要抓拍", "别抓拍", "不要分析", "不分析", "别分析", "不要扫描", "不扫描", "do not analyze", "do not scan", "只问原理", "仅解释")) return false;
+        boolean requested = contains(text, "帮我", "给我", "请", "看一下", "看看", "扫一下", "扫描", "展示", "查看", "评估", "分析", "判断", "比较", "对比", "适合采收", "采收排序", "采收排名", "check", "scan", "show", "assess", "analyze", "compare");
+        if (contains(text, "如何", "怎么", "原理", "什么是", "能不能", "是否可以", "how to")) {
+            return contains(text, "帮我抓拍", "请抓拍", "现在抓拍", "请扫描", "帮我扫描");
+        }
+        return requested && contains(text, "农场", "全园", "果园", "地块", "各区", "摄像头", "监控", "抓拍", "成熟度分布", "适合采收", "采收排序", "采收排名", "照片", "图片", "图中", "这张图", "farm", "camera", "orchard", "image", "photo");
     }
 
     private boolean isGreeting(String value) {
@@ -233,7 +268,7 @@ public class CopilotIntentRouter {
     }
 
     private boolean isAgentPlanningRequest(String normalized) {
-        boolean planningObject = contains(normalized, "农事计划", "农事安排", "作业计划", "管理计划", "一周计划", "周计划", "未来一周", "本周计划", "farm plan", "weekly plan");
+        boolean planningObject = contains(normalized, "农事计划", "农事安排", "作业计划", "管理计划", "采收计划", "一周计划", "周计划", "未来一周", "本周计划", "farm plan", "weekly plan");
         boolean directive = contains(normalized, "帮我制定", "请制定", "给我制定", "制定一份", "帮我生成", "请生成", "给我生成", "生成一份",
                 "帮我规划", "请规划", "给我规划", "规划一份", "create a plan", "make a plan");
         return planningObject && directive;

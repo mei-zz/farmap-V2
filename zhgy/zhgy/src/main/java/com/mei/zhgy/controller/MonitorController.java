@@ -6,6 +6,7 @@ import com.mei.zhgy.context.BaseContext;
 import com.mei.zhgy.result.Result;
 import com.mei.zhgy.service.camera.FarmCamera;
 import com.mei.zhgy.service.camera.FarmCameraService;
+import com.mei.zhgy.service.camera.CameraSnapshotProvider;
 import com.mei.zhgy.service.field.FieldAccessException;
 import com.mei.zhgy.service.storage.TencentCosStorageService;
 import lombok.extern.slf4j.Slf4j;
@@ -42,33 +43,18 @@ public class MonitorController {
     @Value("${hikyun.project-id:}")
     private String projectId;
 
-    /** Cloud Open API credentials used by the server-side remote-capture API. */
-    @Value("${hikyun.client-id:}")
-    private String clientId;
-
-    @Value("${hikyun.client-secret:}")
-    private String clientSecret;
-
-    @Value("${hikyun.capture-url:https://api2.hik-cloud.com/api/v1/open/basic/channels/actions/capture}")
-    private String captureUrl;
-
-    @Value("${zhgy.upload.dir:./uploads}")
-    private String uploadDir;
-
-    @Value("${zhgy.upload.base-url:http://localhost:24009/uploads}")
-    private String uploadBaseUrl;
-
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
     private final FarmCameraService farmCameraService;
     private final TencentCosStorageService tencentCosStorageService;
-    private final Map<String, Long> lastCaptureAt = new ConcurrentHashMap<>();
+    private final CameraSnapshotProvider snapshotProvider;
 
-    public MonitorController(FarmCameraService farmCameraService, TencentCosStorageService tencentCosStorageService) {
+    public MonitorController(FarmCameraService farmCameraService, TencentCosStorageService tencentCosStorageService, CameraSnapshotProvider snapshotProvider) {
         this.restTemplate = new RestTemplate();
         this.objectMapper = new ObjectMapper();
         this.farmCameraService = farmCameraService;
         this.tencentCosStorageService = tencentCosStorageService;
+        this.snapshotProvider = snapshotProvider;
     }
 
     /**
@@ -179,44 +165,8 @@ public class MonitorController {
             return ResponseEntity.status(error.getHttpStatus()).body(Result.error(error.getCode() + ": " + error.getMessage()));
         }
 
-        int channelNo = request.channelNo() == null || request.channelNo() < 1 ? 1 : request.channelNo();
-        int quality = request.quality() == null ? 3 : Math.max(0, Math.min(3, request.quality()));
-        String captureKey = camera.cameraId() + ":" + channelNo;
-        long now = System.currentTimeMillis();
-        Long previous = lastCaptureAt.putIfAbsent(captureKey, now);
-        if (previous != null && now - previous < 5000L) {
-            long retryAfter = Math.max(1L, (5000L - (now - previous) + 999L) / 1000L);
-            lastCaptureAt.put(captureKey, previous);
-            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-                    .body(Result.error("同一摄像头抓拍过于频繁，请约 " + retryAfter + " 秒后重试"));
-        }
-        lastCaptureAt.put(captureKey, now);
-
         try {
-            String accessToken = requestCaptureAccessToken();
-            Map<String, Object> requestBody = new HashMap<>();
-            requestBody.put("deviceSerial", camera.serial());
-            requestBody.put("channelNo", channelNo);
-            requestBody.put("quality", quality);
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.setBearerAuth(accessToken);
-            ResponseEntity<String> response = restTemplate.exchange(
-                    captureUrl,
-                    HttpMethod.POST,
-                    new HttpEntity<>(requestBody, headers),
-                    String.class);
-            JsonNode jsonResponse = objectMapper.readTree(response.getBody());
-            String upstreamCode = jsonResponse.path("code").asText();
-            String picUrl = jsonResponse.path("data").path("picUrl").asText("");
-            if (!response.getStatusCode().is2xxSuccessful() || picUrl.isBlank() || !("200".equals(upstreamCode) || "0".equals(upstreamCode))) {
-                log.warn("海康抓图失败，cameraId={}, status={}, body={}", camera.cameraId(), response.getStatusCodeValue(), response.getBody());
-                return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(Result.error(
-                        jsonResponse.path("message").asText("该摄像头暂时无法抓取当前画面")));
-            }
-
-            StoredImage stored = downloadToUploadBoundary(picUrl);
+            CameraSnapshotProvider.Snapshot snapshot = snapshotProvider.capture(request.cameraId(), actorId, request.channelNo(), request.quality());
             Map<String, Object> result = new HashMap<>();
             result.put("cameraId", camera.cameraId());
             result.put("serial", camera.serial());
@@ -225,16 +175,16 @@ public class MonitorController {
             result.put("fieldId", camera.fieldId());
             result.put("fieldName", camera.fieldName());
             result.put("pointId", camera.pointId());
-            result.put("source", "HIKVISION_REMOTE_CAPTURE");
-            result.put("capturedAt", Instant.now().toString());
-            result.put("imageUrl", stored.url());
+            result.put("source", snapshot.source());
+            result.put("capturedAt", snapshot.capturedAt());
+            result.put("imageUrl", snapshot.imageUrl());
             return ResponseEntity.ok(Result.success(result));
+        } catch (CameraSnapshotProvider.CaptureRateLimitException error) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(Result.error(error.getMessage()));
+        } catch (FieldAccessException error) {
+            return ResponseEntity.status(error.getHttpStatus()).body(Result.error(error.getCode() + ": " + error.getMessage()));
         } catch (IllegalStateException error) {
-            log.warn("海康摄像头抓图配置或响应不可用，cameraId={}, reason={}", camera.cameraId(), error.getMessage());
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(Result.error(error.getMessage()));
-        } catch (Exception error) {
-            log.error("海康摄像头抓图失败，cameraId={}", camera.cameraId(), error);
-            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(Result.error("摄像头抓图失败，请确认设备在线并稍后重试"));
         }
     }
 
@@ -265,8 +215,10 @@ public class MonitorController {
             result.put("pointId", camera.pointId());
             result.put("source", "BROWSER_MONITOR_FRAME_COS");
             result.put("objectKey", stored.objectKey());
-            result.put("capturedAt", Instant.now().toString());
+            String capturedAt = Instant.now().toString();
+            result.put("capturedAt", capturedAt);
             result.put("imageUrl", stored.url());
+            snapshotProvider.rememberBrowserFrame(camera, stored.url(), capturedAt);
             return ResponseEntity.ok(Result.success(result));
         } catch (FieldAccessException error) {
             return ResponseEntity.status(error.getHttpStatus()).body(Result.error(error.getCode() + ": " + error.getMessage()));
@@ -279,27 +231,6 @@ public class MonitorController {
             log.error("浏览器监控画面上传失败，cameraId={}", cameraId, error);
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(Result.error("监控画面上传失败，请稍后重试"));
         }
-    }
-
-    private String requestCaptureAccessToken() throws Exception {
-        if (clientId.isBlank() || clientSecret.isBlank()) {
-            throw new IllegalStateException("未配置云眸 Open API 抓图凭据");
-        }
-        String url = "https://api2.hik-cloud.com/oauth/token";
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-        org.springframework.util.MultiValueMap<String, String> form = new org.springframework.util.LinkedMultiValueMap<>();
-        form.add("client_id", clientId);
-        form.add("client_secret", clientSecret);
-        form.add("grant_type", "client_credentials");
-        form.add("scope", "app");
-        ResponseEntity<String> response = restTemplate.postForEntity(url, new HttpEntity<>(form, headers), String.class);
-        JsonNode jsonResponse = objectMapper.readTree(response.getBody());
-        String accessToken = jsonResponse.path("access_token").asText("");
-        if (!response.getStatusCode().is2xxSuccessful() || accessToken.isBlank()) {
-            throw new IllegalStateException("云眸 Open API 抓图凭据无效或已失效");
-        }
-        return accessToken;
     }
 
     private String requestAccessToken() throws Exception {
@@ -320,26 +251,5 @@ public class MonitorController {
         return accessToken;
     }
 
-    private StoredImage downloadToUploadBoundary(String imageUrl) throws Exception {
-        ResponseEntity<byte[]> image = restTemplate.getForEntity(imageUrl, byte[].class);
-        byte[] bytes = image.getBody();
-        if (!image.getStatusCode().is2xxSuccessful() || bytes == null || bytes.length == 0) {
-            throw new IllegalStateException("海康图片下载失败");
-        }
-        if (bytes.length > 10 * 1024 * 1024L) {
-            throw new IllegalStateException("抓拍图片超过 10MB");
-        }
-        MediaType contentType = image.getHeaders().getContentType();
-        String extension = contentType != null && MediaType.IMAGE_PNG.isCompatibleWith(contentType) ? ".png" : ".jpg";
-        Path root = Paths.get(uploadDir).toAbsolutePath().normalize();
-        Files.createDirectories(root);
-        String fileName = "camera-" + UUID.randomUUID() + extension;
-        Path target = root.resolve(fileName).normalize();
-        if (!target.startsWith(root)) throw new IllegalStateException("非法上传路径");
-        Files.copy(new java.io.ByteArrayInputStream(bytes), target, StandardCopyOption.REPLACE_EXISTING);
-        return new StoredImage(uploadBaseUrl.replaceAll("/$", "") + "/" + fileName, fileName);
-    }
-
     public record CameraCaptureRequest(String cameraId, Integer channelNo, Integer quality) {}
-    private record StoredImage(String url, String fileName) {}
 }

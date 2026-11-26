@@ -2,11 +2,13 @@ package com.mei.zhgy.service.copilot;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -94,5 +96,49 @@ class CopilotConversationHistoryTest {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> images = (List<Map<String, Object>>) answer.getResponseMetadata().get("referenceImages");
         assertEquals("/uploads/reference/leaf-spot-1.jpg", images.get(0).get("imageUrl"));
+    }
+
+    @Test
+    void restoresOnlyScalarKnowledgeMetadataAndKeepsOtherUiMetadata() {
+        CopilotConversationService service = new CopilotConversationService(new InMemoryCopilotConversationRepository());
+        CopilotConversationSnapshot conversation = service.create(42L);
+        Map<String, Object> responseMetadata = new LinkedHashMap<>();
+        responseMetadata.put("schemaVersion", 1);
+        responseMetadata.put("knowledgeCount", 2);
+        responseMetadata.put("knowledgeStatus", "READY");
+        responseMetadata.put("knowledge", List.of(Map.of("title", "raw internal knowledge")));
+        responseMetadata.put("sources", List.of(Map.of("title", "raw source")));
+        responseMetadata.put("uiBlocks", List.of(Map.of("componentType", "WeatherCard", "title", "当前天气")));
+
+        service.appendAssistantAnswer(conversation.getConversationId(), 42L,
+                CopilotIntent.KNOWLEDGE_QUERY, "knowledge-history-trace", "知识回答。", responseMetadata);
+
+        CopilotConversationTurn answer = service.resume(conversation.getConversationId(), 42L).getHistoryTurns().get(0);
+        Map<String, Object> restored = answer.getResponseMetadata();
+        assertEquals(2, restored.get("knowledgeCount"));
+        assertEquals("READY", restored.get("knowledgeStatus"));
+        assertTrue(String.valueOf(restored.get("uiBlocks")).contains("WeatherCard"));
+        assertFalse(restored.containsKey("knowledge"));
+        assertFalse(restored.containsKey("sources"));
+    }
+
+    @Test
+    void exposesNullKnowledgeMetadataWhenRetrievalNeverRan() {
+        CopilotConversationService service = new CopilotConversationService(new InMemoryCopilotConversationRepository());
+        CopilotConversationSnapshot conversation = service.create(42L);
+        Map<String, Object> responseMetadata = new LinkedHashMap<>();
+        responseMetadata.put("schemaVersion", 1);
+        responseMetadata.put("knowledgeCount", null);
+        responseMetadata.put("knowledgeStatus", null);
+
+        service.appendAssistantAnswer(conversation.getConversationId(), 42L,
+                CopilotIntent.GENERAL_QA, "no-knowledge-trace", "问候回答。", responseMetadata);
+
+        Map<String, Object> restored = service.resume(conversation.getConversationId(), 42L)
+                .getHistoryTurns().get(0).getResponseMetadata();
+        assertTrue(restored.containsKey("knowledgeCount"));
+        assertTrue(restored.containsKey("knowledgeStatus"));
+        assertNull(restored.get("knowledgeCount"));
+        assertNull(restored.get("knowledgeStatus"));
     }
 }

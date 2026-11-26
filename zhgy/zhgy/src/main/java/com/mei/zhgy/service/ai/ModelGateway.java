@@ -38,7 +38,7 @@ public class ModelGateway {
 
     public ModelCallResult complete(ModelCallRequest request) {
         AiTaskType taskType = request.getTaskType() == null ? AiTaskType.GROUNDED_GENERATION : request.getTaskType();
-        ModelRoutingDecision decision = modelRouter.route(taskType, toRoutingContext(request));
+        ModelRoutingDecision decision = routingDecision(taskType, request);
         Set<String> candidates = new LinkedHashSet<>();
         candidates.add(decision.getRequestedModel());
         candidates.addAll(decision.getFallbackModels());
@@ -94,7 +94,7 @@ public class ModelGateway {
     /** Routed streaming counterpart of complete(). Usage is recorded once per request. */
     public ModelCallResult stream(ModelCallRequest request, Consumer<String> onDelta) {
         AiTaskType taskType = request.getTaskType() == null ? AiTaskType.GROUNDED_GENERATION : request.getTaskType();
-        ModelRoutingDecision decision = modelRouter.route(taskType, toRoutingContext(request));
+        ModelRoutingDecision decision = routingDecision(taskType, request);
         Set<String> candidates = new LinkedHashSet<>();
         candidates.add(decision.getRequestedModel());
         candidates.addAll(decision.getFallbackModels());
@@ -132,6 +132,15 @@ public class ModelGateway {
                 .fallbackChain(attempted).errorType(errorType).errorMessage(errorMessage).build();
         record(request, taskType, decision, failure, attempted, errorType);
         throw new ModelCallException(errorType, errorMessage);
+    }
+
+    private ModelRoutingDecision routingDecision(AiTaskType taskType, ModelCallRequest request) {
+        if (bailianModelClient.isOpencodeEnabled()) {
+            return ModelRoutingDecision.builder().taskType(taskType)
+                    .requestedModel(bailianModelClient.getOpencodeModel()).modelRole(ModelRole.DEFAULT_MODEL)
+                    .routingReason("opencode_single_model").fallbackModels(List.of()).build();
+        }
+        return modelRouter.route(taskType, toRoutingContext(request));
     }
 
     private ModelRoutingContext toRoutingContext(ModelCallRequest request) {

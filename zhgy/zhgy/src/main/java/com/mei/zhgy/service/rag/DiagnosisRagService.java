@@ -196,7 +196,8 @@ public class DiagnosisRagService {
         metadata.put("mode", "real");
         metadata.put("status", "AI_INITIAL");
         metadata.put("generationMode", generationFallbackReason == null
-                ? (generationResult == null ? "grounded-template" : "qwen")
+                ? (generationResult == null ? "grounded-template"
+                : "deepseek-v4.1-flash".equalsIgnoreCase(generationResult.getModelCall().getSelectedModel()) ? "opencode" : "qwen")
                 : "template-fallback");
         metadata.put("model", generationResult == null ? "not-invoked" : generationResult.getModelCall().getSelectedModel());
         metadata.put("embeddingModel", firstEvidenceMetadata(evidence, "embeddingModel", "not-invoked"));
