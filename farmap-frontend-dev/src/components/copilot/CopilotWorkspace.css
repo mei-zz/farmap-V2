@@ -391,7 +391,8 @@
 .farmap-message-part-tool[data-status="running"] svg {
   animation: farmap-chat-spin 1s linear infinite;
 }
-.farmap-message-part-tool[data-status="completed"] {
+.farmap-message-part-tool[data-status="completed"],
+.farmap-message-part-tool[data-status="done"] {
   color: #2d6048;
   background: #edf6f0;
 }
@@ -400,7 +401,8 @@
   background: #fdf0ef;
   border-color: #f1cecb;
 }
-.farmap-message-part-activity {
+.farmap-message-part-activity,
+.farmap-message-part-thinking {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -410,12 +412,17 @@
   font-size: 12px;
   line-height: 1.5;
 }
-.farmap-message-part-activity svg {
+.farmap-message-part-activity svg,
+.farmap-message-part-thinking svg {
   flex: none;
   color: #6b8c79;
 }
-.farmap-message-part-activity:has(svg) span {
+.farmap-message-part-activity:has(svg) span,
+.farmap-message-part-thinking:has(svg) span {
   overflow-wrap: anywhere;
+}
+.farmap-message-part-thinking[data-status="running"] svg {
+  animation: farmap-chat-spin 1s linear infinite;
 }
 .farmap-message-evidence {
   display: grid;
@@ -480,6 +487,82 @@
   color: #0d5239;
   background: #e8f4ec;
   outline: none;
+}
+
+.farmap-copilot-evidence-drawer .ant-drawer-body {
+  padding: 18px 20px 24px;
+  background: #fbfdfb;
+}
+.farmap-evidence-detail {
+  display: grid;
+  gap: 14px;
+  color: #26382e;
+}
+.farmap-evidence-detail header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.farmap-evidence-detail__index {
+  color: #176b4d;
+  font-size: 13px;
+  font-weight: 700;
+}
+.farmap-evidence-detail h2 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.farmap-evidence-detail__meta {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 11px 12px;
+  background: #f3f8f4;
+  border: 1px solid #dbe8df;
+  border-radius: 10px;
+}
+.farmap-evidence-detail__meta div {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.farmap-evidence-detail__meta dt {
+  color: #6b7e71;
+}
+.farmap-evidence-detail__meta dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.farmap-evidence-detail section h3 {
+  margin: 0 0 7px;
+  color: #355747;
+  font-size: 13px;
+}
+.farmap-evidence-detail blockquote {
+  max-height: 42vh;
+  margin: 0;
+  padding: 11px 12px;
+  overflow: auto;
+  color: #40584a;
+  background: #fff;
+  border: 1px solid #dbe8df;
+  border-left: 3px solid #7eb398;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.farmap-evidence-detail > small {
+  color: #748278;
+  font-size: 11px;
+  line-height: 1.55;
 }
 
 .farmap-copilot-workspace__activity {

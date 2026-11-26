@@ -161,6 +161,14 @@ const COPILOT_CHAT_TIMEOUT_MS = 45000;
 const MATURITY_CHAT_TIMEOUT_MS = 240_000;
 const maturityQuestionPattern = /成熟|熟没熟|熟了没有|果实熟了|采收|物候|长势|摄像头|ripeness|maturity/i;
 const ACTIVE_DIAGNOSIS_KEY = "farmap.copilot.active-diagnosis";
+const citationModalityLabels: Record<CitationRef["modality"], string> = {
+  knowledge: "农业知识库",
+  camera: "现场图像",
+  historical_case: "历史病例",
+  weather: "气象证据",
+  field: "地块记录",
+  atlas: "病虫害图鉴",
+};
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -1743,6 +1751,11 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
         </div>
       ;
   const activeAssistantId = sending && activeRequestId.current ? `copilot-stream-${activeRequestId.current}` : undefined;
+  const selectedEvidence = useMemo(() => {
+    if (!evidenceDrawer) return undefined;
+    const message = messages.find((item) => item.id === evidenceDrawer.messageId);
+    return message ? messagePartCitations(message.parts ?? []).get(evidenceDrawer.evidenceId) : undefined;
+  }, [evidenceDrawer, messages]);
   const renderMessageBody = (message: CopilotMessage) => {
     const pending = sending && message.id === activeAssistantId;
     const uiBlocks = message.uiBlocks?.map((block) => block.summary === message.content ? { ...block, summary: undefined } : block);
@@ -1758,6 +1771,8 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
       error={message.streamError}
       busy={sending}
       onPrompt={(prompt) => void handleSend(prompt)}
+      onDraftTask={(payload) => void createTaskDraft(payload)}
+      onOpenEvidence={(evidenceId) => setEvidenceDrawer({ messageId: message.id, evidenceId })}
       onOpenAnalysis={(runId, farmId, fieldId) => {
         const current = useAIContextStore.getState().context.currentFarm.id;
         if (current > 0 && (farmId === undefined || farmId === current)) {
@@ -2178,6 +2193,40 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
         </Flex>
         <small className="farmap-copilot__composer-note">图片、地块与知识依据会按问题需要调用；涉及农事执行时始终由你确认。</small>
       </div>
+      <Drawer
+        title="证据溯源"
+        placement="right"
+        width={420}
+        open={Boolean(evidenceDrawer)}
+        onClose={() => setEvidenceDrawer(undefined)}
+        closeIcon={<CloseOutlined />}
+        className="farmap-copilot-evidence-drawer"
+      >
+        {selectedEvidence ? <article className="farmap-evidence-detail" data-evidence-id={selectedEvidence.evidenceId}>
+          <header>
+            <span className="farmap-evidence-detail__index">[{selectedEvidence.evidenceId}]</span>
+            <Tag color="green">{citationModalityLabels[selectedEvidence.modality]}</Tag>
+            {selectedEvidence.stageLabel && <Tag>{selectedEvidence.stageLabel}</Tag>}
+          </header>
+          <h2>{selectedEvidence.title}</h2>
+          <dl className="farmap-evidence-detail__meta">
+            <div><dt>来源</dt><dd>{selectedEvidence.sourceName}</dd></div>
+            {selectedEvidence.documentName && <div><dt>文档</dt><dd>{selectedEvidence.documentName}</dd></div>}
+            {selectedEvidence.score !== undefined && <div><dt>匹配度</dt><dd>{Math.round(selectedEvidence.score * 100)}%</dd></div>}
+            {selectedEvidence.expertStatus && <div><dt>审核状态</dt><dd>{selectedEvidence.expertStatus}</dd></div>}
+          </dl>
+          {selectedEvidence.snippet && <section>
+            <h3>检索原文</h3>
+            <blockquote>{selectedEvidence.snippet}</blockquote>
+          </section>}
+          {selectedEvidence.imageUrl && <Image
+            src={selectedEvidence.imageUrl}
+            alt={`证据 ${selectedEvidence.evidenceId} 图像`}
+            fallback="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
+          />}
+          <small>证据用于解释回答来源，不改变任务授权、用药安全校验或人工审批。</small>
+        </article> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={evidenceDrawer ? "这条证据暂未返回可展示内容。" : "选择正文引用或卡片角标查看证据。"} />}
+      </Drawer>
     </>
   );
   const splitWorkspace = Boolean(activeAnalysis);

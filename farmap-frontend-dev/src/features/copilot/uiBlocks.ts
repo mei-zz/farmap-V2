@@ -1,5 +1,5 @@
-import type { PhenologyTimelineData } from "./blocks/PlumPhenologyTimeline";
-import type { SprayWeatherData } from "./blocks/SprayWeatherWindowCard";
+import type { PhenologyAccumulation, PhenologyStage, PhenologyTimelineData } from "./blocks/PlumPhenologyTimeline";
+import type { SprayWeatherData, WorkDayAssessment, WorkSuitability, WorkSuitabilityLevel } from "./blocks/SprayWeatherWindowCard";
 import type { AtlasFigure, PestComparisonData } from "./blocks/PestComparisonCard";
 import type { MemoryProposalData } from "./blocks/MemoryProposalCard";
 import type { ComparisonMatrixData } from "./blocks/ComparisonMatrixCard";
@@ -170,7 +170,8 @@ function evidenceRef(value: unknown): string | undefined {
 function parseDraftTask(value: unknown, fallbackFieldId?: string): DraftTaskPayload | undefined {
   const input = record(value);
   if (!input) return undefined;
-  const nested = record(input.payload) ?? record(input.draftTask) ?? record(input.taskDraft) ?? record(input.task);
+  const nested = record(input.payload) ?? record(input.draftTask) ?? record(input.taskDraft)
+    ?? record(input.task) ?? record(input.value);
   const source = nested ?? input;
   const fieldId = uiId(source.fieldId ?? source.fieldID) ?? fallbackFieldId;
   const title = string(source.title, 120);
@@ -519,27 +520,179 @@ function parseMemoryProposal(value: unknown): MemoryProposalData | undefined {
 function parsePhenologyTimeline(value: unknown): PhenologyTimelineData | undefined {
   const phase = record(value);
   if (!phase) return undefined;
+  const stages = list(phase.stages ?? phase.phaseStages ?? phase.timeline, 12, (entry) => {
+    if (typeof entry === "string") {
+      const label = string(entry, 80);
+      return label ? { label } : undefined;
+    }
+    const stage = record(entry);
+    const label = string(stage?.label ?? stage?.name ?? stage?.title, 80);
+    if (!label) return undefined;
+    return {
+      code: uiId(stage?.code ?? stage?.stageCode),
+      label,
+      from: string(stage?.from ?? stage?.startDate, 40),
+      to: string(stage?.to ?? stage?.endDate, 40),
+      threshold: numberInRange(stage?.threshold ?? stage?.gdd, -1_000_000, 1_000_000),
+    } satisfies PhenologyStage;
+  });
+  const rawAccumulation = record(phase.accumulation)
+    ?? record(phase.thermalAccumulation)
+    ?? record(phase.heatAccumulation);
+  const currentAccumulation = numberInRange(
+    rawAccumulation?.current ?? rawAccumulation?.accumulated ?? rawAccumulation?.value
+      ?? phase.accumulatedTemperature ?? phase.gdd ?? phase.growingDegreeDays,
+    -1_000_000, 1_000_000,
+  );
+  const targetAccumulation = numberInRange(
+    rawAccumulation?.target ?? rawAccumulation?.required ?? rawAccumulation?.total,
+    0, 1_000_000,
+  );
+  const accumulation = currentAccumulation !== undefined ? {
+    current: currentAccumulation,
+    target: targetAccumulation,
+    progress: numberInRange(rawAccumulation?.progress, 0, 100),
+    unit: string(rawAccumulation?.unit, 20) ?? "℃·d",
+  } satisfies PhenologyAccumulation : undefined;
   return {
+    fieldId: uiId(phase.fieldId),
     fieldName: string(phase.fieldName, 120), crop: string(phase.crop, 64), date: string(phase.date, 90),
     current: string(phase.current, 80), previous: string(phase.previous, 80), next: string(phase.next, 80),
-    registered: string(phase.registered, 80), seasonal: string(phase.seasonal, 80), review: phase.review === true,
+    currentIndex: integerInRange(phase.currentIndex ?? phase.currentStageIndex, 0, 11),
+    stages: stages.length ? stages : undefined,
+    daysToNext: integerInRange(phase.daysToNext ?? phase.daysUntilNext ?? phase.countdownDays ?? phase.nextInDays, 0, 366),
+    registered: string(phase.registered, 80), seasonal: string(phase.seasonal, 80),
+    review: phase.review === true || phase.mismatch === true || phase.stageMismatch === true,
+    accumulation,
   };
 }
 
+function workLevel(value: unknown): WorkSuitabilityLevel | undefined {
+  if (typeof value !== "string") return undefined;
+  const level = value.trim().toLowerCase();
+  if (["suitable", "good", "green", "适宜", "可作业"].includes(level)) return "suitable";
+  if (["caution", "warning", "yellow", "谨慎", "注意"].includes(level)) return "caution";
+  if (["unsuitable", "poor", "bad", "red", "不宜", "禁止", "不可作业"].includes(level)) return "unsuitable";
+  if (["unknown", "unavailable", "pending", "待核验", "缺测", "未知"].includes(level)) return "unknown";
+  return undefined;
+}
+
+function scoreWorkLevel(score: number): WorkSuitabilityLevel {
+  if (score >= 75) return "suitable";
+  if (score >= 45) return "caution";
+  return "unsuitable";
+}
+
+function parseWorkSuitability(value: unknown): WorkSuitability | undefined {
+  if (typeof value === "number") {
+    const score = numberInRange(value, 0, 100);
+    return score === undefined ? undefined : { level: scoreWorkLevel(score), score };
+  }
+  if (typeof value === "string") {
+    const level = workLevel(value);
+    return level ? { level } : undefined;
+  }
+  const assessment = record(value);
+  if (!assessment) return undefined;
+  const score = numberInRange(assessment.score, 0, 100);
+  const level = workLevel(assessment.level ?? assessment.status ?? assessment.suitability ?? assessment.rating)
+    ?? (score !== undefined ? scoreWorkLevel(score) : undefined);
+  if (!level) return undefined;
+  return { level, score, reason: string(assessment.reason ?? assessment.detail ?? assessment.summary, 180) };
+}
+
+function parseWorkDay(value: unknown): WorkDayAssessment | undefined {
+  const day = record(value);
+  if (!day) return undefined;
+  const date = localDay(day.date ?? day.day)
+    ?? localDay(typeof day.startsAt === "string" ? day.startsAt.slice(0, 10) : undefined);
+  if (!date) return undefined;
+  const operations = record(day.operations);
+  const pick = (...keys: string[]) => parseWorkSuitability(keys.map((key) => operations?.[key] ?? day[key]).find((candidate) => candidate !== undefined));
+  const spray = pick("spray", "spraying", "pesticide");
+  const irrigation = pick("irrigation", "fertilization", "fertilize", "watering", "water");
+  const harvest = pick("harvest", "harvesting");
+  return spray || irrigation || harvest ? { date, spray, irrigation, harvest } : undefined;
+}
+
+function operationKey(value: unknown): "spray" | "irrigation" | "harvest" | undefined {
+  if (typeof value !== "string") return undefined;
+  const key = value.trim().toLowerCase();
+  if (["spray", "pesticide", "打药", "施药"].includes(key)) return "spray";
+  if (["irrigation", "fertilization", "fertilize", "watering", "water", "施肥", "灌水", "施肥灌水"].includes(key)) return "irrigation";
+  if (["harvest", "harvesting", "采收", "采摘"].includes(key)) return "harvest";
+  return undefined;
+}
+
+function parseOperationWindows(input: Record<string, unknown>): WorkDayAssessment[] {
+  const raw = input.operationWindows ?? input.agriculturalWindows ?? input.workSuitability;
+  if (!Array.isArray(raw)) return [];
+  const grouped = new Map<string, WorkDayAssessment>();
+  for (const entry of raw.slice(0, 36)) {
+    const item = record(entry);
+    const key = operationKey(item?.operation ?? item?.kind ?? item?.type);
+    const date = localDay(item?.date ?? item?.day)
+      ?? localDay(typeof item?.startsAt === "string" ? item.startsAt.slice(0, 10) : undefined);
+    const assessment = parseWorkSuitability(item?.suitability ?? item?.assessment ?? item);
+    if (!key || !date || !assessment) continue;
+    const day = grouped.get(date) ?? { date };
+    day[key] = assessment;
+    grouped.set(date, day);
+  }
+  return [...grouped.values()].sort((left, right) => left.date.localeCompare(right.date)).slice(0, 3);
+}
+
+function parseWorkDays(input: Record<string, unknown>): WorkDayAssessment[] {
+  const direct = input.workDays ?? input.workWindows;
+  const days = new Map<string, WorkDayAssessment>();
+  for (const entry of Array.isArray(direct) ? direct.slice(0, 12) : []) {
+    const parsed = parseWorkDay(entry);
+    if (parsed) days.set(parsed.date, parsed);
+  }
+  for (const parsed of parseOperationWindows(input)) {
+    const current = days.get(parsed.date);
+    days.set(parsed.date, {
+      date: parsed.date,
+      spray: parsed.spray ?? current?.spray,
+      irrigation: parsed.irrigation ?? current?.irrigation,
+      harvest: parsed.harvest ?? current?.harvest,
+    });
+  }
+  return [...days.values()].sort((left, right) => left.date.localeCompare(right.date)).slice(0, 3);
+}
+
 function parseSprayWeather(input: Record<string, unknown>): SprayWeatherData | undefined {
-  if (!Array.isArray(input.weatherWindows)) return undefined;
+  const windows = list(input.weatherWindows, 24, (value) => {
+    const window = record(value);
+    const startsAt = date(window?.startsAt);
+    const score = weatherNumber(window?.score, 0, 100);
+    if (!startsAt || score === undefined) return undefined;
+    return {
+      id: startsAt,
+      startsAt,
+      endsAt: date(window?.endsAt),
+      score,
+      wind: weatherNumber(window?.windSpeedKph ?? window?.wind, 0, 500),
+      rain: weatherNumber(window?.precipitationMm ?? window?.rain, 0, 2500),
+      rainProbability: weatherNumber(window?.rainProbability ?? window?.precipitationProbability, 0, 100),
+      temperature: weatherNumber(window?.temperatureC ?? window?.temperature, -100, 100),
+      humidity: weatherNumber(window?.humidityPct ?? window?.humidity, 0, 100),
+    };
+  });
+  const workDays = parseWorkDays(input);
+  const operationDecision = string(input.operationDecision, 80);
+  const phiDays = integerInRange(input.phiDays, 0, 3650);
+  const verifiedProductName = string(input.verifiedProductName, 120);
+  if (!windows.length && !workDays.length && !operationDecision && phiDays === undefined) return undefined;
   return {
     source: string(input.source, 80),
     rainHorizonHours: weatherNumber(input.rainHorizonHours, 1, 72),
-    restrictionsVerified: input.useRestrictionsVerified === true,
-    windows: list(input.weatherWindows, 8, (value) => {
-      const window = record(value);
-      const startsAt = date(window?.startsAt);
-      const score = weatherNumber(window?.score, 0, 100);
-      if (!startsAt || score === undefined) return undefined;
-      return { id: startsAt, startsAt, endsAt: date(window?.endsAt), score,
-        wind: weatherNumber(window?.windSpeedKph, 0, 500), rain: weatherNumber(window?.precipitationMm, 0, 2500) };
-    }),
+    restrictionsVerified: input.useRestrictionsVerified === true || input.restrictionsVerified === true,
+    windows,
+    workDays: workDays.length ? workDays : undefined,
+    operationDecision,
+    phiDays,
+    verifiedProductName,
   };
 }
 
@@ -587,6 +740,41 @@ export function detailRoute(value: unknown): string | undefined {
     && !path.split(/[/?]/u).some((segment) => segment === ".." || segment === ".") ? path : undefined;
 }
 
+function parseAction(input: unknown, fallbackFieldId?: string): AgentUiAction | undefined {
+  const action = record(input);
+  const type = actionTypes.find((candidate) => candidate === action?.type);
+  const label = string(action?.label, 60);
+  if (!action || !type || !label) return undefined;
+  if (type === "expand") return { type, label };
+  if (type === "prompt") {
+    const value = string(action.value, 1200);
+    return value ? { type, label, value } : undefined;
+  }
+  if (type === "select-field") {
+    const value = uiId(action.value);
+    return value ? { type, label, value } : undefined;
+  }
+  if (type === "open-detail") {
+    const value = detailRoute(action.value);
+    return value ? { type, label, value } : undefined;
+  }
+  if (type === "draft-task") {
+    const draftTask = parseDraftTask(action, fallbackFieldId);
+    return draftTask ? { type, label, draftTask } : undefined;
+  }
+  if (type === "open-evidence-drawer") {
+    const payload = record(action.payload);
+    const evidenceId = evidenceRef(action.evidenceId ?? action.value ?? payload?.evidenceId);
+    return evidenceId ? { type, label, evidenceId } : undefined;
+  }
+  const payload = record(action.payload);
+  const proposalId = uiId(action.proposalId ?? action.value ?? payload?.proposalId);
+  if (!proposalId || !/^proposal-[A-Za-z0-9-]{8,84}$/u.test(proposalId)) return undefined;
+  const rawDecision = action.decision ?? payload?.decision;
+  const decision: MemoryActionDecision = rawDecision === "ignore" ? "ignore" : "confirm";
+  return { type, label, proposalId, decision };
+}
+
 export function parseUiBlock(input: unknown): AgentUiBlock | undefined {
   const raw = record(input);
   const block = record(raw?.block) ?? raw;
@@ -602,23 +790,21 @@ export function parseUiBlock(input: unknown): AgentUiBlock | undefined {
   const data = parseData(block.data);
   const dataRef = string(block.dataRef, 260);
   if (!data && !dataRef) return undefined;
+  const provenance = list(block.provenance, 20, (entry) => {
+    const source = record(entry);
+    const label = string(source?.label);
+    return label ? { label, reference: string(source?.reference, 600) } : undefined;
+  });
+  const evidenceIds = [...new Set([
+    ...list(block.evidenceIds, 24, evidenceRef),
+    ...provenance.flatMap((source) => source.reference && /^E[1-9][0-9]{0,3}$/u.test(source.reference) ? [source.reference] : []),
+  ])];
   return {
     blockId, runId, title, componentType, schemaVersion: 1, status, createdAt, updatedAt, data, dataRef,
     summary: string(block.summary, 2400),
-    provenance: list(block.provenance, 20, (entry) => {
-      const source = record(entry);
-      const label = string(source?.label);
-      return label ? { label, reference: string(source?.reference, 600) } : undefined;
-    }),
-    actions: list(block.actions, 12, (entry) => {
-      const action = record(entry);
-      const type = actionTypes.find((name) => name === action?.type);
-      const label = string(action?.label, 60);
-      if (!type || !label) return undefined;
-      const value = type === "open-detail" ? detailRoute(action?.value)
-        : type === "select-field" ? uiId(action?.value) : string(action?.value, 1200);
-      return type === "expand" || value ? { type, label, value } : undefined;
-    }),
+    provenance,
+    evidenceIds,
+    actions: list(block.actions, 12, (entry) => parseAction(entry, data?.fieldId)),
   };
 }
 
