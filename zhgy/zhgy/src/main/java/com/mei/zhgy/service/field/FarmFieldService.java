@@ -95,6 +95,24 @@ public class FarmFieldService {
         return field;
     }
 
+    /** Applies a user-confirmed canonical stage only while the previewed registration is current. */
+    public FarmField calibratePhenology(String fieldId, Long actor, String expectedRegisteredStage, String serverStage) {
+        FarmField field = get(fieldId, actor);
+        if (!java.util.Objects.equals(field.getGrowthStage(), expectedRegisteredStage)) {
+            throw new FieldAccessException(409, "FIELD_STAGE_CHANGED", "地块登记物候已更新，请重新查看校准依据。");
+        }
+        var crop = cropResolver.resolve(field.getCrop());
+        var stage = crop.ready() ? phenologyService.resolveStage(crop.code(), serverStage) : null;
+        if (stage == null) throw new FieldAccessException(422, "PHENOLOGY_STAGE_UNAVAILABLE", "没有可校准的物候阶段。");
+        int changed = jdbc.update("""
+                UPDATE farm_fields SET growth_stage=?, updated_at=? WHERE field_id=? AND farm_id=?
+                AND (growth_stage=? OR (growth_stage IS NULL AND ? IS NULL))
+                """, stage.code(), Timestamp.from(Instant.now()), fieldId, field.getFarmId(),
+                expectedRegisteredStage, expectedRegisteredStage);
+        if (changed != 1) throw new FieldAccessException(409, "FIELD_STAGE_CHANGED", "地块登记物候已更新，请重新查看校准依据。");
+        return get(fieldId, actor);
+    }
+
     public FieldContext context(String fieldId, Long actorId) {
         FarmField field = get(fieldId, actorId);
         UserLoginResponseVO.FarmVO farm = requireFarm(field.getFarmId(), actorId);
@@ -230,6 +248,25 @@ public class FarmFieldService {
         value.put("rainfallProbability24h", snapshot.rainfallProbability24h()); value.put("rainfallForecast", snapshot.rainfallForecast());
         value.put("rainfallForecastDays", snapshot.rainfallForecastDays()); value.put("forecast", snapshot.forecast());
         return value;
+    }
+
+    public Map<String, Object> latestAccumulatedTemperature(Integer farmId, Long actor) {
+        requireFarm(farmId, actor);
+        return accumulated(farmId);
+    }
+
+    public List<Map<String, Object>> accumulatedTemperatureHistory(Integer farmId, Long actor) {
+        requireFarm(farmId, actor);
+        try {
+            var points = jdbc.query("""
+                    SELECT date,accumulated_temp FROM accumulated_temperature
+                    WHERE farm_id=? AND accumulated_temp IS NOT NULL ORDER BY date DESC LIMIT 14
+                    """, (rs, row) -> mapOf("label", rs.getDate("date").toString(), "value", rs.getBigDecimal("accumulated_temp")), farmId);
+            java.util.Collections.reverse(points);
+            return List.copyOf(points);
+        } catch (RuntimeException unavailable) {
+            return List.of();
+        }
     }
 
     private Map<String, Object> accumulated(Integer farmId) {

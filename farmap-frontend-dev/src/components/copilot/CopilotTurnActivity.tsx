@@ -1,10 +1,10 @@
 import { BookOpen, Check, ChevronDown, CircleAlert, CirclePause, Globe, LoaderCircle, Sparkles, Wrench } from "lucide-react";
 import { chatToolLabel, isKnowledgeTool, type ChatActivity } from "@/features/copilot/chatActivity";
 
-export function CopilotTurnActivity({ activity, pending, answering, preparing }: { activity?: ChatActivity; pending: boolean; answering: boolean; preparing?: string }) {
+export function CopilotTurnActivity({ activity, pending, answering, preparing, showTools = true }: { activity?: ChatActivity; pending: boolean; answering: boolean; preparing?: string; showTools?: boolean }) {
   const knowledge = activity?.knowledge;
   const knowledgeLabel = knowledge?.unavailable ? "知识库暂不可用" : knowledge ? `知识库返回 ${knowledge.count} 条信息` : undefined;
-  const tools = activity?.tools.filter((tool) => !knowledge || tool.web || !isKnowledgeTool(tool.name)) ?? [];
+  const tools = showTools ? activity?.tools.filter((tool) => !knowledge || tool.web || !isKnowledgeTool(tool.name)) ?? [] : [];
   const activeTool = tools.filter((tool) => tool.status === "running").at(-1);
   const label = pending
     ? activeTool ? `正在${chatToolLabel(activeTool.name, activeTool.web)}`

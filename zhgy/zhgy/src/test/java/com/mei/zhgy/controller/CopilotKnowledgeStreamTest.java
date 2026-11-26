@@ -1,5 +1,7 @@
 package com.mei.zhgy.controller;
 
+import com.mei.zhgy.service.copilot.CopilotApplicationService;
+
 import com.mei.zhgy.context.BaseContext;
 import com.mei.zhgy.service.ai.ModelCallResult;
 import com.mei.zhgy.service.ai.ModelGateway;
@@ -61,8 +63,8 @@ class CopilotKnowledgeStreamTest {
             onDelta.accept(ANSWER);
             return ModelCallResult.builder().success(true).content(ANSWER).build();
         });
-        CopilotController controller = new CopilotController(routes, conversations, null, model, retriever,
-                null, null, null, null, null, null, null);
+        CopilotController controller = new CopilotController(new CopilotApplicationService(routes, conversations, null, model, retriever,
+                null, null, null, null, null, null, null));
         MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
 
         BaseContext.setCurrentId(1L);
@@ -109,8 +111,8 @@ class CopilotKnowledgeStreamTest {
             onDelta.accept(ANSWER);
             return ModelCallResult.builder().success(true).content(ANSWER).build();
         });
-        CopilotController controller = new CopilotController(routes, conversations, null, model, retriever,
-                null, null, null, null, null, null, null);
+        CopilotController controller = new CopilotController(new CopilotApplicationService(routes, conversations, null, model, retriever,
+                null, null, null, null, null, null, null));
         MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
 
         BaseContext.setCurrentId(1L);
@@ -144,7 +146,7 @@ class CopilotKnowledgeStreamTest {
                 .conversationId(conversationId)
                 .traceId("greeting-stream-trace")
                 .build());
-        CopilotController controller = new CopilotController(routes, conversations);
+        CopilotController controller = new CopilotController(new CopilotApplicationService(routes, conversations));
         MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
 
         BaseContext.setCurrentId(1L);

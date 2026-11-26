@@ -1,5 +1,7 @@
 package com.mei.zhgy.evaluation;
 
+import com.mei.zhgy.service.copilot.CopilotApplicationService;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mei.zhgy.context.BaseContext;
 import com.mei.zhgy.controller.CopilotController;
@@ -233,7 +235,7 @@ class AgentV2Phase14IntentRouterEvaluationTest {
                 .resolvedContext(CopilotStableContext.builder().fieldId("field-http-smoke").build())
                 .capability(CopilotCapability.DIAGNOSIS_CREATE).requiresClarification(false)
                 .allowedNextAction("DIAGNOSIS_CREATE").traceId("trace-http-smoke").confidence(.99D).build());
-        MockMvc mvc = MockMvcBuilders.standaloneSetup(new CopilotController(routes)).setMessageConverters(new MappingJackson2HttpMessageConverter()).build();
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new CopilotController(new CopilotApplicationService(routes))).setMessageConverters(new MappingJackson2HttpMessageConverter()).build();
         CopilotRouteRequest request = request("这个地块有什么问题？", "http-smoke");
         request.setPageContext(page("field-http-smoke", null, null, null, null));
         BaseContext.setCurrentId(42L);

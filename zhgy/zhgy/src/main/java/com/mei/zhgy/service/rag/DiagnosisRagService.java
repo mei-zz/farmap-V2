@@ -79,6 +79,13 @@ public class DiagnosisRagService {
     }
 
     public DiagnosisAnalysisResponse analyze(DiagnosisAnalyzeRequest request, Long userId) {
+        return analyze(request, userId, ignored -> {});
+    }
+
+    public record RetrievalProgress(String phase, String modality, String status, int evidenceCount) {}
+
+    public DiagnosisAnalysisResponse analyze(DiagnosisAnalyzeRequest request, Long userId,
+                                             java.util.function.Consumer<RetrievalProgress> progress) {
         validateRequest(request);
         String runId = "rag-" + UUID.randomUUID();
         long totalStart = System.currentTimeMillis();
@@ -125,9 +132,7 @@ public class DiagnosisRagService {
                 // A production Knowledge outage is a dependency failure, not an
                 // empty retrieval result.  Preserve the signal for the HTTP
                 // boundary so callers receive 503/UNAVAILABLE.
-                if ("UNAVAILABLE".equals(exception.getCode()) || "KNOWLEDGE_PERSISTENCE_UNAVAILABLE".equals(exception.getCode())) {
-                    throw exception;
-                }
+                progress.accept(new RetrievalProgress("RETRIEVAL", retriever.modality(), "UNAVAILABLE", 0));
                 throw exception;
             } catch (RuntimeException exception) {
                 log.warn("Retriever {} 执行失败，runId={}: {}", retriever.modality(), runId, exception.getMessage());
@@ -137,16 +142,23 @@ public class DiagnosisRagService {
                 item.put("status", "knowledge".equals(retriever.modality()) ? "UNAVAILABLE" : "failed");
                 retrieverSummary.put(retriever.modality(), item);
             }
+            if (retrieverSummary.get(retriever.modality()) instanceof Map<?, ?> result) {
+                progress.accept(new RetrievalProgress("RETRIEVAL", retriever.modality(), String.valueOf(result.get("status")),
+                        result.get("count") instanceof Number count ? count.intValue() : 0));
+            }
         }
         int inputEvidenceCount = evidence.size();
         long fusionStart = System.currentTimeMillis();
         evidence = evidenceFusionService.fuse(evidence);
+        DiagnosisEvidenceConflicts.inspect(request, evidence);
+        progress.accept(new RetrievalProgress("FUSION", null, "READY", evidence.size()));
         long fusionLatency = System.currentTimeMillis() - fusionStart;
         long retrievalLatency = System.currentTimeMillis() - retrievalStart;
         ensureMinimumModalities(evidence);
         attachReferenceImages(request, evidence);
 
         long generationStart = System.currentTimeMillis();
+        progress.accept(new RetrievalProgress("GROUNDING", null, "RUNNING", evidence.size()));
         GroundedDiagnosisGenerator.GenerationResult generationResult = null;
         String generationFallbackReason = null;
         DiagnosisAnalysisResponse response;
@@ -175,6 +187,7 @@ public class DiagnosisRagService {
         // verified server-side set attached to both real and template results.
         response.setRunId(runId);
         response.setEvidence(evidence);
+        int blockedSprayRecommendations = guardUnverifiedSpray(response);
         long generationLatency = System.currentTimeMillis() - generationStart;
         long totalLatency = System.currentTimeMillis() - totalStart;
 
@@ -195,6 +208,10 @@ public class DiagnosisRagService {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("mode", "real");
         metadata.put("status", "AI_INITIAL");
+        boolean evidenceConflict = DiagnosisEvidenceConflicts.flagged(evidence);
+        metadata.put("evidenceConflict", evidenceConflict);
+        if (evidenceConflict) metadata.put("reviewNotice", "现场观测、地块登记或气象条件存在冲突，请人工核实后决策。");
+        if (blockedSprayRecommendations > 0) metadata.put("blockedSprayRecommendations", blockedSprayRecommendations);
         metadata.put("generationMode", generationFallbackReason == null
                 ? (generationResult == null ? "grounded-template"
                 : "deepseek-v4.1-flash".equalsIgnoreCase(generationResult.getModelCall().getSelectedModel()) ? "opencode" : "qwen")
@@ -263,6 +280,19 @@ public class DiagnosisRagService {
                 metadata.get("embeddingModel"),
                 "grounded-diagnosis-v1");
         return response;
+    }
+
+    private int guardUnverifiedSpray(DiagnosisAnalysisResponse response) {
+        if (response.getRecommendations() == null) return 0;
+        int blocked = 0;
+        for (var suggestion : response.getRecommendations()) {
+            if (suggestion == null || (!DiagnosisEvidenceConflicts.concernsSpray(suggestion.getTitle())
+                    && !DiagnosisEvidenceConflicts.concernsSpray(suggestion.getDetail()))) continue;
+            suggestion.setTitle("先核对登记标签与采收安全间隔");
+            suggestion.setDetail("正式诊断报告未核验具体产品、物候、认证和计划日期的组合。请核实标签及果园条件后再决定。");
+            blocked++;
+        }
+        return blocked;
     }
 
     private Object firstEvidenceMetadata(List<DiagnosisEvidenceVO> evidence, String key, String fallback) {

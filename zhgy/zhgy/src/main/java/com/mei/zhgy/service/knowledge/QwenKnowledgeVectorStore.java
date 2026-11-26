@@ -477,6 +477,11 @@ public class QwenKnowledgeVectorStore {
         }
     }
 
+    /** Upper bound for the configured reciprocal-rank sum when all lists rank a hit first. */
+    public double rrfUpperBound() {
+        return (denseWeight + bm25Weight) / (rrfK + 1D);
+    }
+
     private String retrievalProvider(boolean denseHit, boolean lexicalHit) {
         if ("rrf".equals(fusionMode)) {
             if (denseHit && lexicalHit) return embeddingProvider.provider() + "+BM25[RRF]";

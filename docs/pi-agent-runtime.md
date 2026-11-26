@@ -2,13 +2,29 @@
 
 Copilot 的生成式 `/api/copilot/chat` 和 `/api/copilot/answer` 默认使用 `@earendil-works/pi-agent-core`（锁定 1.5.2）。Java 后端通过标准输入和输出启动一个私有 Node worker。Pi 管理消息、模型请求、并行只读调用、上下文裁剪和事件。本地启用 OpenCode 时由 Java 向 worker 传入该模型配置。
 
-Java 在发起生成前完成意图路由与范围校验。Pi 使用工具的 JSON Schema 生成查询参数，收到 tool call 后发出含命令 ID、工具集 ID、调用 ID、工具名及参数的 `tool_call_request`。Java 按原会话和上下文版本匹配注册的处理器，重新检查农场权限及参数，执行实际查询并用 `tool_call_response` 传回结果。知识检索支持关键词、地块和物候限定。天气支持指定已提供的预报日期。Java 可将结果投影为用户界面的卡片与知识计数。系统提示只提供日期、选中对象、作物及基本访问范围，查询资料只随工具结果进入模型上下文。纯物候和气象实况等确定性请求可直接查询回答。
+登录端由 `CopilotController` 处理 HTTP 鉴权与 SSE 生命周期，`CopilotApplicationService` 接入旧 API 和新 Harness。`CopilotSecurityGuard` 核验农场、地块和图片边界，普通复合农事问题由 Pi 编排。纯农场目录和明确的权限或审批命令仍有业务入口。
 
-用户发出明确的建任务请求时，Pi 的 `propose_task_draft` 只提交标题、详情与可选日期。Java 校验后保存待确认动作，仍由人工审批、证据校验及幂等业务接口创建任务。专题诊断、采收报告和既有 `/api/agent/runs` 接口继续使用 Java 工作流。
+`AgriculturalAgentHarness` 将固定人格与安全提示、动态环境分别传给 worker。动态环境包含日期、选中对象、作物、登记物候、确认过的自报画像、授权图片引用及本轮技能。Pi 经 `tool_call_request` 和 `tool_call_response` 调用 Java 工具，业务参数在 Java 重新校验。普通工具单次超时 12 秒，多模态工具 35 秒。超时返回可恢复的工具错误，其他命令继续执行。
+
+| 范围 | 工具 |
+| --- | --- |
+| 农场与物候 | `list_farm_fields`、`read_field_context`、`read_current_weather`、`query_operations_tasks`、`read_monthly_guidance`、`read_orchard_memory` |
+| 多模态检索 | `search_agricultural_knowledge`、`analyze_uploaded_images`、`lookup_reference_atlas`、`search_historical_cases`、`inspect_camera_maturity`、`read_previous_analysis` |
+| 呈现与提案 | `render_ui_block`、`propose_task_draft`、`propose_memory_update` |
+
+工具按登录身份、当前农场和请求类型注册。结构化数据卡来自领域查询，声明式风险、对比、清单、图表和澄清表单经过组件及参数校验。图表数值必须能和本轮证据账本中的测量值对上。用户通过 `message.part` 获取工具活动、正文、组件及可点击的证据标识。旧事件仍供兼容客户端使用。
+
+明确的建任务请求可形成带证据的一条或多条待确认草案。Java 核验每项任务的地块、证据归属与日期，确认后才走独立、幂等的业务写入。果园资料提案通过 `POST /api/copilot/memories/proposals/{proposalId}/confirm` 单独确认，确认值保持用户自报来源。
 
 ## 会话和执行控制
 
-Java 使用当前用户和会话 ID 定位 Pi，并以会话上下文版本限制执行控制。同一范围内继续提问时，Pi 保留受预算约束的近期消息，并为本轮绑定新的工具表。首次进入、范围切换或 worker 重启时，从 MySQL 最近可见消息初始化。
+Java 使用当前用户和会话 ID 定位 Pi，通过上下文版本控制并发。匹配地块等作用域及 `lastCompletedTurnId` 时复用原生状态。首次进入、范围切换或 worker 重启时从 MySQL 还原近轮。上下文预算按模型窗口的 72% 估算，先压缩旧工具结果再整轮裁剪，保留调用与结果配对。SSE 中的用量字段取自 Pi 的实际 `usage`。
+
+## 脆李气象与农艺可信资料
+
+作业气象卡使用 Open-Meteo 的逐小时温度、风速、湿度与降水预报。雨量按开始时间之后六个小时累计，缺测值保留缺失。气象评分与农药标签、认证和安全间隔期分别判定。[Open-Meteo 预报 API 文档](https://open-meteo.com/en/docs)
+
+部署可通过 `farmap.agronomy.evidence-path` 指向由运营者审核的 JSON，结构为 `labels` 与 `orchards`。标签按作物、登记 ID、公开来源、版本和有效期匹配。地块资料按农场、地块和作物匹配，认证、计划采收日、可信物候观测和校准数据均可独立缺省。热量校准仅使用匹配品种、海拔范围、有效日期且明确采用 `FARM_DAILY_TEMP_SUM` 的记录，并检查农场积温时效。该配置缺省时继续提供可信基线和气象信息，缺乏标签及认证证据的施药提案会被拦截。
 
 `POST /api/copilot/conversations/{conversationId}/agent-control` 需要登录，并接收 `operation`、当前 `contextVersion` 和可选的 `message`。版本来自 `/chat` 的 `route` 事件。可用操作为：
 

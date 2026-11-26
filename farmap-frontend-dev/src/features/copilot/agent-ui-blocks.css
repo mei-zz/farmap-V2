@@ -86,3 +86,22 @@
 .farmap-parcel-overview dl { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 9px 0 0; }
 .farmap-parcel-overview dt { color: #4c6658; font-size: 12px; }
 .farmap-parcel-overview dd { margin: 3px 0 0; color: #263e33; font-weight: 600; }
+.farmap-phenology ol {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .5rem;
+  padding: 0;
+  list-style: none;
+}
+.farmap-phenology li { display: grid; gap: .3rem; border-top: 2px solid #dce8df; padding-top: .5rem; }
+.farmap-phenology li[aria-current="step"] { border-color: #28784f; }
+.farmap-phenology p, .farmap-spray-weather p { margin: .45rem 0; }
+.farmap-spray-weather__table { overflow-x: auto; }
+.farmap-spray-weather table { width: 100%; border-collapse: collapse; text-align: left; }
+.farmap-spray-weather th, .farmap-spray-weather td { padding: .45rem; border-bottom: 1px solid #dce8df; }
+.farmap-spray-weather th { font-weight: 600; }
+.farmap-atlas-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: .75rem; }
+.farmap-atlas-grid figure { margin: 0; }
+.farmap-atlas-grid img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: .5rem; }
+.farmap-atlas-grid figcaption { margin-top: .3rem; font-size: .9em; }
+.farmap-evidence-chart { width: 100%; height: 15rem; }

@@ -203,3 +203,15 @@ export async function listCopilotMemories(farmId: number, fieldId?: string): Pro
 export async function revokeCopilotMemory(memoryId: string): Promise<CopilotMemoryView> {
   return req.post<Record<string, never>, CopilotMemoryView>(`/api/copilot/memories/${encodeURIComponent(memoryId)}/revoke`, {}, auth());
 }
+
+export async function confirmCopilotMemoryProposal(proposalId: string): Promise<void> {
+  const result = await req.post<Record<string, never>, { proposal?: { status?: string } }>(
+    `/api/copilot/memories/proposals/${encodeURIComponent(proposalId)}/confirm`, {}, auth());
+  if (result.proposal?.status !== "CONFIRMED") throw new Error("Memory proposal was not confirmed");
+}
+
+export async function isCopilotMemoryProposalConfirmed(proposalId: string): Promise<boolean> {
+  const result = await req.get<{ status?: string }>(
+    `/api/copilot/memories/proposals/${encodeURIComponent(proposalId)}`, auth());
+  return result.status === "CONFIRMED";
+}

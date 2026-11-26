@@ -161,8 +161,11 @@ export type CopilotConversationTurn = {
   message: string;
   intent?: CopilotIntent;
   createdAt?: string;
+  traceId?: string;
   responseMetadata?: {
     schemaVersion?: number;
+    /** Ordered public parts persisted by the presentation emitter. */
+    messageParts?: unknown[];
     uiBlocks?: unknown[];
     presentation?: unknown;
     knowledgeCount?: number | null;

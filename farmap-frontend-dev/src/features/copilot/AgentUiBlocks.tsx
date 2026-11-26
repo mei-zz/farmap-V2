@@ -7,6 +7,11 @@ import { getMaturityRun } from "@/features/maturity/service";
 import { OperationTaskFeedback, PlanFromAnalysis } from "./OperationsChatArtifacts";
 import { WeatherPresentationCard } from "./WeatherPresentationCard";
 import { OperationsTaskView } from "./OperationsTaskViews";
+import { PlumPhenologyTimeline } from "./blocks/PlumPhenologyTimeline";
+import { SprayWeatherWindowCard } from "./blocks/SprayWeatherWindowCard";
+import { PestComparisonCard } from "./blocks/PestComparisonCard";
+import { MemoryProposalCard } from "./blocks/MemoryProposalCard";
+import { EvidenceTrendChart } from "./blocks/EvidenceTrendChart";
 import { operationsViews } from "@/routes/navigation";
 import PlanningRecommendations from "@/features/pro-workspaces/PlanningRecommendations";
 import { detailRoute, parseUiBlock, uiId, type AgentUiAction, type AgentUiBlock, type BlockComponentType, type BlockData, type BlockItem, type MaturityStage } from "./uiBlocks";
@@ -359,8 +364,8 @@ const registry: Record<BlockComponentType, { content: (props: ContentProps) => R
   ParcelOverviewCard: { content: ParcelOverview, icon: Map }, WeatherCard: { content: WeatherPresentationCard, icon: CloudSun },
   EnvironmentCard: { content: DataRows, icon: Leaf }, CropInfoCard: { content: DataRows, icon: Sprout },
   FarmHistoryCard: { content: DataRows, icon: CalendarDays }, CropGrowthChart: { content: Plot, icon: ChartNoAxesCombined },
-  WeatherTrendChart: { content: Plot, icon: CloudSun }, SoilTrendChart: { content: Plot, icon: ChartNoAxesCombined },
-  ParcelCompareChart: { content: Plot, icon: ChartNoAxesCombined }, FarmAnalyticsCard: { content: Plot, icon: ChartNoAxesCombined },
+  WeatherTrendChart: { content: EvidenceTrendChart, icon: CloudSun }, SoilTrendChart: { content: Plot, icon: ChartNoAxesCombined },
+  ParcelCompareChart: { content: EvidenceTrendChart, icon: ChartNoAxesCombined }, FarmAnalyticsCard: { content: Plot, icon: ChartNoAxesCombined },
   DiagnosisCard: { content: DataRows, icon: Leaf }, PestDiagnosisCard: { content: DataRows, icon: Leaf },
   RiskAlertCard: { content: DataRows, icon: AlertTriangle }, DiagnosisEvidenceCard: { content: DataRows, icon: BookOpen },
   FarmPlanCard: { content: Workflow, icon: CalendarDays }, FertilizerPlanCard: { content: Workflow, icon: Sprout },
@@ -375,6 +380,11 @@ const registry: Record<BlockComponentType, { content: (props: ContentProps) => R
   FarmAdviceCard: { content: FarmAdvice, icon: Sprout },
   OperationTaskCard: { content: TaskFeedback, icon: ListChecks },
   OperationsQueryCard: { content: TaskQuery, icon: ListChecks },
+  PlumPhenologyTimeline: { content: PlumPhenologyTimeline, icon: Sprout },
+  SprayWeatherWindowCard: { content: SprayWeatherWindowCard, icon: CloudSun },
+  PestComparisonCard: { content: PestComparisonCard, icon: BookOpen },
+  MemoryProposalCard: { content: MemoryProposalCard, icon: BookOpen },
+  FarmOperationChecklist: { content: DataRows, icon: ListChecks },
 };
 
 function AgentUiCard({ block, ...actions }: ContentProps) {

@@ -1,5 +1,7 @@
 package com.mei.zhgy.service.ai;
 
+import com.mei.zhgy.service.rag.DiagnosisEvidenceConflicts;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -80,13 +82,17 @@ public class GroundedDiagnosisGenerator {
                 .imageCount(request.getImageUrls() == null ? 0 : request.getImageUrls().size())
                 .build();
 
-        if (!ModelCapabilityRegistry.QWEN_VL_235B.equals(primaryCall.getSelectedModel())
-                && escalationPolicy.shouldEscalate(postDiagnosisContext)) {
+        boolean conflict = DiagnosisEvidenceConflicts.inspectRecommendations(request, evidence, primaryResponse.getRecommendations())
+                || DiagnosisEvidenceConflicts.flagged(evidence);
+        String escalationReason = conflict ? "evidence_conflict" : escalationPolicy.reason(postDiagnosisContext);
+        if (conflict || (!ModelCapabilityRegistry.QWEN_VL_235B.equals(primaryCall.getSelectedModel())
+                && escalationPolicy.shouldEscalate(postDiagnosisContext))) {
             try {
                 ModelCallRequest expertRequest = buildRequest(request, runId, evidence,
                         AiTaskType.HARD_DIAGNOSIS,
                         "请复核上一轮诊断。仅在证据支持时升级结论，并返回最终结构化诊断。");
                 expertRequest.getContext().put("previousDiagnosis", primaryResponse.getDiagnosis());
+                if (conflict) expertRequest.getContext().put("evidenceConflict", true);
                 ModelCallResult expertCall = modelGateway.complete(expertRequest);
                 DiagnosisAnalysisResponse expertResponse = parse(expertCall.getContent());
                 evidenceReferenceValidator.validateOrThrow(expertResponse, evidence);
@@ -96,7 +102,7 @@ public class GroundedDiagnosisGenerator {
                         .primaryModel(primaryCall.getSelectedModel())
                         .evidenceSynthesisModel(evidenceSynthesis == null ? null : evidenceSynthesis.getSelectedModel())
                         .escalatedModel(expertCall.getSelectedModel())
-                        .escalationReason(escalationPolicy.reason(postDiagnosisContext))
+                        .escalationReason(escalationReason)
                         .escalated(true)
                         .build();
             } catch (ModelCallException | EvidenceReferenceValidator.InvalidEvidenceReferenceException exception) {
@@ -106,7 +112,7 @@ public class GroundedDiagnosisGenerator {
                         .modelCall(primaryCall)
                         .primaryModel(primaryCall.getSelectedModel())
                         .evidenceSynthesisModel(evidenceSynthesis == null ? null : evidenceSynthesis.getSelectedModel())
-                        .escalationReason(escalationPolicy.reason(postDiagnosisContext))
+                        .escalationReason(escalationReason)
                         .escalated(false)
                         .build();
             }

@@ -178,6 +178,36 @@ public class AgentRuntime {
 
     /** Receives a model proposal from the authenticated Copilot action route. */
     public AgentRun prepareTaskDraft(String goal, AgentContext scope, Long ownerId, TaskDraft draft) {
+        return prepareApproval(verifiedDraftRun(goal, scope, ownerId, draft), draft);
+    }
+
+    public record ScopedTaskDraft(AgentContext scope, TaskDraft draft,
+                                  @com.fasterxml.jackson.annotation.JsonIgnore List<DiagnosisEvidenceVO> evidence) {
+        public ScopedTaskDraft {
+            evidence = evidence == null ? List.of() : List.copyOf(evidence);
+        }
+    }
+
+    /** Prepare independent, owner-scoped approvals after checking every target in the batch. */
+    @org.springframework.transaction.annotation.Transactional
+    public List<AgentRun> prepareTaskDraftBatch(String goal, Long ownerId, List<ScopedTaskDraft> drafts) {
+        if (drafts == null || drafts.isEmpty() || drafts.size() > 8) throw new IllegalArgumentException("Invalid task batch");
+        List<AgentRun> runs = new ArrayList<>();
+        for (var request : drafts) {
+            if (request == null || request.evidence().isEmpty()) throw new IllegalArgumentException("Verified evidence is required");
+            var run = verifiedDraftRun(goal, request.scope(), ownerId, request.draft());
+            if (request.evidence().stream().anyMatch(evidence -> evidence.getSource() == null
+                    || evidence.getSource().getFieldId() != null && !run.getContext().getFieldId().equals(evidence.getSource().getFieldId()))) {
+                throw new IllegalArgumentException("Evidence must match the proposed field");
+            }
+            mergeEvidence(run, request.evidence());
+            runs.add(run);
+        }
+        for (int i = 0; i < runs.size(); i++) prepareApproval(runs.get(i), drafts.get(i).draft());
+        return List.copyOf(runs);
+    }
+
+    private AgentRun verifiedDraftRun(String goal, AgentContext scope, Long ownerId, TaskDraft draft) {
         if (ownerId == null) throw AgentAccessException.unauthenticated();
         if (draft == null || scope == null || scope.getFieldId() == null || scope.getFieldId().isBlank()) {
             throw new IllegalArgumentException("A field and a task draft are required");
@@ -198,7 +228,7 @@ public class AgentRuntime {
         addDirectTaskContextEvidence(run, Map.of("field-context", Map.of(
                 "fieldFactsStatus", facts.status(), "fieldName", text(canonical.getFieldName(), facts.fieldId()),
                 "cropLabel", text(facts.cropLabel(), "当前作物"), "phenologyStageLabel", text(facts.currentGrowthStageLabel(), "未登记"))));
-        return prepareApproval(run, draft);
+        return run;
     }
 
     /** Uses the persisted diagnosis evidence without invoking another read-tool loop. */

@@ -235,6 +235,7 @@ public class CopilotConversationService {
             copyResponseField(persisted, safe, "referenceImages");
             copyResponseField(persisted, safe, "uiBlocks");
             copyResponseField(persisted, safe, "presentation");
+            copyResponseField(persisted, safe, "messageParts");
             copyResponseField(persisted, safe, "referenceImageNotice");
             copyResponseField(persisted, safe, "referenceImageStatus");
             copyResponseField(persisted, safe, "referenceImageMatch");

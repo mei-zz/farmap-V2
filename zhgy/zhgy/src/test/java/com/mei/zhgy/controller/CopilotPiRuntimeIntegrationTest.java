@@ -53,9 +53,9 @@ class CopilotPiRuntimeIntegrationTest {
         when(weather.get(42, 1L)).thenReturn(new com.mei.zhgy.vo.CurrentWeatherResponse(42, "测试农场", "READY",
                 "23", "多云", "62", null, null, "2026-11-20 12:00", java.time.Instant.now(),
                 "OPEN_METEO", "PROVIDER", "CURRENT", null, null, null, null, null, null, List.of()));
-        CopilotController controller = new CopilotController(routes, conversations, null, null, null,
-                null, fields, null, null, null, null);
-        controller.setCurrentWeatherService(weather);
+        CopilotController controller = new CopilotController(new CopilotApplicationService(routes, conversations, null, null, null,
+                null, fields, null, null, null, null));
+        controller.application.setCurrentWeatherService(weather);
         MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
         BaseContext.setCurrentId(1L);
         try {
@@ -103,8 +103,8 @@ class CopilotPiRuntimeIntegrationTest {
         try {
             CopilotRouteService routes = mock(CopilotRouteService.class);
             when(routes.route(any(), eq(1L), anyBoolean(), eq(false))).thenReturn(CopilotRouteResult.builder().intent(CopilotIntent.GENERAL_QA).resolutionStatus(CopilotResolutionStatus.RESOLVED).build());
-            CopilotController controller = new CopilotController(routes);
-            controller.setPiRuntime(runtime);
+            CopilotController controller = new CopilotController(new CopilotApplicationService(routes));
+            controller.application.setPiRuntime(runtime);
             MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
             BaseContext.setCurrentId(1L);
             MvcResult pending = mvc.perform(post("/api/copilot/chat").contentType(MediaType.APPLICATION_JSON).content("{\"message\":\"如何管理土壤\"}")).andExpect(request().asyncStarted()).andReturn();
@@ -118,8 +118,8 @@ class CopilotPiRuntimeIntegrationTest {
             for (var message : messages) if ("tool".equals(message.path("role").asText()) && "call_1".equals(message.path("tool_call_id").asText())) sawTool = true;
             assertTrue(sawTool, requests.get(1));
 
-            ReflectionTestUtils.setField(controller, "allowUngrounded", false);
-            var summaryRequest = new CopilotController.AnswerRequest();
+            ReflectionTestUtils.setField(controller.application, "allowUngrounded", false);
+            var summaryRequest = new CopilotApplicationService.AnswerRequest();
             summaryRequest.message = "总结这次查询";
             summaryRequest.intent = "OPERATIONS_STATUS_QUERY";
             summaryRequest.evidence = java.util.Map.of("status", "caller-reported-task-state");
@@ -186,9 +186,9 @@ class CopilotPiRuntimeIntegrationTest {
             when(routes.route(any(), eq(1L), anyBoolean(), eq(false))).thenReturn(CopilotRouteResult.builder()
                     .intent(CopilotIntent.GENERAL_QA).resolutionStatus(CopilotResolutionStatus.RESOLVED)
                     .resolvedContext(CopilotStableContext.builder().farmId("42").fieldId("west-field").build()).build());
-            CopilotController controller = new CopilotController(routes, null, null, null, knowledge, null, fields, null, null, null, null);
-            controller.setPiRuntime(runtime);
-            controller.setCurrentWeatherService(weather);
+            CopilotController controller = new CopilotController(new CopilotApplicationService(routes, null, null, null, knowledge, null, fields, null, null, null, null));
+            controller.application.setPiRuntime(runtime);
+            controller.application.setCurrentWeatherService(weather);
             MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
             BaseContext.setCurrentId(1L);
             MvcResult pending = mvc.perform(post("/api/copilot/chat").contentType(MediaType.APPLICATION_JSON)
@@ -233,6 +233,153 @@ class CopilotPiRuntimeIntegrationTest {
 
     @Test
     @EnabledIfSystemProperty(named = "farmap.pi.integration", matches = "true")
+    void compoundHarnessTurnSchedulesAuthorizedTasksAndCameraInspectionInOnePiRun() throws Exception {
+        var mapper = new ObjectMapper();
+        List<String> requests = new CopyOnWriteArrayList<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            requests.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            if (requests.size() == 1) {
+                var calls = List.of(call(0, "tasks", "query_operations_tasks", "{\"farmId\":\"42\"}"),
+                        call(1, "scan", "inspect_camera_maturity", "{\"scope\":\"FARM\",\"kind\":\"MATURITY\"}"));
+                sendCompletion(exchange, mapper.writeValueAsString(Map.of("tool_calls", calls)), "tool_calls");
+            } else sendCompletion(exchange, "{\"content\":\"已检查区域观测和任务。\"}", "stop");
+        });
+        server.start();
+        var runtime = new PiAgentRuntime();
+        ReflectionTestUtils.setField(runtime, "apiKey", "test-key");
+        ReflectionTestUtils.setField(runtime, "baseUrl", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1/chat/completions");
+        ReflectionTestUtils.setField(runtime, "model", "mock");
+        try {
+            var routes = mock(CopilotRouteService.class);
+            when(routes.routeHarness(any(), eq(1L), eq(false))).thenReturn(CopilotRouteResult.builder()
+                    .intent(CopilotIntent.GENERAL_QA).traceId("compound-harness")
+                    .resolvedContext(CopilotStableContext.builder().farmId("42").build())
+                    .resolutionStatus(CopilotResolutionStatus.RESOLVED).build());
+            var fields = mock(FarmFieldService.class);
+            var views = mock(com.mei.zhgy.service.operations.OperationsTaskViewService.class);
+            when(views.view(42, null, null, null, "tasks", null, 1L)).thenReturn(Map.of("items", List.of(),
+                    "counts", Map.of("total", 0), "truncated", false));
+            var maturity = mock(com.mei.zhgy.service.maturity.FarmMaturityService.class);
+            when(maturity.analyze(eq(42), eq(1L), eq(List.of()), isNull(), eq(List.of()), eq("MATURITY"), eq("FARM"), any()))
+                    .thenAnswer(call -> {
+                        java.util.function.Consumer<com.mei.zhgy.service.maturity.FarmMaturityService.ScanProgress> progress = call.getArgument(7);
+                        progress.accept(new com.mei.zhgy.service.maturity.FarmMaturityService.ScanProgress(1, 1, 1, 1));
+                        return Map.of("status", "COMPLETED", "runId", "maturity-verified", "summary", "已查看一个区域");
+                    });
+            var crops = new com.mei.zhgy.service.agriculture.CropResolver();
+            var registry = new AgriculturalToolRegistry(fields, views, null, null, null, maturity, crops,
+                    new com.mei.zhgy.service.agriculture.PhenologyService(crops));
+            var controller = new CopilotController(new CopilotApplicationService(routes, null, null, null, null, null, fields, null, null, crops, null));
+            controller.application.setPiRuntime(runtime);
+            ReflectionTestUtils.setField(controller.application, "agriculturalTools", registry);
+            MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
+            BaseContext.setCurrentId(1L);
+            var pending = mvc.perform(post("/api/copilot/chat").contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"message\":\"看看农场成熟度和本周任务，再给采收建议\"}")).andExpect(request().asyncStarted()).andReturn();
+            String output = mvc.perform(asyncDispatch(pending)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+            assertTrue(output.contains("OperationsQueryCard"), output);
+            assertTrue(output.contains("FarmInspectionProgress"), output);
+            assertTrue(output.contains("ui.block.updated"), output);
+            assertTrue(output.contains("FarmMaturityCard"), output);
+            assertTrue(output.contains("已检查区域观测和任务。"), output);
+            assertFalse(output.contains("event:diagnosis.job"), output);
+            assertEquals(2, requests.size());
+            assertTrue(requests.get(1).contains("maturity-verified"));
+            verify(views).view(42, null, null, null, "tasks", null, 1L);
+        } finally {
+            BaseContext.removeCurrentId();
+            runtime.close();
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "farmap.pi.integration", matches = "true")
+    void toolTimeoutOnlyCancelsTheSlowCall() throws Exception {
+        List<String> requests = new CopyOnWriteArrayList<>();
+        var mapper = new ObjectMapper();
+        var interrupted = new CountDownLatch(1);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            requests.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            if (requests.size() == 1) {
+                var calls = List.of(call(0, "delayed-call", "delayed", "{}"), call(1, "available-call", "available", "{}"));
+                sendCompletion(exchange, mapper.writeValueAsString(Map.of("tool_calls", calls)), "tool_calls");
+            } else sendCompletion(exchange, "{\"content\":\"已使用可用资料\"}", "stop");
+        });
+        server.start();
+        var runtime = new PiAgentRuntime();
+        ReflectionTestUtils.setField(runtime, "apiKey", "test-key");
+        ReflectionTestUtils.setField(runtime, "baseUrl", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1/chat/completions");
+        ReflectionTestUtils.setField(runtime, "model", "mock");
+        ReflectionTestUtils.setField(runtime, "queryTimeoutMs", 300L);
+        var schema = Map.<String, Object>of("type", "object", "properties", Map.of(), "additionalProperties", false);
+        var delayed = new PiAgentRuntime.ReadTool("delayed", "等待数据", schema, ignored -> {
+            try { TimeUnit.SECONDS.sleep(10); }
+            catch (InterruptedException e) { interrupted.countDown(); Thread.currentThread().interrupt(); }
+            return PiAgentRuntime.ToolReply.result(Map.of("status", "LATE_VALUE"));
+        });
+        var available = new PiAgentRuntime.ReadTool("available", "获取数据", schema,
+                ignored -> PiAgentRuntime.ToolReply.result(Map.of("status", "SIBLING_READY")));
+        try {
+            var result = runtime.run("test-timeout", "查询", "test runtime", List.of(), List.of(delayed, available), null, null);
+            assertEquals("completed", result.status());
+            assertEquals(2, requests.size());
+            assertTrue(requests.get(1).contains("TOOL_TIMEOUT"), requests.get(1));
+            assertTrue(requests.get(1).contains("SIBLING_READY"), requests.get(1));
+            assertFalse(requests.get(1).contains("LATE_VALUE"));
+            assertTrue(interrupted.await(3, TimeUnit.SECONDS));
+        } finally {
+            runtime.close();
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "farmap.pi.integration", matches = "true")
+    void overflowIsScopedToOneCommandOnASharedWorker(@org.junit.jupiter.api.io.TempDir java.nio.file.Path temp) throws Exception {
+        java.nio.file.Path worker = temp.resolve("overflow-fixture.mjs");
+        java.nio.file.Files.writeString(worker, """
+                import readline from 'node:readline';
+                const input = readline.createInterface({input: process.stdin});
+                input.on('line', raw => {
+                  const frame = JSON.parse(raw);
+                  if (frame.op !== 'start') return;
+                  const write = (value) => process.stdout.write(JSON.stringify({id: frame.id, ...value}) + '\\n');
+                  if (frame.session === 'congested') {
+                    for (let i = 0; i < 4096; i++) write({type: 'delta', text: 'x'});
+                  }
+                  write({type: 'done', status: 'completed', text: process.pid.toString()});
+                });
+                """);
+        var bridge = new PiAgentRuntime();
+        ReflectionTestUtils.setField(bridge, "worker", worker.toString());
+        ReflectionTestUtils.setField(bridge, "timeoutMs", 10000L);
+        var callbackEntered = new CountDownLatch(1);
+        var releaseCallback = new CountDownLatch(1);
+        var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            String existingWorker = bridge.run("first", "start", "", List.of(), List.of(), null, null).text();
+            var congested = executor.submit(() -> bridge.run("congested", "start", "", List.of(), List.of(), text -> {
+                callbackEntered.countDown();
+                try { releaseCallback.await(8, TimeUnit.SECONDS); }
+                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+            }, null));
+            assertTrue(callbackEntered.await(5, TimeUnit.SECONDS));
+            assertEquals(existingWorker, bridge.run("other-session", "start", "", List.of(), List.of(), null, null).text());
+            releaseCallback.countDown();
+            var failed = assertThrows(java.util.concurrent.ExecutionException.class, () -> congested.get(5, TimeUnit.SECONDS));
+            assertEquals("PI_STREAM_QUEUE_OVERFLOW", failed.getCause().getMessage());
+        } finally {
+            releaseCallback.countDown();
+            executor.shutdownNow();
+            bridge.close();
+        }
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "farmap.pi.integration", matches = "true")
     void explicitActionHandsPiDraftToApprovalInsteadOfRunningTheLegacyPlanner() throws Exception {
         var mapper = new ObjectMapper();
         var count = new java.util.concurrent.atomic.AtomicInteger();
@@ -261,8 +408,8 @@ class CopilotPiRuntimeIntegrationTest {
             var draft = new AgentRuntime.TaskDraft("地块灌溉复核", "先检查土壤湿度再灌溉。", date);
             when(workflows.prepareTaskDraft(eq("创建浇水任务"), any(), eq(1L), eq(draft))).thenReturn(run);
             when(workflows.require("pi-draft-run", 1L)).thenReturn(run);
-            CopilotController controller = new CopilotController(routes, null, null, null, null, null, null, workflows, null, null, null);
-            controller.setPiRuntime(runtime);
+            CopilotController controller = new CopilotController(new CopilotApplicationService(routes, null, null, null, null, null, null, workflows, null, null, null));
+            controller.application.setPiRuntime(runtime);
             MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
             BaseContext.setCurrentId(1L);
             MvcResult pending = mvc.perform(post("/api/copilot/chat").contentType(MediaType.APPLICATION_JSON)
@@ -296,13 +443,13 @@ class CopilotPiRuntimeIntegrationTest {
         CopilotConversationRepository repository = mock(CopilotConversationRepository.class);
         when(repository.find("owned", 2L)).thenReturn(Optional.empty());
         CopilotConversationService conversations = new CopilotConversationService(repository);
-        CopilotController controller = new CopilotController(mock(CopilotRouteService.class), conversations);
+        CopilotController controller = new CopilotController(new CopilotApplicationService(mock(CopilotRouteService.class), conversations));
         PiAgentRuntime runtime = mock(PiAgentRuntime.class);
-        controller.setPiRuntime(runtime);
+        controller.application.setPiRuntime(runtime);
         BaseContext.setCurrentId(2L);
         try {
             CopilotConversationException error = assertThrows(CopilotConversationException.class,
-                    () -> controller.controlAgent("owned", new CopilotController.PiControl("abort", 0L, null)));
+                    () -> controller.controlAgent("owned", new CopilotApplicationService.PiControl("abort", 0L, null)));
             assertEquals("CONVERSATION_NOT_FOUND", error.getCode());
             verify(repository).find("owned", 2L);
             verifyNoInteractions(runtime);

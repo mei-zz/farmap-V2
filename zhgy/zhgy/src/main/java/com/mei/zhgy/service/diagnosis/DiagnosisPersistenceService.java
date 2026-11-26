@@ -41,11 +41,15 @@ public class DiagnosisPersistenceService {
         String diagnosisId = "diagnosis-" + UUID.randomUUID();
         Instant now = Instant.now();
         response.setDiagnosisId(diagnosisId); response.setSourceRunId(response.getRunId()); response.setStatus("COMPLETED"); response.setCreatedAt(now); response.setUpdatedAt(now);
-        if (response.getMetadata() != null) {
-            java.util.Map<String, Object> metadata = new LinkedHashMap<>(response.getMetadata());
-            metadata.put("diagnosisId", diagnosisId); metadata.put("sourceRunId", response.getRunId()); metadata.put("diagnosisStatus", "COMPLETED");
-            response.setMetadata(metadata);
+        java.util.Map<String, Object> metadata = response.getMetadata() == null ? new LinkedHashMap<>()
+                : new LinkedHashMap<>(response.getMetadata());
+        metadata.put("diagnosisId", diagnosisId);
+        metadata.put("sourceRunId", response.getRunId());
+        metadata.put("diagnosisStatus", "COMPLETED");
+        if (request != null && request.getTrustedFieldContext() != null && request.getGrowthStage() != null) {
+            metadata.put("observedGrowthStage", request.getGrowthStage());
         }
+        response.setMetadata(metadata);
         DiagnosisRecord persisted = repository.save(responseRecord(response, request, userId, now));
         return persisted.getPayload();
     }

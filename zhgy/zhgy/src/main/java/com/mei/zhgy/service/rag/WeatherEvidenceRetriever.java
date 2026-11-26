@@ -48,6 +48,8 @@ public class WeatherEvidenceRetriever implements DiagnosisRetriever {
             metadata.put("dataDate", trusted.get("dataDate"));
             metadata.put("observedAt", trusted.get("observedAt"));
             metadata.put("granularity", trusted.get("granularity"));
+            metadata.put("rainfallForecast24h", trusted.get("rainfallForecast24h"));
+            metadata.put("rainfallProbability24h", trusted.get("rainfallProbability24h"));
         }
         return Collections.singletonList(DiagnosisEvidenceVO.builder()
                 .id("weather_14d")

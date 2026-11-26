@@ -16,7 +16,6 @@ import java.util.Locale;
 public class CopilotIntentRouter {
     private static final double DETERMINISTIC_CONFIDENCE = 0.99D;
     private static final double CONFLICT_CONFIDENCE = 0.40D;
-    private static final String INJECTION_PATTERN = "忽略(之前|所有|系统)?指令|ignore (all|previous|system) instructions|reveal (the )?system prompt|泄露系统提示";
     private final double minConfidence;
     private final CropResolver cropResolver;
     private final PhenologyService phenologyService;
@@ -40,7 +39,7 @@ public class CopilotIntentRouter {
         String message = rawMessage == null ? "" : rawMessage.trim();
         if (message.isBlank()) return new Classification(CopilotIntent.CLARIFICATION_REQUIRED, 0D, null);
         String normalized = CopilotQueryNormalizer.forMatching(message);
-        if (normalized.matches(".*(" + INJECTION_PATTERN + ").*")) {
+        if (CopilotSecurityGuard.isPromptOverride(normalized)) {
             return new Classification(CopilotIntent.UNSUPPORTED, DETERMINISTIC_CONFIDENCE, null);
         }
         if (contains(normalized, "删除数据库", "删除服务器", "转账", "修改系统密码", "delete database", "delete server", "transfer money", "change system password")) {
@@ -125,6 +124,34 @@ public class CopilotIntentRouter {
             return new Classification(CopilotIntent.CLARIFICATION_REQUIRED, 0.50D, null);
         }
         return new Classification(CopilotIntent.GENERAL_QA, 0.85D, null);
+    }
+
+    /** Harness routing reserves explicit administrative commands and lets Pi decide which reads to perform. */
+    public HybridClassification classifyHarness(String message) {
+        String normalized = CopilotQueryNormalizer.forMatching(message);
+        String compact = CopilotQueryNormalizer.compactForMatching(message);
+        CopilotIntent intent = CopilotIntent.GENERAL_QA;
+        String target = null;
+        if (compact.isEmpty()) intent = CopilotIntent.CLARIFICATION_REQUIRED;
+        else if (CopilotSecurityGuard.isPromptOverride(normalized)
+                || contains(normalized, "删除数据库", "删除服务器", "转账", "修改系统密码",
+                        "delete database", "delete server", "transfer money", "change system password")) intent = CopilotIntent.UNSUPPORTED;
+        else if (compact.matches("(?:请)?(?:查看|列出|显示)?(?:我有|当前有|现在有|有)?(?:哪些|几个|所有)?农场(?:列表|清单)?")) intent = CopilotIntent.FARM_STATUS_QUERY;
+        else if (compact.startsWith("请记住") || compact.startsWith("记住") || normalized.startsWith("remember that ")) intent = CopilotIntent.MEMORY_WRITE_REQUEST;
+        else if (compact.startsWith("忘掉") || compact.startsWith("忘记这条") || normalized.startsWith("forget this preference")) intent = CopilotIntent.MEMORY_FORGET_REQUEST;
+        else if (compact.startsWith("你还记得") || compact.startsWith("你记得我") || normalized.startsWith("what do you remember")) intent = CopilotIntent.MEMORY_QUERY;
+        else if (contains(compact, "正式诊断", "生成诊断报告", "出具诊断报告", "深度多模态诊断")
+                && !contains(compact, "不要生成诊断报告", "不生成诊断报告", "不用正式诊断", "无需正式诊断")) {
+            intent = CopilotIntent.DIAGNOSIS_REQUEST;
+        }
+        else if (!hasNegatedActionConstraint(normalized)
+                && (isTaskCreationRequest(normalized) || CopilotOperationQuery.harvestPlan(normalized))) intent = CopilotIntent.ACTION_REQUEST;
+        else if (compact.startsWith("打开") || compact.startsWith("导航到") || normalized.startsWith("go to ")) {
+            target = safeRoute(normalized);
+            if (target != null) intent = CopilotIntent.NAVIGATION_REQUEST;
+        }
+        var classification = new Classification(intent, DETERMINISTIC_CONFIDENCE, target);
+        return new HybridClassification(classification, classification, null, null);
     }
 
     public boolean belowThreshold(double confidence) { return confidence < minConfidence; }

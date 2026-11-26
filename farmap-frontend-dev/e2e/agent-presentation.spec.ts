@@ -106,3 +106,26 @@ test("weather uses the specialty layout with real units and keeps measured zero 
   await expect(card.getByText("17:31", { exact: false })).toBeVisible();
   await expect(card.getByText("测试气象服务", { exact: false })).toBeVisible();
 });
+
+test("ordered orchard profile proposal is persisted only after its explicit confirmation", async ({ page }) => {
+  const proposalId = "proposal-demo-orchard";
+  const memoryBlock = { ...block, blockId: "profile-proposal", componentType: "MemoryProposalCard", title: "确认保存果园资料",
+    status: "needs-input", data: { memoryProposal: { proposalId, scope: "FIELD", displayText: "海拔 850 米", status: "PENDING" } } };
+  await openWithStages(page, [[routeFrame,
+    ["message.part", { id: "question-suggestion", kind: "text", delta: "可以保存你提供的海拔资料。" }],
+    ["message.part", { id: memoryBlock.blockId, kind: "block", block: memoryBlock }], doneFrame]],
+    "这块地海拔 850 米");
+  let confirmations = 0;
+  await page.route(`**/api/copilot/memories/proposals/${proposalId}/confirm`, async (route) => {
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().postDataJSON()).toEqual({});
+    confirmations++;
+    await route.fulfill({ json: { proposal: { proposalId, status: "CONFIRMED" }, memory: { memoryId: "memory-001" } } });
+  });
+  const card = page.locator('[data-block-type="MemoryProposalCard"]');
+  await expect(card.getByText("海拔 850 米", { exact: true })).toBeVisible();
+  expect(confirmations).toBe(0);
+  await card.getByRole("button", { name: "确认保存" }).click();
+  await expect(card.getByText("已保存到长期记忆。")).toBeVisible();
+  expect(confirmations).toBe(1);
+});

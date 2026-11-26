@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("Copilot Command Bar reads real priorities and keeps image-only case retrieval honest", async ({ page }) => {
+test("Copilot compatibility routing still serves explicit data queries when SSE is unavailable", async ({ page }) => {
   let historicalSearchCalled = false;
 
   await page.addInitScript(() => {
@@ -53,12 +53,16 @@ test("Copilot Command Bar reads real priorities and keeps image-only case retrie
     contentType: "application/json",
     body: JSON.stringify({ data: { answer: "已根据当前返回的业务信息整理。", model: "e2e-model", grounded: true } }),
   }));
-  await page.route("**/api/copilot/chat", (route) => route.fulfill({ contentType: "text/event-stream", body: [
-    'event: route\ndata: {"intent":"KNOWLEDGE_QUERY","resolutionStatus":"RESOLVED"}\n\n',
-    'event: knowledge\ndata: {"count":1,"status":"READY"}\n\n',
-    'event: content.delta\ndata: {"delta":"花期高温时应关注土壤水分。"}\n\n',
-    'event: done\ndata: {"status":"COMPLETED"}\n\n',
-  ].join("") }));
+  await page.route("**/api/copilot/chat", (route) => {
+    const body = route.request().postDataJSON() as { message?: string };
+    if (!body.message?.includes("高温怎么办")) return route.abort("failed");
+    return route.fulfill({ contentType: "text/event-stream", body: [
+      'event: route\ndata: {"intent":"KNOWLEDGE_QUERY","resolutionStatus":"RESOLVED"}\n\n',
+      'event: knowledge\ndata: {"count":1,"status":"READY"}\n\n',
+      'event: content.delta\ndata: {"delta":"花期高温时应关注土壤水分。"}\n\n',
+      'event: done\ndata: {"status":"COMPLETED"}\n\n',
+    ].join("") });
+  });
   await page.route("**/api/historical-cases/search", async (route) => {
     historicalSearchCalled = true;
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { status: "READY", items: [{ caseId: "CASE-REAL-001", similarityScore: 87.2 }] } }) });

@@ -42,6 +42,15 @@ public class CopilotRouteService {
     }
 
     public CopilotRouteResult route(CopilotRouteRequest request, Long userId, boolean hasUserImages, boolean includePreferences) {
+        return route(request, userId, hasUserImages, includePreferences, false);
+    }
+
+    public CopilotRouteResult routeHarness(CopilotRouteRequest request, Long userId, boolean hasUserImages) {
+        return route(request, userId, hasUserImages, false, true);
+    }
+
+    private CopilotRouteResult route(CopilotRouteRequest request, Long userId, boolean hasUserImages,
+                                    boolean includePreferences, boolean domainHarness) {
         String traceId = "trace-" + UUID.randomUUID();
         CopilotRouteRequest safeRequest = request == null ? new CopilotRouteRequest() : request;
         CopilotConversationService.ConversationHandle conversation = conversations == null ? null : conversations.begin(safeRequest, userId);
@@ -56,7 +65,8 @@ public class CopilotRouteService {
                 : safeRequest.getMessage();
         CopilotRouteRequest routingRequest = pendingActionConfirmation
                 ? copyWithMessage(safeRequest, effectiveMessage) : safeRequest;
-        CopilotIntentRouter.HybridClassification hybrid = router.classifyHybrid(effectiveMessage, hybridContext, hasUserImages);
+        CopilotIntentRouter.HybridClassification hybrid = domainHarness
+                ? router.classifyHarness(effectiveMessage) : router.classifyHybrid(effectiveMessage, hybridContext, hasUserImages);
         CopilotIntentRouter.Classification classification = hybrid.finalClassification();
         CopilotIntent intent = classification.intent();
         boolean pendingContinuation = conversation != null && pendingRecommendationContinuation(conversation.snapshot(), safeRequest.getMessage());
@@ -90,6 +100,14 @@ public class CopilotRouteService {
             return persisted;
         }
         CopilotContextResolver.Resolution resolution = resolver.resolve(routingRequest, routingRequest.getPageContext(), session, intent, userId);
+        if (domainHarness && intent == CopilotIntent.ACTION_REQUEST && !pendingContinuation
+                && resolution.status() == CopilotResolutionStatus.CLARIFICATION_REQUIRED
+                && "请先打开或明确要处理的地块。".equals(resolution.question())) {
+            var farmScope = resolver.resolve(routingRequest, routingRequest.getPageContext(), session, CopilotIntent.GENERAL_QA, userId);
+            if (farmScope.status() == CopilotResolutionStatus.RESOLVED && farmScope.context() != null
+                    && farmScope.context().getFarmId() != null && farmScope.context().getFieldId() == null
+                    && farmScope.context().getDiagnosisId() == null) resolution = farmScope;
+        }
         // Keep the intent-to-capability contract visible even while context is
         // incomplete; execution remains impossible until resolution is RESOLVED.
         CopilotCapability capability = capability(intent);

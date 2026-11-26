@@ -283,6 +283,10 @@ public class KnowledgeEvidenceRetriever implements DiagnosisRetriever {
             metadata.put("hybridScore", hit.hybridScore);
             metadata.put("retrievalScore", hit.hybridScore > 0D ? hit.hybridScore : hit.vectorScore);
             metadata.put("rerankScore", Double.isFinite(hit.rerankScore) ? hit.rerankScore : null);
+            if (hit.rrfScore > 0D) {
+                metadata.put("rrfScore", hit.rrfScore);
+                metadata.put("rrfUpperBound", qwenVectorStore.rrfUpperBound());
+            }
             metadata.put("evidenceConfidence", Double.isFinite(hit.rerankScore) ? hit.rerankScore : hit.vectorScore);
             metadata.put("embeddingProvider", result.getRetrievalProvider());
             metadata.put("embeddingModel", QwenKnowledgeVectorStore.MODEL);

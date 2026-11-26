@@ -133,10 +133,32 @@ public class HistoricalCaseCandidateService {
     }
 
     public List<Map<String, Object>> list(Long actorId, String status) {
+        return list(actorId, status, null);
+    }
+
+    public List<Map<String, Object>> list(Long actorId, String status, Integer limit) {
         requireActorForProduction(actorId);
-        if (dataSource == null) { requirePersistentReadOrFallback(); return fallback.values().stream().filter(item -> status == null || status.isBlank() || status.equalsIgnoreCase(text(item.get("status")))).filter(item -> visible(item, actorId)).sorted(Comparator.comparing(item -> text(item.get("updatedAt")), Comparator.reverseOrder())).map(this::copy).toList(); }
+        int cap = limit == null ? Integer.MAX_VALUE : Math.min(200, Math.max(1, limit));
+        if (dataSource == null) { requirePersistentReadOrFallback(); return fallback.values().stream().filter(item -> status == null || status.isBlank() || status.equalsIgnoreCase(text(item.get("status")))).filter(item -> visible(item, actorId)).sorted(Comparator.comparing(item -> text(item.get("updatedAt")), Comparator.reverseOrder())).limit(cap).map(this::copy).toList(); }
         List<Map<String, Object>> result = new ArrayList<>();
-        try (Connection connection = dataSource.getConnection()) { ensureSchema(connection); StringBuilder sql = new StringBuilder("SELECT ").append(COLUMNS).append(" FROM historical_case_candidates WHERE (owner_user_id IS NULL OR owner_user_id=?)"); if (status != null && !status.isBlank()) sql.append(" AND status=?"); sql.append(" ORDER BY updated_at DESC"); try (PreparedStatement statement = connection.prepareStatement(sql.toString())) { int i = 1; setLong(statement, i++, actorId); if (status != null && !status.isBlank()) statement.setString(i, status.toUpperCase()); try (ResultSet rs = statement.executeQuery()) { while (rs.next()) result.add(row(rs)); } } return result; }
+        try (Connection connection = dataSource.getConnection()) {
+            ensureSchema(connection);
+            StringBuilder sql = new StringBuilder("SELECT ").append(COLUMNS).append(" FROM historical_case_candidates WHERE (owner_user_id IS NULL OR owner_user_id=?)");
+            boolean filter = status != null && !status.isBlank();
+            if (filter) sql.append(" AND status=?");
+            sql.append(" ORDER BY updated_at DESC");
+            if (limit != null) sql.append(" LIMIT ?");
+            try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
+                int i = 1;
+                setLong(statement, i++, actorId);
+                if (filter) statement.setString(i++, status.toUpperCase(java.util.Locale.ROOT));
+                if (limit != null) statement.setInt(i, cap);
+                try (ResultSet rs = statement.executeQuery()) {
+                    while (rs.next()) result.add(row(rs));
+                }
+            }
+            return result;
+        }
         catch (Exception error) { throw ExpertReviewWriteException.persistence("Historical Case Candidate 列表不可用", error); }
     }
 

@@ -4,6 +4,7 @@ import type { OverviewCopilotContext } from "@/features/overview/copilot/context
 import type { CopilotResponseMetadata, CopilotResponseMode } from "@/features/copilot/contract";
 import type { ChatActivity } from "@/features/copilot/chatActivity";
 import type { MessagePresentation } from "@/features/copilot/presentation";
+import type { MessagePart } from "@/features/copilot/messageParts";
 
 export type CopilotMessage = {
   id: string;
@@ -19,6 +20,10 @@ export type CopilotMessage = {
   responseMode?: CopilotResponseMode;
   responseLabel?: string;
   responseMeta?: CopilotResponseMetadata;
+  /** Server-reported stream failure kept separate from ordered public parts. */
+  streamError?: string;
+  /** Ordered public presentation parts; omitted for restored legacy turns. */
+  parts?: MessagePart[];
   uiBlocks?: AgentUiBlock[];
   imageAttachments?: Array<{ id: string; name: string; url: string }>;
   referenceImages?: Array<{ refId: string; label: string; imageUrl: string; match?: string }>;

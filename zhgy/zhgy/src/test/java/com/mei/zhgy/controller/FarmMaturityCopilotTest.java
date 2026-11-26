@@ -51,8 +51,8 @@ class FarmMaturityCopilotTest {
                     return report;
                 });
         when(service.run("maturity-1", 7L)).thenReturn(report);
-        var controller = new CopilotController(routes, conversations);
-        controller.setMaturityService(service);
+        var controller = new CopilotController(new CopilotApplicationService(routes, conversations));
+        controller.application.setMaturityService(service);
         var mvc = MockMvcBuilders.standaloneSetup(controller).build();
         BaseContext.setCurrentId(7L);
         try {

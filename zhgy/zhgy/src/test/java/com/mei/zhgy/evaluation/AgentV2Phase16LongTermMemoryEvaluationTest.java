@@ -1,5 +1,7 @@
 package com.mei.zhgy.evaluation;
 
+import com.mei.zhgy.service.copilot.CopilotApplicationService;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mei.zhgy.context.BaseContext;
@@ -144,7 +146,7 @@ class AgentV2Phase16LongTermMemoryEvaluationTest {
         cases.put("L25_short_long_boundary", l25.getRelevantLongTermMemories().stream().allMatch(memory -> memory.getMemoryId().startsWith("memory-")) && l25.getResolvedContext().getDiagnosisId() == null);
 
         Fixture http = fixture();
-        MockMvc mvc = MockMvcBuilders.standaloneSetup(new CopilotController(http.routes, http.conversations, http.memoryService)).setMessageConverters(new MappingJackson2HttpMessageConverter()).build();
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new CopilotController(new CopilotApplicationService(http.routes, http.conversations, http.memoryService))).setMessageConverters(new MappingJackson2HttpMessageConverter()).build();
         BaseContext.setCurrentId(42L);
         try {
             JsonNode conversationA = MAPPER.readTree(mvc.perform(post("/api/copilot/conversations").contentType(MediaType.APPLICATION_JSON)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());

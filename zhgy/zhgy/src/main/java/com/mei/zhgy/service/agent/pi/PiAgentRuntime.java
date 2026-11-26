@@ -10,16 +10,44 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** A private, lazy JSON-lines bridge. The worker never receives the server's ambient credentials. */
 @Service
 public class PiAgentRuntime {
+    private static final Logger log = LoggerFactory.getLogger(PiAgentRuntime.class);
     public record HistoryMessage(String role, String text) {}
+    @FunctionalInterface public interface ProgressExecutor {
+        ToolReply execute(JsonNode arguments, Consumer<ToolReply> progress);
+    }
     public record ReadTool(String name, String description, Map<String, Object> parameters,
-                           Function<JsonNode, ToolReply> execute) {}
-    public record ToolReply(Object data, Map<String, Object> uiBlock, boolean isError) {
+                           Function<JsonNode, ToolReply> execute, boolean multimodal, ProgressExecutor progressExecutor) {
+        public ReadTool(String name, String description, Map<String, Object> parameters,
+                        Function<JsonNode, ToolReply> execute) {
+            this(name, description, parameters, execute, false, null);
+        }
+        public ReadTool(String name, String description, Map<String, Object> parameters,
+                        Function<JsonNode, ToolReply> execute, boolean multimodal) {
+            this(name, description, parameters, execute, multimodal, null);
+        }
+    }
+    public record ToolCitation(int index, String evidenceId, String modality, String title, String sourceName,
+                               String stageLabel, String snippet, String imageUrl, String documentName,
+                               Double score, String expertStatus) {}
+    public record ToolReply(Object data, Map<String, Object> uiBlock, List<ToolCitation> citations, boolean isError) {
+        public ToolReply {
+            citations = citations == null ? List.of() : List.copyOf(citations);
+        }
+        public ToolReply(Object data, Map<String, Object> uiBlock, boolean isError) {
+            this(data, uiBlock, List.of(), isError);
+        }
+        public ToolReply withCitations(List<ToolCitation> references) {
+            return new ToolReply(data, uiBlock, references, isError);
+        }
         public static ToolReply result(Object data) { return new ToolReply(data, null, false); }
         public static ToolReply error(String code) { return new ToolReply(Map.of("status", code), null, true); }
     }
@@ -36,6 +64,8 @@ public class PiAgentRuntime {
     @Value("${farmap.agent.pi.node:node}") private String node = "node";
     @Value("${farmap.agent.pi.worker:pi-runtime/worker.mjs}") private String worker = "pi-runtime/worker.mjs";
     @Value("${farmap.agent.pi.timeout-ms:180000}") private long timeoutMs = 180000;
+    @Value("${farmap.agent.pi.query-timeout-ms:12000}") private long queryTimeoutMs = 12000;
+    @Value("${farmap.agent.pi.multimodal-timeout-ms:35000}") private long multimodalTimeoutMs = 35000;
     @Value("${farmap.ai.opencode.enabled:false}") private boolean openCodeEnabled;
     @Value("${farmap.ai.opencode.api-key:}") private String openCodeApiKey;
     @Value("${farmap.ai.opencode.url:https://opencode.ai/inference/go/openai/v1/chat/completions}") private String openCodeUrl;
@@ -45,7 +75,8 @@ public class PiAgentRuntime {
     @Value("${farmap.ai.router.fast-model:qwen-flash}") private String model;
     @Value("${farmap.ai.router.default-model:qwen-plus-2025-07-28}") private String fallbackModel;
     @Value("${farmap.ai.generation.copilot-max-output-tokens:2048}") private int maxOutputTokens = 2048;
-    private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+    private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules()
+            .disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     private final Object lock = new Object();
     private final ExecutorService queries = new ThreadPoolExecutor(8, 8, 0, TimeUnit.MILLISECONDS,
             new ArrayBlockingQueue<>(128), runnable -> {
@@ -53,6 +84,14 @@ public class PiAgentRuntime {
         thread.setDaemon(true);
         return thread;
     });
+    private final ScheduledThreadPoolExecutor toolTimers = new ScheduledThreadPoolExecutor(1, runnable -> {
+        Thread thread = new Thread(runnable, "farmap-pi-tool-deadline");
+        thread.setDaemon(true);
+        return thread;
+    });
+    {
+        toolTimers.setRemoveOnCancelPolicy(true);
+    }
     private Worker current;
     private boolean closed;
 
@@ -72,10 +111,20 @@ public class PiAgentRuntime {
     public Result run(String session, Long contextVersion, String scope, String message, String systemPrompt,
                       List<HistoryMessage> history, List<ReadTool> tools, Consumer<String> delta,
                       Consumer<Map<String, Object>> event, Consumer<ToolObservation> observation) {
+        return run(session, contextVersion, scope, message, systemPrompt, null, null, null, history, tools, delta, event, observation);
+    }
+
+    public Result run(String session, Long contextVersion, String scope, String message, String systemPrompt,
+                      String environment, String turnId, String lastCompletedTurnId, List<HistoryMessage> history,
+                      List<ReadTool> tools, Consumer<String> delta, Consumer<Map<String, Object>> event,
+                      Consumer<ToolObservation> observation) {
         Map<String, Object> request = new LinkedHashMap<>();
         request.put("op", "start"); request.put("session", session); request.put("message", message);
         if (contextVersion != null) request.put("contextVersion", contextVersion);
         if (scope != null) request.put("scope", scope);
+        if (environment != null) request.put("environment", environment);
+        if (turnId != null) request.put("turnId", turnId);
+        if (lastCompletedTurnId != null) request.put("lastCompletedTurnId", lastCompletedTurnId);
         request.put("systemPrompt", systemPrompt); request.put("history", history == null ? List.of() : history);
         List<ReadTool> registered = tools == null ? List.of() : List.copyOf(tools);
         request.put("tools", registered.stream().map(t -> Map.of("name", t.name(),
@@ -109,7 +158,7 @@ public class PiAgentRuntime {
         if (!(request.get("session") instanceof String) || ((String) request.get("session")).isBlank()) throw failure("INVALID_SESSION");
         String id = UUID.randomUUID().toString(); request.put("id", id);
         BlockingQueue<Object> queue = new ArrayBlockingQueue<>(2048);
-        Map<String, Future<?>> inFlight = new LinkedHashMap<>();
+        Map<String, ToolInvocation> inFlight = new LinkedHashMap<>();
         Worker w;
         ToolSet initial = tools.isEmpty() ? null : new ToolSet(request, tools);
         synchronized (lock) {
@@ -129,8 +178,20 @@ public class PiAgentRuntime {
                 long remaining = deadline - System.nanoTime();
                 Object item = remaining > 0 ? queue.poll(remaining, TimeUnit.NANOSECONDS) : null;
                 if (item == null) { keepRegistration = true; abortRunQuietly(w, request); throw failure("TIMEOUT"); }
+                if (w.overflowed.contains(id)) {
+                    abortRunQuietly(w, request);
+                    throw failure("STREAM_QUEUE_OVERFLOW");
+                }
+                if (item instanceof ToolProgress progress) {
+                    if (observation != null && inFlight.containsKey(progress.callId())) {
+                        try { observation.accept(new ToolObservation(progress.name(), progress.reply())); }
+                        catch (RuntimeException error) { keepRegistration = true; abortRunQuietly(w, request); throw error; }
+                    }
+                    continue;
+                }
                 if (item instanceof ToolCompletion completion) {
-                    inFlight.remove(completion.callId());
+                    ToolInvocation invocation = inFlight.remove(completion.callId());
+                    if (invocation != null) invocation.timeout().cancel(false);
                     if (observation != null && !completion.reply().isError()) {
                         try { observation.accept(new ToolObservation(completion.name(), completion.reply())); }
                         catch (RuntimeException error) { keepRegistration = true; abortRunQuietly(w, request); throw error; }
@@ -168,8 +229,11 @@ public class PiAgentRuntime {
         } catch (IOException e) {
             failWorker(w); throw failure("WORKER_UNAVAILABLE");
         } finally {
-            w.pending.remove(id);
-            inFlight.values().forEach(future -> future.cancel(true));
+            synchronized (queue) {
+                w.pending.remove(id, queue);
+                w.overflowed.remove(id);
+            }
+            inFlight.values().forEach(ToolInvocation::cancel);
             if (initial != null) {
                 if (keepRegistration) initial.resumeUntil = System.nanoTime() + TOOL_SET_TTL;
                 else w.toolSets.remove(id, initial);
@@ -178,7 +242,7 @@ public class PiAgentRuntime {
     }
 
     private void dispatchTool(Worker w, Map<String, Object> request, JsonNode frame, BlockingQueue<Object> queue,
-                              Map<String, Future<?>> inFlight) throws IOException {
+                              Map<String, ToolInvocation> inFlight) throws IOException {
         String id = (String) request.get("id");
         String callId = frame.path("callId").asText();
         String toolsetId = frame.path("toolsetId").asText();
@@ -193,22 +257,36 @@ public class PiAgentRuntime {
             sendToolReply(w, id, callId, "{\"status\":\"INVALID_TOOL_REQUEST\"}", true);
             return;
         }
+        AtomicBoolean completed = new AtomicBoolean();
+        FutureTask<Void> query = new FutureTask<>(() -> {
+            ToolCompletion completion = invoke(tool, callId, args,
+                    progress -> { if (!completed.get()) receive(w, id, new ToolProgress(callId, name, progress)); });
+            if (completed.compareAndSet(false, true)) receive(w, id, completion);
+            return null;
+        });
+        ScheduledFuture<?> timeout = null;
         try {
-            Future<?> future = queries.submit(() -> {
-                ToolCompletion completion = invoke(tool, callId, args);
-                if (w.pending.get(id) == queue && !queue.offer(completion)) failWorker(w);
-            });
-            inFlight.put(callId, future);
+            long timeoutMillis = tool.multimodal() ? multimodalTimeoutMs : queryTimeoutMs;
+            timeout = toolTimers.schedule(() -> {
+                if (!completed.compareAndSet(false, true)) return;
+                query.cancel(true);
+                String text = "{\"status\":\"TOOL_TIMEOUT\",\"retryable\":true,\"hint\":\"该数据源响应超时，请基于已有证据回答并说明缺口\"}";
+                receive(w, id, new ToolCompletion(callId, tool.name(), ToolReply.error("TOOL_TIMEOUT"), text));
+            }, Math.max(1, timeoutMillis), TimeUnit.MILLISECONDS);
+            queries.execute(query);
+            inFlight.put(callId, new ToolInvocation(query, timeout));
         } catch (RejectedExecutionException busy) {
-            sendToolReply(w, id, callId, "{\"status\":\"TOOL_BUSY\"}", true);
+            if (timeout != null) timeout.cancel(false);
+            if (completed.compareAndSet(false, true)) sendToolReply(w, id, callId, "{\"status\":\"TOOL_BUSY\"}", true);
+            else if (timeout != null) inFlight.put(callId, new ToolInvocation(query, timeout));
         }
     }
 
-    private ToolCompletion invoke(ReadTool tool, String callId, JsonNode args) {
+    private ToolCompletion invoke(ReadTool tool, String callId, JsonNode args, Consumer<ToolReply> progress) {
         ToolReply reply;
         String text;
         try {
-            reply = tool.execute().apply(args);
+            reply = tool.progressExecutor() == null ? tool.execute().apply(args) : tool.progressExecutor().execute(args, progress);
             text = mapper.writeValueAsString(reply.data());
             if (text.length() > MAX_TOOL_TEXT) {
                 reply = ToolReply.error("TOOL_RESULT_TOO_LARGE");
@@ -243,6 +321,17 @@ public class PiAgentRuntime {
         }
         JsonNode isError = source.get("isError");
         if (isError != null && isError.isBoolean()) safe.put("isError", isError.booleanValue());
+        if ("message_end".equals(safe.get("type"))) {
+            JsonNode usage = source.path("usage");
+            Map<String, Long> counts = new LinkedHashMap<>();
+            for (String key : List.of("inputTokens", "outputTokens", "cacheReadTokens")) {
+                JsonNode count = usage.path(key);
+                if (count.isIntegralNumber() && count.canConvertToLong() && count.longValue() >= 0) {
+                    counts.put(key, count.longValue());
+                }
+            }
+            if (!counts.isEmpty()) safe.put("usage", counts);
+        }
         return safe;
     }
 
@@ -269,9 +358,9 @@ public class PiAgentRuntime {
                     env.put("FARMAP_PI_FALLBACK_MODEL", fallbackModel == null ? "" : fallbackModel);
                 }
                 env.put("FARMAP_PI_MAX_OUTPUT_TOKENS", String.valueOf(Math.max(256, maxOutputTokens)));
-                builder.redirectError(ProcessBuilder.Redirect.DISCARD);
                 Worker w = new Worker(builder.start()); current = w;
                 Thread reader = new Thread(() -> read(w), "farmap-pi-stdout"); reader.setDaemon(true); reader.start();
+                Thread stderr = new Thread(() -> readStderr(w), "farmap-pi-stderr"); stderr.setDaemon(true); stderr.start();
                 return w;
             } catch (IOException e) { throw failure("WORKER_UNAVAILABLE"); }
         }
@@ -284,10 +373,34 @@ public class PiAgentRuntime {
                 JsonNode frame;
                 try { frame = mapper.readTree(line); } catch (IOException ignored) { continue; }
                 if (frame == null) continue;
-                BlockingQueue<Object> queue = w.pending.get(frame.path("id").asText());
-                if (queue != null && !queue.offer(frame)) { failWorker(w); return; }
+                receive(w, frame.path("id").asText(), frame);
             }
         } catch (IOException ignored) { } finally { failWorker(w); }
+    }
+
+    private void receive(Worker w, String id, Object frame) {
+        BlockingQueue<Object> queue = w.pending.get(id);
+        if (queue == null) return;
+        synchronized (queue) {
+            if (w.pending.get(id) != queue || w.overflowed.contains(id)) return;
+            if (!queue.offer(frame)) {
+                w.overflowed.add(id);
+                queue.clear();
+                queue.offer(mapper.createObjectNode().put("type", "error"));
+            }
+        }
+    }
+
+    private void readStderr(Worker w) {
+        try (BufferedReader input = new BufferedReader(new InputStreamReader(w.process.getErrorStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = input.readLine()) != null) {
+                // Only forward structured worker diagnostics, which contain no provider payload.
+                if (line.matches("FARMAP_PI [A-Z0-9_]{1,64}")) log.warn("{}", line);
+                else if (line.matches("(?:[A-Za-z]+Error|Error):.*")) log.warn("Pi worker stderr: {}", line.substring(0, line.indexOf(':')));
+                else if (log.isDebugEnabled()) log.debug("Pi worker emitted a stderr diagnostic");
+            }
+        } catch (IOException ignored) { /* the stdout reader owns process lifecycle */ }
     }
 
     private void abortRunQuietly(Worker w, Map<String, Object> request) {
@@ -313,10 +426,18 @@ public class PiAgentRuntime {
         synchronized (lock) { closed = true; w = current; current = null; }
         if (w != null) failWorker(w);
         queries.shutdownNow();
+        toolTimers.shutdownNow();
     }
 
     private static IllegalStateException failure(String code) { return new IllegalStateException("PI_" + code); }
     private record ToolCompletion(String callId, String name, ToolReply reply, String text) {}
+    private record ToolProgress(String callId, String name, ToolReply reply) {}
+    private record ToolInvocation(Future<?> query, Future<?> timeout) {
+        void cancel() {
+            timeout.cancel(false);
+            query.cancel(true);
+        }
+    }
 
     private static final class ToolSet {
         final Object session;
@@ -344,6 +465,7 @@ public class PiAgentRuntime {
         final BufferedWriter input;
         final Object writeLock = new Object();
         final ConcurrentMap<String, BlockingQueue<Object>> pending = new ConcurrentHashMap<>();
+        final Set<String> overflowed = ConcurrentHashMap.newKeySet();
         final ConcurrentMap<String, ToolSet> toolSets = new ConcurrentHashMap<>();
         Worker(Process process) {
             this.process = process;

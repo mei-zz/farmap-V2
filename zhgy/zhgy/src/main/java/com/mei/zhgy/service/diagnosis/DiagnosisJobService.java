@@ -16,6 +16,8 @@ import java.util.Comparator;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
@@ -79,10 +81,25 @@ public class DiagnosisJobService {
         return state.snapshot();
     }
 
+    public CompletionStage<DiagnosisJobResponse> completion(String jobId, Long userId) {
+        JobState state = jobs.get(jobId);
+        if (state == null || (state.ownerUserId != null && !state.ownerUserId.equals(userId))) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return state.completion.thenApply(result -> result);
+    }
+
+    public Runnable subscribeProgress(String jobId, Long userId,
+                                      java.util.function.Consumer<DiagnosisRagService.RetrievalProgress> listener) {
+        JobState state = jobs.get(jobId);
+        if (state == null || (state.ownerUserId != null && !state.ownerUserId.equals(userId))) return () -> {};
+        return state.subscribe(listener);
+    }
+
     private void execute(JobState state, DiagnosisAnalyzeRequest request) {
         state.update("RUNNING", "RAG", "正在执行真实 RAG 检索与模型生成…");
         try {
-            DiagnosisAnalysisResponse analyzed = diagnosisRagService.analyze(request, state.ownerUserId);
+            DiagnosisAnalysisResponse analyzed = diagnosisRagService.analyze(request, state.ownerUserId, state::publish);
             state.update("RUNNING", "PERSISTING", "Diagnosis 已生成，正在保存稳定身份…");
             DiagnosisAnalysisResponse persisted = diagnosisPersistenceService.persist(analyzed, request, state.ownerUserId);
             state.complete(persisted);
@@ -133,6 +150,28 @@ public class DiagnosisJobService {
     }
 
     private static final class JobState {
+        private final CompletableFuture<DiagnosisJobResponse> completion = new CompletableFuture<>();
+        private final java.util.List<DiagnosisRagService.RetrievalProgress> progress = new java.util.ArrayList<>();
+        private final java.util.Set<java.util.function.Consumer<DiagnosisRagService.RetrievalProgress>> listeners = new java.util.LinkedHashSet<>();
+
+        private synchronized Runnable subscribe(java.util.function.Consumer<DiagnosisRagService.RetrievalProgress> listener) {
+            progress.forEach(listener);
+            if (!terminal()) listeners.add(listener);
+            return () -> unsubscribe(listener);
+        }
+
+        private synchronized void unsubscribe(java.util.function.Consumer<DiagnosisRagService.RetrievalProgress> listener) {
+            listeners.remove(listener);
+        }
+
+        private synchronized void publish(DiagnosisRagService.RetrievalProgress update) {
+            if (progress.size() < 48) progress.add(update);
+            var iterator = listeners.iterator();
+            while (iterator.hasNext()) {
+                try { iterator.next().accept(update); }
+                catch (RuntimeException disconnected) { iterator.remove(); }
+            }
+        }
         private final String jobId;
         private final Long ownerUserId;
         private final Instant createdAt;
@@ -167,6 +206,8 @@ public class DiagnosisJobService {
             this.diagnosisId = result == null ? null : result.getDiagnosisId();
             this.sourceRunId = result == null ? null : result.getSourceRunId();
             this.updatedAt = Instant.now();
+            listeners.clear();
+            completion.complete(snapshot());
         }
 
         private synchronized void fail(String message) {
@@ -179,6 +220,8 @@ public class DiagnosisJobService {
             this.message = message;
             this.error = errorCode == null || errorCode.isBlank() ? message : errorCode + ": " + message;
             this.updatedAt = Instant.now();
+            listeners.clear();
+            completion.complete(snapshot());
         }
 
         private boolean terminal() {

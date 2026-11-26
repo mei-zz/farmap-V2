@@ -64,7 +64,7 @@ public class CopilotLongTermMemoryService {
     }
 
     public CopilotLongTermMemory write(CopilotMemoryCandidate candidate, Long userId, String conversationId, String turnId) {
-        validateScope(candidate, userId);
+        validateWrite(candidate, userId);
         Optional<CopilotLongTermMemory> existing = repository.findActiveBySemantic(userId, candidate);
         if (existing.isPresent()) return existing.get();
         List<CopilotLongTermMemory> conflicts = repository.findActiveByKey(userId, candidate);
@@ -101,6 +101,18 @@ public class CopilotLongTermMemoryService {
     }
 
     public CopilotMemoryView view(CopilotLongTermMemory memory) { return CopilotMemoryView.from(memory); }
+
+    public Optional<CopilotMemoryView> viewById(String memoryId, Long authenticatedUserId) {
+        if (authenticatedUserId == null || blank(memoryId)) return Optional.empty();
+        return repository.findById(memoryId, authenticatedUserId).map(CopilotMemoryView::from);
+    }
+
+    public void requireAccess(CopilotMemoryScope scope, String scopeId, Long authenticatedUserId) {
+        if (authenticatedUserId == null) throw new CopilotConversationException("AUTHENTICATION_REQUIRED", "请先登录。", 401);
+        if (scope == null) throw new CopilotConversationException("MEMORY_SCOPE_REQUIRED", "长期记忆缺少作用域。", 400);
+        if (scope != CopilotMemoryScope.USER && blank(scopeId)) throw new CopilotConversationException("MEMORY_SCOPE_REQUIRED", "长期记忆缺少作用域对象。", 400);
+        validateScope(CopilotMemoryCandidate.builder().scope(scope).scopeId(scopeId).build(), authenticatedUserId);
+    }
 
     public CopilotMemoryView revokeById(String memoryId, Long userId) {
         CopilotLongTermMemory memory = repository.findById(memoryId, userId).orElseThrow(() -> new CopilotConversationException("MEMORY_NOT_FOUND", "长期记忆不存在或不属于当前用户。", 404));
@@ -148,6 +160,28 @@ public class CopilotLongTermMemoryService {
         if (candidate.getScope() == CopilotMemoryScope.USER) return;
         if (candidate.getScope() == CopilotMemoryScope.FIELD) { fields.get(candidate.getScopeId(), userId); return; }
         authorizeFarm(candidate.getScopeId(), userId);
+    }
+
+    private void validateWrite(CopilotMemoryCandidate candidate, Long userId) {
+        if (userId == null) throw new CopilotConversationException("AUTHENTICATION_REQUIRED", "请先登录。", 401);
+        if (candidate == null || candidate.getType() == null) throw new CopilotConversationException("MEMORY_CANDIDATE_REQUIRED", "长期记忆内容不能为空。", 400);
+        if (candidate.getType().isProfileFact()) {
+            if (candidate.getScope() == null || candidate.getScope() == CopilotMemoryScope.USER || blank(candidate.getScopeId())) {
+                throw new CopilotConversationException("MEMORY_SCOPE_REQUIRED", "果园资料必须绑定农场或地块。", 400);
+            }
+            if (!CopilotMemoryProposalService.isAllowedMemoryKey(candidate.getKey())) {
+                throw new CopilotConversationException("PROFILE_KEY_NOT_ALLOWED", "不支持的果园资料类型。", 400);
+            }
+            if (blank(candidate.getValue()) || candidate.getValue().length() > CopilotMemoryProposalService.MAX_PROFILE_VALUE_LENGTH) {
+                throw new CopilotConversationException("PROFILE_VALUE_INVALID", "果园资料值不能为空或过长。", 400);
+            }
+            String normalizedValue = lower(candidate.getValue());
+            if (containsSensitive(normalizedValue) || containsSafetyOverride(normalizedValue)) {
+                throw new CopilotConversationException("PROFILE_VALUE_REJECTED", "该果园资料值包含不安全内容。", 400);
+            }
+            candidate.setDisplayText(CopilotMemoryProposalService.selfReportedDisplayText(candidate.getKey(), candidate.getValue()));
+        }
+        validateScope(candidate, userId);
     }
 
     private void authorizeFarm(String farmId, Long userId) {

@@ -1,19 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Sprout, Map, Bug, CalendarDays, CloudSun, ArrowDown } from "lucide-react";
-import { applyChatActivity, chatToolLabel, type ChatActivity } from "@/features/copilot/chatActivity";
-import { CopilotTurnActivity } from "./CopilotTurnActivity";
+import { applyChatActivity, chatToolLabel } from "@/features/copilot/chatActivity";
 import { farmMaturityPrompt } from "@/features/farm/cameras";
 import MaturityWorkspace from "@/features/maturity/MaturityWorkspace";
-import { AgentUiBlocks } from "@/features/copilot/AgentUiBlocks";
-import { isExecutionBlock, mergePresentation, parsePresentation, updatePresentationBlocks, type MessagePresentation } from "@/features/copilot/presentation";
+import { isExecutionBlock, parsePresentation } from "@/features/copilot/presentation";
 import { parseUiBlocks, uiId, type AgentUiBlock } from "@/features/copilot/uiBlocks";
+import { messagePartCitations, parseMessageParts, type CitationRef } from "@/features/copilot/messageParts";
+import { useCopilotStream, type CopilotStreamSnapshot } from "@/features/copilot/useCopilotStream";
+import { MarkdownMessage, MessagePartRenderer } from "./MessagePartRenderer";
+import { CopilotTurnActivity } from "./CopilotTurnActivity";
 import "./CopilotWorkspace.css";
 import { Alert, Button, Card, Divider, Drawer, Empty, Flex, Image, Input, Space, Tag, Typography, Upload } from "antd";
 import { AppstoreOutlined, AudioOutlined, CalendarOutlined, CameraOutlined, CloseOutlined, DeleteOutlined, DownOutlined, FileImageOutlined, FundOutlined, HistoryOutlined, MessageOutlined, PlusOutlined, ReadOutlined, RobotOutlined, SendOutlined, StopOutlined, UpOutlined } from "@ant-design/icons";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { useAIContextStore } from "@/store/aiContext";
 import { useCopilotStore } from "@/store/copilot";
+import { req } from "@/utils/reqeust";
+import { permanence } from "@/utils/permanence";
 import { Link, useNavigate } from "react-router";
 import { operationsViews } from "@/routes/navigation";
 import { AgentRuntimeUnavailableError, agentMode, approveAgentAction, cancelAgentRun, createAgentRun, getAgentRun, pollAgentRun, rejectAgentAction, streamAgentEvents } from "@/features/agent/service";
@@ -34,7 +36,7 @@ import {
   type HistoricalCaseSearchResult,
 } from "@/features/copilot/commandService";
 import { getOverviewCopilotContextLabel } from "@/features/overview/copilot/context";
-import { abortCopilotAgent, controlCopilotAgent, createCopilotConversation, createCopilotRequest, getCopilotConversationId, listCopilotConversations, listCopilotMemories, loadCopilotConversation, resumeCopilotConversation, revokeCopilotMemory, routeCopilot, streamCopilotChat } from "@/features/copilot/service";
+import { createCopilotConversation, createCopilotRequest, getCopilotConversationId, listCopilotConversations, listCopilotMemories, loadCopilotConversation, resumeCopilotConversation, revokeCopilotMemory, routeCopilot } from "@/features/copilot/service";
 import type { CopilotConversationListItem, CopilotConversationView, CopilotMemoryView, CopilotResponseMetadata, CopilotResponseMode } from "@/features/copilot/contract";
 import type { CopilotRouteResult } from "@/features/copilot/contract";
 import { toCopilotContext, type AIContext } from "@/store/aiContext";
@@ -78,35 +80,6 @@ type CopilotResponsePresentation = {
 };
 
 type CopilotWorkbenchMode = "CONSULT" | "DIAGNOSIS" | "PLAN" | "ANALYTICS" | "KNOWLEDGE";
-
-function MarkdownMessage({ text }: { text: string }) {
-  return (
-    <div className="farmap-copilot__markdown-message">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          p: ({ children }) => <p style={{ margin: "0 0 8px" }}>{children}</p>,
-          ul: ({ children }) => <ul style={{ margin: "0 0 8px", paddingLeft: 22 }}>{children}</ul>,
-          ol: ({ children }) => <ol style={{ margin: "0 0 8px", paddingLeft: 22 }}>{children}</ol>,
-          strong: ({ children }) => <strong>{children}</strong>,
-          code: ({ children, ...props }) => (
-            <code {...props} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{children}</code>
-          ),
-          a: ({ children, ...props }) => (
-            <a {...props} target="_blank" rel="noreferrer noopener">{children}</a>
-          ),
-          table: ({ children }) => (
-            <div style={{ maxWidth: "100%", overflowX: "auto", marginBottom: 8 }}>
-              <table>{children}</table>
-            </div>
-          ),
-        }}
-      >
-        {text}
-      </ReactMarkdown>
-    </div>
-  );
-}
 
 type DiagnosisProposalStatus = "READY" | "CREATING_DIAGNOSIS" | "RUNNING_DIAGNOSIS" | "CREATING_AGENT" | "FAILED";
 
@@ -344,6 +317,7 @@ function messagesFromConversation(view: CopilotConversationView): CopilotMessage
       const persisted = turn.responseMetadata;
       const referenceImages = persisted?.referenceImages?.filter((image) => Boolean(image.refId && image.label && image.imageUrl));
       const blocks = parseUiBlocks(persisted?.uiBlocks);
+      const parts = parseMessageParts(persisted?.messageParts);
       const ordered = parsePresentation(persisted?.presentation);
       const count = persisted?.knowledgeCount ?? blocks.find(isKnowledgeEvidenceBlock)?.data?.items?.length;
       return {
@@ -351,6 +325,7 @@ function messagesFromConversation(view: CopilotConversationView): CopilotMessage
         role: turn.role.toLowerCase() as "user" | "assistant",
         content: ordered?.summary ?? turn.message,
         presentation: ordered,
+        ...(parts.length ? { parts } : {}),
         ...(referenceImages?.length ? { referenceImages } : {}),
         ...(persisted?.referenceImageNotice ? { referenceImageNotice: persisted.referenceImageNotice } : {}),
         activity: applyChatActivity(undefined, "knowledge", { count, status: persisted?.knowledgeStatus }),
@@ -439,19 +414,20 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
   const [contextHeaderExpanded, setContextHeaderExpanded] = useState(false);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const [contextToast, setContextToast] = useState("");
+  const [draftingTask, setDraftingTask] = useState(false);
+  const [evidenceDrawer, setEvidenceDrawer] = useState<{ messageId: string; evidenceId: string }>();
   const requestSequence = useRef(0);
   const conversationSequence = useRef(0);
   const activeRequestId = useRef<string | undefined>(undefined);
   const activeDiagnosisJobId = useRef<string | undefined>(undefined);
   const activeStreamController = useRef<AbortController | undefined>(undefined);
-  const activeChatController = useRef<AbortController | undefined>(undefined);
   const activeChatRoute = useRef<{ requestId: string; conversationId: string; contextVersion: number } | undefined>(undefined);
   const [stoppedRoute, setStoppedRoute] = useState<{ conversationId: string; contextVersion: number }>();
+  const { start: startCopilotStream, stop: stopCopilotStream, reset: resetCopilotStream, enqueue } = useCopilotStream();
   const abortActiveChat = () => {
     const route = activeChatRoute.current;
     activeChatRoute.current = undefined;
-    if (route) void abortCopilotAgent(route.conversationId, route.contextVersion).catch(() => undefined);
-    activeChatController.current?.abort();
+    stopCopilotStream(route);
   };
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const followMessagesRef = useRef(true);
@@ -510,6 +486,7 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
     conversationSequence.current += 1;
     setStoppedRoute(undefined);
     cancelCopilotRequest(false);
+    resetCopilotStream();
     setSending(false);
     setDiagnosisProposal(undefined);
     setDiagnosisPageGoal(undefined);
@@ -544,6 +521,7 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
     setSwitchingConversationId(conversationId);
     setConversationHistoryError("");
     cancelCopilotRequest(false);
+    resetCopilotStream();
     setSending(false);
     followMessagesRef.current = true;
     try {
@@ -820,96 +798,63 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
     });
   };
 
-  const isLightweightQuestion = (content: string): boolean => {
-    if (/有哪些农场|几个农场|多少个农场|农场列表|农场清单|列出(?:所有)?农场/.test(content)) return true;
-    if (/执行反馈|任务反馈|任务进度|打开当前农事任务/.test(content)) return true;
-    if (/日历|执行记录|执行档案|作业记录|任务清单|任务统计|任务台账|任务看板|(?:查看|打开|查询|展示).*农事建议/.test(content)
-      || (/任务/.test(content) && /查|看看|本周|下周|本月|所有|全部|有哪/.test(content))) return true;
-    if (/^(?:请(?:帮我)?)?(?:今天最需要|今天关注|优先处理|今日重点|今天农场怎么样|农场状态|农场概况)/.test(content)
-      && !/创建|执行|安排|生成|诊断/.test(content)) return false;
-    // The server remains the intent authority. This client hint only decides
-    // whether to try the one-request chat transport; explicit commands keep
-    // their existing structured handlers.
-    if (maturityQuestionPattern.test(content) || /(安排|创建.{0,12}任务|生成.{0,12}任务|新建.{0,12}任务|执行|启动\s*agent|帮我处理|落实|诊断|分析|病害|病斑|发黄|掉果)/i.test(content)) return true;
-    return !/(任务|病例|案例|风险|优先|打开|导航|记住|忘记|调查|创建农业任务|相似历史)/i.test(content);
-  };
-
-  const startLightweightChat = async (requestId: string, content: string, isActive: () => boolean, context: AIContext) => {
-    let streamed = "";
-    let routed: CopilotRouteResult | undefined;
-    let referenceImages: Array<{ refId: string; label: string; imageUrl: string; match?: string }> = [];
-    let referenceImageNotice: string | undefined;
-    let presentation: CopilotResponsePresentation = { mode: "SIMPLE", label: "农事咨询" };
-    let responseMeta: CopilotResponseMetadata | undefined;
-    let responseCompleted = false;
-    let terminalEventSeen = false;
-    let responseAborted = false;
-    let uiBlocks: AgentUiBlock[] = [];
-    let orderedPresentation: MessagePresentation | undefined;
-    let workspaceResult: { runId: string; farmId: number; fieldId?: string; view?: "history" | "ranking" } | undefined;
-    let agentResult: CopilotAgentProgress | undefined;
-    let turnActivity: ChatActivity | undefined;
+  const runStreamingChat = async (
+    requestId: string,
+    content: string,
+    isActive: () => boolean,
+    context: AIContext,
+  ): Promise<CopilotStreamSnapshot> => {
     const assistantId = `copilot-stream-${requestId}`;
-    const upsertStreamMessage = () => {
-      const visibleBlocks = responseCompleted || orderedPresentation?.summary ? uiBlocks : uiBlocks.filter(isExecutionBlock);
-      const fallbackBody = responseCompleted && visibleBlocks.some((block) => !isExecutionBlock(block))
-        ? routed?.clarificationQuestion || "本次查询结果已整理。" : "";
-      const body = orderedPresentation?.summary ?? (streamed || fallbackBody);
-      if (!body && !visibleBlocks.length && !turnActivity) return;
-      upsertMessage({
-        id: assistantId,
-        role: "assistant",
-        content: body,
-        presentation: orderedPresentation,
-        activity: turnActivity,
-        uiBlocks: visibleBlocks,
-        referenceImages: responseCompleted ? referenceImages : [],
-        referenceImageNotice: responseCompleted ? referenceImageNotice : undefined,
-        responseMode: presentation.mode,
-        responseLabel: presentation.label,
-        responseMeta: responseCompleted ? responseMeta : undefined,
-      });
-    };
-    const openWorkspaceResult = () => {
+    const streamContext = toCopilotContext(context);
+    let routed: CopilotRouteResult | undefined;
+    let presentation: CopilotResponsePresentation = { mode: "SIMPLE", label: "农事咨询" };
+    let workspaceResult: { runId: string; farmId: number; fieldId?: string; view?: "history" | "ranking" } | undefined;
+    let workspaceOpened = false;
+    let lastStatus = "";
+    let routeApplied = false;
+    let pendingApplied = false;
+    let terminalApplied = false;
+
+    const openWorkspaceResult = (snapshot: CopilotStreamSnapshot) => {
+      if (workspaceOpened || !workspaceResult || (!snapshot.presentation?.summary && !snapshot.terminal)) return;
+      workspaceOpened = true;
       setPendingAnalysis(false);
-      if (workspaceResult && useAIContextStore.getState().context.currentFarm.id === workspaceResult.farmId) {
+      if (useAIContextStore.getState().context.currentFarm.id === workspaceResult.farmId) {
         useCopilotStore.getState().openAnalysis(workspaceResult);
         setChatCollapsed(false);
       }
     };
-    await streamCopilotChat({
-      ...createCopilotRequest(content, context, useCopilotStore.getState().context),
-      imageUrls: context.selectedImages.map((image) => image.url).filter((url): url is string => Boolean(url)),
-    }, (event) => {
-      if (!isActive() || terminalEventSeen) return;
-      const nextActivity = applyChatActivity(turnActivity, event.event, event.data);
-      if (nextActivity !== turnActivity) {
-        turnActivity = nextActivity;
-        upsertStreamMessage();
-      }
-      if (event.event.startsWith("presentation.")) {
-        orderedPresentation = mergePresentation(orderedPresentation, event.event, event.data);
-        upsertStreamMessage();
-        if (workspaceResult && orderedPresentation?.summary) openWorkspaceResult();
-        return;
-      }
-      if (event.event === "analysis.workspace.pending") {
-        setPendingAnalysis(true);
-      } else if (event.event === "analysis.workspace") {
-        setPendingAnalysis(false);
-        const data = event.data && typeof event.data === "object" ? event.data as Record<string, unknown> : {};
-        const runId = uiId(data.runId);
-        const farmId = Number(data.farmId);
-        if (runId && Number.isSafeInteger(farmId) && farmId > 0 && useAIContextStore.getState().context.currentFarm.id === farmId) {
-          const view = data.view === "history" || data.view === "ranking" ? data.view : undefined;
-          workspaceResult = { runId, farmId, fieldId: uiId(data.fieldId), view };
-          if (orderedPresentation?.summary) openWorkspaceResult();
+
+    const updateFromSnapshot = (snapshot: CopilotStreamSnapshot) => {
+      if (!isActive()) return;
+      // A zero-event transport failure is recoverable through the established
+      // route/command path. Do not leave a stale error bubble if that succeeds.
+      if (snapshot.phase === "failed" && snapshot.eventCount === 0) return;
+      if (snapshot.route && !routeApplied) {
+        routed = snapshot.route;
+        routeApplied = true;
+        if (routed.conversationId && typeof routed.contextVersion === "number") {
+          activeChatRoute.current = { requestId, conversationId: routed.conversationId, contextVersion: routed.contextVersion };
         }
-      } else if (event.event === "ui.block.created" || event.event === "ui.block.updated" || event.event === "ui.block.removed") {
-        uiBlocks = updatePresentationBlocks(uiBlocks, event.event, event.data);
-        upsertStreamMessage();
-      } else if (event.event === "status" && event.data && typeof event.data === "object") {
-        const message = String((event.data as Record<string, unknown>).message ?? "正在处理…");
+        presentation = responsePresentation(routed, context.selectedImages.length > 0);
+        updateActivity(requestId, (current) => ({
+          ...current,
+          intent: routed?.intent,
+          steps: current.steps.map((step) => step.id === "route"
+            ? { ...step, status: "COMPLETED", detail: `${routed?.intent ?? "GENERAL_QA"} · 服务端已完成意图识别。` }
+            : step),
+        }));
+      }
+      if (snapshot.responseMeta) presentation = responsePresentationFromMetadata(snapshot.responseMeta);
+      if (snapshot.workspace) workspaceResult = snapshot.workspace;
+      if (snapshot.workspacePending && !pendingApplied) {
+        pendingApplied = true;
+        setPendingAnalysis(true);
+      }
+      openWorkspaceResult(snapshot);
+      if (snapshot.statusMessage && snapshot.statusMessage !== lastStatus) {
+        lastStatus = snapshot.statusMessage;
+        const message = snapshot.statusMessage;
         updateActivity(requestId, (current) => ({
           ...current,
           steps: current.steps.map((step) => {
@@ -918,132 +863,83 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
             return step.id === "route" ? { ...step, detail: message } : step;
           }),
         }));
-      } else if (event.event === "route" && event.data && typeof event.data === "object") {
-        routed = event.data as CopilotRouteResult;
-        if (routed.conversationId && typeof routed.contextVersion === "number") {
-          activeChatRoute.current = { requestId, conversationId: routed.conversationId, contextVersion: routed.contextVersion };
-        }
-        presentation = responsePresentation(routed, context.selectedImages.length > 0);
+      }
+      const responseCompleted = snapshot.terminal && snapshot.phase !== "aborted";
+      const visibleBlocks = responseCompleted || snapshot.presentation?.summary ? snapshot.blocks : snapshot.blocks.filter(isExecutionBlock);
+      const fallbackBody = responseCompleted && visibleBlocks.some((block) => !isExecutionBlock(block))
+        ? snapshot.route?.clarificationQuestion || "本次查询结果已整理。" : "";
+      const body = snapshot.presentation?.summary ?? (snapshot.text || fallbackBody);
+      const streamError = snapshot.phase === "failed" ? snapshot.error : undefined;
+      const hasParts = snapshot.parts.length > 0;
+      if (!body && !streamError && !visibleBlocks.length && !snapshot.activity?.tools.length && !snapshot.activity?.thinking && !snapshot.activity?.knowledge && !hasParts) return;
+      upsertMessage({
+        id: assistantId,
+        role: "assistant",
+        content: body,
+        streamError,
+        presentation: snapshot.presentation,
+        ...(hasParts ? { parts: snapshot.parts } : {}),
+        activity: snapshot.activity,
+        uiBlocks: visibleBlocks,
+        referenceImages: responseCompleted ? snapshot.referenceImages : [],
+        referenceImageNotice: responseCompleted ? snapshot.referenceImageNotice : undefined,
+        responseMode: presentation.mode,
+        responseLabel: presentation.label,
+        responseMeta: responseCompleted ? snapshot.responseMeta : undefined,
+      });
+      if (snapshot.terminal && !terminalApplied) {
+        terminalApplied = true;
+        const doneStatus = snapshot.doneStatus;
         updateActivity(requestId, (current) => ({
           ...current,
-          intent: routed?.intent,
-          steps: current.steps.map((step) => step.id === "route" ? { ...step, status: "COMPLETED", detail: `${routed?.intent ?? "GENERAL_QA"} · 服务端已完成意图识别。` } : step),
-        }));
-      } else if (event.event === "response.meta" && event.data && typeof event.data === "object") {
-        responseMeta = event.data as CopilotResponseMetadata;
-        presentation = responsePresentationFromMetadata(responseMeta);
-      } else if (event.event === "diagnosis.job" && event.data && typeof event.data === "object") {
-        const data = event.data as { jobId?: string; message?: string };
-        updateActivityStep(requestId, "data", { status: "RUNNING", detail: data.message ?? `诊断任务已创建${data.jobId ? ` · ${data.jobId}` : ""}。` });
-      } else if (event.event === "run.created" && event.data && typeof event.data === "object") {
-        const data = event.data as { runId?: string; diagnosisId?: string; status?: string };
-        if (!data.runId) return;
-        agentResult = {
-          runId: data.runId,
-          diagnosisId: data.diagnosisId,
-          farmName: canonicalContext.farmName,
-          fieldName: canonicalContext.fieldName || "当前地块",
-          crop: canonicalContext.crop,
-        };
-        updateActivity(requestId, (current) => ({
-          ...current,
-          steps: current.steps.map((step) => step.id === "data"
-            ? { ...step, status: "COMPLETED", detail: `${data.diagnosisId ? "Diagnosis 已保存，" : "任务草案已进入 Agent，"}Agent Run 已创建${data.status ? ` · ${data.status}` : ""}。` }
-            : step.id === "model" ? { ...step, status: "SKIPPED", detail: "本次请求转入 Agent 实时调查。" } : step),
-        }));
-      } else if (event.event === "knowledge" && event.data && typeof event.data === "object") {
-        if (turnActivity?.knowledge) {
-          const { count, unavailable } = turnActivity.knowledge;
-          updateActivityStep(requestId, "data", { status: unavailable ? "FAILED" : "COMPLETED", detail: unavailable ? "知识库暂不可用。" : `知识库返回 ${count} 条信息。` });
-        }
-      } else if (event.event === "reference.images" && event.data && typeof event.data === "object") {
-        const data = event.data as { items?: Array<{ refId?: string; label?: string; imageUrl?: string; match?: string }>; message?: string };
-        referenceImages = (data.items ?? [])
-          .filter((item): item is { refId: string; label: string; imageUrl: string; match?: string } => Boolean(item.refId && item.label && item.imageUrl))
-          .map((item) => ({ refId: item.refId, label: item.label, imageUrl: item.imageUrl, match: item.match }));
-        referenceImageNotice = typeof data.message === "string" && data.message.trim() ? data.message : undefined;
-      } else if (event.event === "content.delta" && event.data && typeof event.data === "object") {
-        if (orderedPresentation?.summary) return;
-        const delta = String((event.data as Record<string, unknown>).delta ?? "");
-        if (!delta) return;
-        streamed += delta;
-        upsertStreamMessage();
-        updateActivityStep(requestId, "model", { status: "RUNNING", detail: "正在逐字生成回答…" });
-      } else if (event.event === "error" && event.data && typeof event.data === "object") {
-        const message = String((event.data as Record<string, unknown>).message ?? "Copilot 暂时不可用，请稍后重试。");
-        terminalEventSeen = true;
-        upsertMessage({
-          id: assistantId,
-          role: "assistant",
-          content: orderedPresentation?.summary ?? (streamed ? `${streamed}\n\n> ${message}` : message),
-          presentation: orderedPresentation?.summary ? { ...orderedPresentation, analysis: [orderedPresentation.analysis, message].filter(Boolean).join("\n\n"), followUps: [] } : undefined,
-          uiBlocks: orderedPresentation?.summary ? uiBlocks : uiBlocks.filter(isExecutionBlock),
-          activity: turnActivity,
-          referenceImages,
-          referenceImageNotice,
-          responseMode: presentation.mode,
-          responseLabel: "生成未完成",
-        });
-        updateActivity(requestId, (current) => ({
-          ...current,
-          status: "FAILED",
-          steps: current.steps.map((step) => step.status === "RUNNING" ? { ...step, status: "FAILED", detail: message } : step),
-        }));
-      } else if (event.event === "done") {
-        terminalEventSeen = true;
-        const doneStatus = event.data && typeof event.data === "object"
-          ? String((event.data as Record<string, unknown>).status ?? "COMPLETED")
-          : "COMPLETED";
-        if (doneStatus === "ABORTED") {
-          responseAborted = true;
-          updateActivity(requestId, (current) => ({
-            ...current,
-            status: "CANCELLED",
-            steps: current.steps.map((step) => step.status === "RUNNING" ? { ...step, status: "SKIPPED", detail: "生成已停止。" } : step),
-          }));
-          return;
-        }
-        responseCompleted = true;
-        upsertStreamMessage();
-        if (doneStatus === "COMPLETED" && workspaceResult) openWorkspaceResult();
-        if (agentResult && (doneStatus === "RUN_CREATED" || doneStatus === "COMPLETED")) {
-          setContext({ agentRunId: agentResult.runId });
-          setAgentProgress(agentResult);
-          setAgentProgressRunId(agentResult.runId);
-        }
-        if (isActive() && !streamed && !orderedPresentation?.summary && !uiBlocks.length && (referenceImages.length > 0 || referenceImageNotice)) {
-          upsertMessage({
-            id: assistantId,
-            role: "assistant",
-            content: referenceImageNotice ?? "参考图片检索已完成。",
-            activity: turnActivity,
-            referenceImages,
-            referenceImageNotice,
-            responseMode: presentation.mode,
-            responseLabel: presentation.label,
-          });
-        }
-        updateActivity(requestId, (current) => ({
-          ...current,
-          status: current.status === "CANCELLED" || doneStatus === "FAILED" ? current.status === "CANCELLED" ? current.status : "FAILED" : "COMPLETED",
-          steps: current.steps.map((step) => step.status === "FAILED" ? step : step.id === "data" && step.status === "PENDING" ? { ...step, status: "SKIPPED", detail: "本次问答没有返回额外数据卡片。" } : step.id === "model" ? { ...step, status: streamed ? "COMPLETED" : "SKIPPED", detail: doneStatus === "RUN_CREATED" ? "本次请求转入 Agent 实时调查。" : streamed ? "回答已完成。" : "没有生成可展示的回答。" } : step),
+          status: current.status === "CANCELLED" || snapshot.phase === "failed" ? current.status === "CANCELLED" ? current.status : "FAILED" : "COMPLETED",
+          steps: current.steps.map((step) => step.status === "FAILED" ? step
+            : step.id === "data" && step.status === "PENDING" ? { ...step, status: "SKIPPED", detail: "本次问答没有返回额外数据卡片。" }
+            : step.id === "model" ? {
+              ...step,
+              status: snapshot.text ? "COMPLETED" : "SKIPPED",
+              detail: doneStatus === "RUN_CREATED" ? "本次请求转入 Agent 实时调查。" : snapshot.text ? "回答已完成。" : "没有生成可展示的回答。",
+            } : step),
         }));
       }
-    }, activeChatController.current?.signal);
-    if (isActive() && !responseAborted && !streamed && !uiBlocks.length && routed?.clarificationQuestion) {
+    };
+
+    const final = await startCopilotStream({
+      requestId,
+      request: {
+        ...createCopilotRequest(content, context, useCopilotStore.getState().context),
+        imageUrls: context.selectedImages.map((image) => image.url).filter((url): url is string => Boolean(url)),
+      },
+      onUpdate: updateFromSnapshot,
+    });
+    if (!isActive()) return final;
+    updateFromSnapshot(final);
+    if (final.clarification && routed) {
       const clarificationPresentation = responsePresentation(routed, context.selectedImages.length > 0);
-      responseMeta = {
+      const responseMeta: CopilotResponseMetadata = {
         schemaVersion: 1,
         messageId: assistantId,
         responseType: clarificationPresentation.mode,
-        content: routed.clarificationQuestion,
+        content: final.clarification,
         cards: [],
         sources: [],
         suggestions: [],
         actions: [],
       };
-      upsertMessage({ id: assistantId, role: "assistant", content: routed.clarificationQuestion, activity: turnActivity, responseMode: clarificationPresentation.mode, responseLabel: clarificationPresentation.label, responseMeta });
+      upsertMessage({ id: assistantId, role: "assistant", content: final.clarification, activity: final.activity, responseMode: clarificationPresentation.mode, responseLabel: clarificationPresentation.label, responseMeta });
     }
+    if (final.agentRun && final.terminal && (final.doneStatus === "RUN_CREATED" || final.doneStatus === "COMPLETED")) {
+      setContext({ agentRunId: final.agentRun.runId });
+      setAgentProgress({
+        runId: final.agentRun.runId,
+        diagnosisId: final.agentRun.diagnosisId,
+        farmName: streamContext.farmName,
+        fieldName: streamContext.fieldName || "当前地块",
+        crop: streamContext.crop,
+      });
+      setAgentProgressRunId(final.agentRun.runId);
+    }
+    return final;
   };
 
   const handleSend = async (prompt?: string) => {
@@ -1082,8 +978,6 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
     }
     setSending(true);
     abortActiveChat();
-    const chatController = new AbortController();
-    activeChatController.current = chatController;
     requestSequence.current += 1;
     const requestId = `copilot-${Date.now()}-${requestSequence.current}`;
     const sequence = requestSequence.current;
@@ -1108,10 +1002,11 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
     });
     const isActive = () => activeRequestId.current === requestId && requestSequence.current === sequence;
     try {
-      if (isLightweightQuestion(content)) {
-        await startLightweightChat(requestId, content, isActive, context);
-        return;
-      }
+      const streamed = await runStreamingChat(requestId, content, isActive, context);
+      if (requestTimedOut) throw new Error("Copilot 请求超时");
+      if (!isActive() || streamed.phase === "aborted") return;
+      // Only a transport with zero server events permits compatibility routing.
+      if (streamed.phase !== "failed" || streamed.eventCount > 0) return;
       const routed = await withTimeout(routeCopilot(content, context, copilotContext), COPILOT_ROUTE_TIMEOUT_MS, "Copilot 路由超时，请重试。");
       if (!isActive()) return;
       if (routed.resolutionStatus === "RESOLVED" && ["MEMORY_WRITE_REQUEST", "MEMORY_FORGET_REQUEST"].includes(routed.intent)) {
@@ -1290,7 +1185,6 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
       if (isActive()) {
         setSending(false);
         setPendingAnalysis(false);
-        if (activeChatController.current === chatController) activeChatController.current = undefined;
       }
     }
   };
@@ -1512,48 +1406,78 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
     }
   };
 
+  const createTaskDraft = async (request: { fieldId: string; title: string; detail: string; scheduledFor?: string }) => {
+    if (draftingTask) return;
+    const fieldId = request.fieldId.trim();
+    const title = request.title.trim();
+    const detail = request.detail.trim();
+    const scheduledFor = request.scheduledFor?.trim() || undefined;
+    if (!fieldId || !title || !detail || title.length > 120 || detail.length > 1_200
+      || (scheduledFor !== undefined && !/^\d{4}-\d{2}-\d{2}$/u.test(scheduledFor))) {
+      setContextToast("任务草稿缺少有效地块、标题、说明或日期。");
+      return;
+    }
+    setDraftingTask(true);
+    try {
+      const run = await req.post<Record<string, string>, AgentRun>(
+        "/api/copilot/task-drafts",
+        { fieldId, title, detail, ...(scheduledFor ? { scheduledFor } : {}) },
+        { Authorization: `Bearer ${permanence.token.useToken()}` },
+      );
+      if (!run?.runId) throw new Error("任务草稿未返回 Agent Run。");
+      const current = useAIContextStore.getState().context;
+      setAgentProgress({
+        runId: run.runId,
+        farmName: current.currentFarm.name,
+        fieldName: current.currentField?.name || fieldId,
+        crop: current.currentCrop?.name,
+        run,
+      });
+      setAgentProgressRunId(run.runId);
+      setContext({ agentRunId: run.runId });
+      setContextToast("任务草稿已创建，等待你确认后才会执行。");
+    } catch (error: unknown) {
+      setContextToast(error instanceof Error ? error.message : "任务草稿创建失败，请稍后重试。");
+    } finally {
+      setDraftingTask(false);
+    }
+  };
+
   const continueStoppedRun = async () => {
     if (!stoppedRoute || sending) return;
     const route = stoppedRoute;
-    const requestId = `copilot-continue-${Date.now()}-${++requestSequence.current}`;
-    const controller = new AbortController();
-    activeChatController.current = controller;
+    const requestId = "copilot-continue-" + Date.now() + "-" + ++requestSequence.current;
     activeRequestId.current = requestId;
     activeChatRoute.current = { ...route, requestId };
     setStoppedRoute(undefined);
     scrollToLatest();
     setSending(true);
-    let content = "";
-    let blocks: AgentUiBlock[] = [];
-    let ordered: MessagePresentation | undefined;
-    let turnActivity: ChatActivity | undefined;
-    let continuationFailed = false;
-    const isActive = () => activeRequestId.current === requestId && !controller.signal.aborted;
     try {
-      await controlCopilotAgent(route.conversationId, route.contextVersion, "continue", (event) => {
-        if (!isActive()) return;
-        const data = event.data && typeof event.data === "object" ? event.data as Record<string, unknown> : {};
-        turnActivity = applyChatActivity(turnActivity, event.event, data);
-        ordered = mergePresentation(ordered, event.event, data);
-        if (event.event === "content.delta" && !ordered?.summary) content += String(data.delta ?? "");
-        if (["ui.block.created", "ui.block.updated", "ui.block.removed"].includes(event.event)) {
-          blocks = updatePresentationBlocks(blocks, event.event, data);
-        }
-        if (event.event === "error" || (event.event === "done" && data.status === "FAILED")) {
-          continuationFailed = true;
-          content += "\n\n继续执行不可用。你可以检查已保存的对话，并手动重新输入需要查询的问题。";
-        }
-        const completed = event.event === "done" && data.status !== "ABORTED" && !continuationFailed;
-        const visibleBlocks = completed || ordered?.summary ? blocks : blocks.filter(isExecutionBlock);
-        if (content || visibleBlocks.length || turnActivity || ordered?.summary) upsertMessage({ id: `copilot-stream-${requestId}`, role: "assistant", content: ordered?.summary ?? content, presentation: ordered, uiBlocks: visibleBlocks, activity: turnActivity });
-      }, undefined, controller.signal);
-    } catch (error) {
-      if (isActive() && !continuationFailed) addMessage({ role: "assistant", content: "继续执行不可用。你可以检查已保存的对话，并手动重新输入需要查询的问题。" });
+      const snapshot = await startCopilotStream({
+        requestId,
+        continuation: route,
+        onUpdate: (snapshot) => {
+          if (activeRequestId.current !== requestId) return;
+          const blocks = snapshot.terminal || snapshot.presentation?.summary
+            ? snapshot.blocks : snapshot.blocks.filter(isExecutionBlock);
+          if (snapshot.text || snapshot.parts.length || snapshot.error || blocks.length || snapshot.activity) {
+            upsertMessage({
+              id: "copilot-stream-" + requestId,
+              role: "assistant",
+              content: snapshot.text || snapshot.error || "",
+              presentation: snapshot.presentation,
+              uiBlocks: blocks,
+              activity: snapshot.activity,
+              parts: snapshot.parts,
+            });
+          }
+        },
+      });
+      if (activeRequestId.current === requestId && snapshot.phase === "failed") setStoppedRoute(route);
     } finally {
-      if (isActive()) {
+      if (activeRequestId.current === requestId) {
         activeRequestId.current = undefined;
         activeChatRoute.current = undefined;
-        activeChatController.current = undefined;
         setSending(false);
       }
     }
@@ -1565,17 +1489,10 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
     if (!route || !message || queueing) return;
     setQueueing(true);
     setQueueNotice("");
-    let accepted = false;
-    let failed = false;
     try {
-      await controlCopilotAgent(route.conversationId, route.contextVersion, "followUp", (event) => {
-        if (event.event === "error") failed = true;
-        if (event.event === "done" && event.data && typeof event.data === "object") {
-          accepted = (event.data as Record<string, unknown>).status === "COMPLETED";
-        }
-      }, message);
+      const accepted = await enqueue(route, message);
       if (getCopilotConversationId() !== route.conversationId) return;
-      if (accepted && !failed) {
+      if (accepted) {
         if (useCopilotStore.getState().draft.trim() === message) setDraft("");
         setQueueNotice("已加入本次任务队列，当前工作完成后处理。");
       } else setQueueNotice("队列状态未确认，请查看会话记录后再决定是否重发。");
@@ -1826,21 +1743,35 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
         </div>
       ;
   const activeAssistantId = sending && activeRequestId.current ? `copilot-stream-${activeRequestId.current}` : undefined;
-  const renderMessageBlocks = (message: CopilotMessage, execution: boolean) => {
-    const blocks = message.uiBlocks?.filter((block) => isExecutionBlock(block) === execution)
-      .map((block) => block.summary === message.content ? { ...block, summary: undefined } : block);
-    if (!blocks?.length) return null;
-    return <AgentUiBlocks blocks={blocks} busy={sending} onPrompt={(prompt) => void handleSend(prompt)} onOpenAnalysis={(runId, farmId, fieldId) => {
-      const current = useAIContextStore.getState().context.currentFarm.id;
-      if (current > 0 && (farmId === undefined || farmId === current)) {
-        useCopilotStore.getState().openAnalysis({ runId, farmId: current, fieldId });
-        setChatCollapsed(false);
-      } else setContextToast("请切换到报告所属农场后再打开。");
-    }} onSelectField={(fieldId) => {
-      const field = message.uiBlocks?.flatMap((block) => block.data?.fields ?? []).find((item) => item.id === "fieldId")?.options?.find((option) => option.value === fieldId);
-      setContext({ currentField: { id: fieldId, name: field?.label ?? fieldId, area: 0, crop: "" }, currentCrop: undefined, currentPhenology: undefined, selectedDevice: undefined, selectedDiagnosis: undefined, agentRunId: undefined, taskId: undefined });
-      useCopilotStore.getState().setContext(undefined);
-    }} onOpenDetail={navigate} />;
+  const renderMessageBody = (message: CopilotMessage) => {
+    const pending = sending && message.id === activeAssistantId;
+    const uiBlocks = message.uiBlocks?.map((block) => block.summary === message.content ? { ...block, summary: undefined } : block);
+    return <MessagePartRenderer
+      parts={message.parts}
+      content={message.content}
+      presentation={message.presentation}
+      uiBlocks={uiBlocks}
+      activity={message.activity}
+      pending={pending}
+      answering={Boolean(message.content || message.parts?.length || message.streamError)}
+      preparing={pending ? preparationLabel : undefined}
+      error={message.streamError}
+      busy={sending}
+      onPrompt={(prompt) => void handleSend(prompt)}
+      onOpenAnalysis={(runId, farmId, fieldId) => {
+        const current = useAIContextStore.getState().context.currentFarm.id;
+        if (current > 0 && (farmId === undefined || farmId === current)) {
+          useCopilotStore.getState().openAnalysis({ runId, farmId: current, fieldId });
+          setChatCollapsed(false);
+        } else setContextToast("请切换到报告所属农场后再打开。");
+      }}
+      onSelectField={(fieldId) => {
+        const field = message.uiBlocks?.flatMap((block) => block.data?.fields ?? []).find((item) => item.id === "fieldId")?.options?.find((option) => option.value === fieldId);
+        setContext({ currentField: { id: fieldId, name: field?.label ?? fieldId, area: 0, crop: "" }, currentCrop: undefined, currentPhenology: undefined, selectedDevice: undefined, selectedDiagnosis: undefined, agentRunId: undefined, taskId: undefined });
+        useCopilotStore.getState().setContext(undefined);
+      }}
+      onOpenDetail={navigate}
+    />;
   };
   const preparationLabel = activity?.requestId === activeRequestId.current
     ? activity?.steps.find((step) => step.status === "RUNNING")?.detail
@@ -2056,7 +1987,7 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有对话" />
         ) : (
           <>{messages.filter((message) => (variant !== "workspace" || message.id !== "welcome") &&
-            (message.content || message.uiBlocks?.length || message.activity?.tools.length || message.activity?.thinking || message.activity?.knowledge || (sending && message.id === activeAssistantId))).map((message) => (
+            (message.content || message.parts?.length || message.streamError || message.uiBlocks?.length || message.activity?.tools.length || message.activity?.thinking || message.activity?.knowledge || (sending && message.id === activeAssistantId))).map((message) => (
             <div
               key={message.id}
               className={`farmap-copilot__message farmap-copilot__message--${message.role} ${responseClassName(message)}`}
@@ -2067,10 +1998,7 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
                   <span>{message.responseLabel}</span>
                 </div>
               )}
-              {message.role === "assistant" && <CopilotTurnActivity activity={message.activity} pending={sending && message.id === activeAssistantId} answering={Boolean(message.content)} />}
-              {message.role === "assistant" && renderMessageBlocks(message, true)}
-              {message.content && (message.role === "assistant" ? <div className={message.presentation?.summary ? "farmap-response__summary" : undefined}><MarkdownMessage text={message.content} /></div> : <p>{message.content}</p>)}
-              {message.role === "assistant" && renderMessageBlocks(message, false)}
+              {message.role === "assistant" ? renderMessageBody(message) : message.content && <p>{message.content}</p>}
               {message.imageAttachments && message.imageAttachments.length > 0 && (
                 <div className="farmap-copilot__message-images">
                   <Image.PreviewGroup>

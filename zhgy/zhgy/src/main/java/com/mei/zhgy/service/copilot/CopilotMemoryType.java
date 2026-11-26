@@ -5,5 +5,14 @@ public enum CopilotMemoryType {
     FARM_PREFERENCE,
     FIELD_PREFERENCE,
     OPERATING_CONSTRAINT,
-    COMMUNICATION_PREFERENCE
+    COMMUNICATION_PREFERENCE,
+    ORCHARD_PROFILE;
+
+    public boolean isProfileFact() {
+        return this == ORCHARD_PROFILE;
+    }
+
+    public boolean isSelfReported() {
+        return this == ORCHARD_PROFILE;
+    }
 }

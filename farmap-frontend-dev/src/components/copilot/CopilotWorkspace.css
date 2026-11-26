@@ -352,6 +352,136 @@
 @keyframes farmap-chat-spin { to { transform: rotate(1turn); } }
 @media (prefers-reduced-motion: reduce) { .farmap-chat-activity__status svg { animation: none; } }
 
+.farmap-message-parts {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+.farmap-message-parts__text {
+  min-width: 0;
+  color: #26382e;
+}
+.farmap-message-parts__error {
+  padding: 8px 10px;
+  color: #8a332d;
+  background: #fff7f6;
+  border: 1px solid #f0d2cf;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.farmap-message-part-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 9px;
+  color: #355747;
+  background: #f1f6f2;
+  border: 1px solid #d8e5dc;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.farmap-message-part-tool small {
+  color: #6a7d70;
+  font-size: 11px;
+}
+.farmap-message-part-tool[data-status="running"] svg {
+  animation: farmap-chat-spin 1s linear infinite;
+}
+.farmap-message-part-tool[data-status="completed"] {
+  color: #2d6048;
+  background: #edf6f0;
+}
+.farmap-message-part-tool[data-status="failed"] {
+  color: #8e3730;
+  background: #fdf0ef;
+  border-color: #f1cecb;
+}
+.farmap-message-part-activity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  color: #52695b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.farmap-message-part-activity svg {
+  flex: none;
+  color: #6b8c79;
+}
+.farmap-message-part-activity:has(svg) span {
+  overflow-wrap: anywhere;
+}
+.farmap-message-evidence {
+  display: grid;
+  gap: 5px;
+  margin-top: 3px;
+  padding: 9px 11px;
+  color: #2f4d3d;
+  background: #fbfdfb;
+  border: 1px solid #dbe8df;
+  border-radius: 10px;
+  scroll-margin: 18px;
+  outline: none;
+}
+.farmap-message-evidence.is-active {
+  border-color: #70a98c;
+  box-shadow: 0 0 0 2px #b9dcc7;
+}
+.farmap-message-evidence header {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+.farmap-message-evidence header span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #176b4d;
+  font-size: 12px;
+  font-weight: 700;
+}
+.farmap-message-evidence strong {
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.farmap-message-evidence p {
+  margin: 0;
+  color: #4c6255;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.farmap-message-evidence small {
+  color: #748278;
+  font-size: 11px;
+}
+.farmap-citation {
+  display: inline;
+  padding: 0 1px;
+  color: #176b4d;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  font: inherit;
+  font-weight: 650;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.farmap-citation:hover,
+.farmap-citation:focus-visible {
+  color: #0d5239;
+  background: #e8f4ec;
+  outline: none;
+}
+
 .farmap-copilot-workspace__activity {
   width: 100%;
   max-width: 800px;

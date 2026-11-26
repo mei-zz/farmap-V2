@@ -31,17 +31,25 @@ public class AgriculturalStructuredKnowledgeService {
 
     private final DataSource dataSource;
     private final CropResolver cropResolver;
+    private final PlumDefenseKnowledgeService plumDefenseKnowledge;
     private volatile boolean schemaChecked;
 
     @Autowired
     public AgriculturalStructuredKnowledgeService(@Autowired(required = false) DataSource dataSource,
-                                                  CropResolver cropResolver) {
+                                                  CropResolver cropResolver,
+                                                  @Autowired(required = false) PlumDefenseKnowledgeService plumDefenseKnowledge) {
         this.dataSource = dataSource;
         this.cropResolver = cropResolver == null ? new CropResolver() : cropResolver;
+        this.plumDefenseKnowledge = plumDefenseKnowledge == null
+                ? new PlumDefenseKnowledgeService(null) : plumDefenseKnowledge;
+    }
+
+    public AgriculturalStructuredKnowledgeService(DataSource dataSource, CropResolver cropResolver) {
+        this(dataSource, cropResolver, null);
     }
 
     public AgriculturalStructuredKnowledgeService() {
-        this(null, new CropResolver());
+        this(null, new CropResolver(), null);
     }
 
     @PostConstruct
@@ -76,6 +84,15 @@ public class AgriculturalStructuredKnowledgeService {
             log.warn("Structured agricultural knowledge unavailable: {}", error.getClass().getSimpleName());
             return LookupResult.unavailable();
         }
+    }
+
+    public List<PlumDefenseKnowledgeService.TargetSummary> plumDefenseTargets() {
+        return plumDefenseKnowledge.targets();
+    }
+
+    public PlumDefenseKnowledgeService.Assessment assessPlumDefense(
+            PlumDefenseKnowledgeService.AssessmentRequest request) {
+        return plumDefenseKnowledge.assess(request);
     }
 
     public CoverageReport coverage() {

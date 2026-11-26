@@ -1,5 +1,7 @@
 package com.mei.zhgy.evaluation;
 
+import com.mei.zhgy.service.copilot.CopilotApplicationService;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mei.zhgy.context.BaseContext;
@@ -150,7 +152,7 @@ class AgentV2Phase15ShortTermMemoryEvaluationTest {
         CopilotRouteResult m21r = routes.route(m21b, 42L);
         cases.put("M21_explicit_page_field_overrides_restored_context", "field-other".equals(m21r.getResolvedContext().getFieldId()));
 
-        MockMvc mvc = MockMvcBuilders.standaloneSetup(new CopilotController(routes, fixture.conversations()))
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new CopilotController(new CopilotApplicationService(routes, fixture.conversations())))
                 .setMessageConverters(new MappingJackson2HttpMessageConverter()).build();
         BaseContext.setCurrentId(42L);
         try {

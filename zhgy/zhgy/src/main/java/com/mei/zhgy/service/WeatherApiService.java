@@ -16,6 +16,8 @@ import java.math.BigDecimal;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -230,6 +232,43 @@ public class WeatherApiService {
     private static Double numberAt(JsonNode array, int index) {
         JsonNode value = array.path(index);
         return value.isNumber() ? value.doubleValue() : null;
+    }
+
+    public record ForecastHour(LocalDateTime time, Double temperatureC, Double humidityPct, Double windKph,
+                               Double rainMm, Double rainProbabilityPct) {}
+
+    /** Open-Meteo hourly precipitation is the accumulation ending at the timestamp. */
+    public List<ForecastHour> getHourlyForecast(double longitude, double latitude) {
+        if (!openMeteoEnabled) return List.of();
+        try {
+            String url = String.format(Locale.ROOT,
+                    "%s?latitude=%.6f&longitude=%.6f&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation,precipitation_probability"
+                            + "&forecast_hours=79&timezone=Asia%%2FShanghai%s",
+                    openMeteoBaseUrl, latitude, longitude,
+                    openMeteoApiKey == null || openMeteoApiKey.isBlank()
+                            ? "" : "&apikey=" + URLEncoder.encode(openMeteoApiKey, StandardCharsets.UTF_8));
+            String raw = restTemplate.getForObject(java.net.URI.create(url), String.class);
+            if (raw == null) return List.of();
+            return parseHourlyForecast(objectMapper.readTree(raw).path("hourly"));
+        } catch (Exception failure) {
+            log.warn("Open-Meteo 逐小时预报不可用: {}", failure.getClass().getSimpleName());
+            return List.of();
+        }
+    }
+
+    static List<ForecastHour> parseHourlyForecast(JsonNode hourly) {
+        List<ForecastHour> result = new ArrayList<>();
+        JsonNode times = hourly.path("time");
+        for (int i = 0; i < Math.min(79, times.size()); i++) {
+            if (!times.path(i).isTextual()) continue;
+            LocalDateTime time;
+            try { time = LocalDateTime.parse(times.path(i).textValue()); }
+            catch (DateTimeParseException invalid) { continue; }
+            result.add(new ForecastHour(time, numberAt(hourly.path("temperature_2m"), i),
+                    numberAt(hourly.path("relative_humidity_2m"), i), numberAt(hourly.path("wind_speed_10m"), i),
+                    numberAt(hourly.path("precipitation"), i), numberAt(hourly.path("precipitation_probability"), i)));
+        }
+        return List.copyOf(result);
     }
 
     private static Integer integerAt(JsonNode array, int index) {

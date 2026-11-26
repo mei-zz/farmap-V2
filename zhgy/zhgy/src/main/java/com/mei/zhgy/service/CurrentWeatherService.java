@@ -6,6 +6,7 @@ import com.mei.zhgy.vo.UserLoginResponseVO;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.List;
 
 /** Owner-scoped live weather adapter with a free keyless fallback provider. */
 @Service
@@ -19,6 +20,10 @@ public class CurrentWeatherService {
     }
 
     public CurrentWeatherResponse get(Integer farmId, Long actorId) {
+        return get(farmId, actorId, false);
+    }
+
+    public CurrentWeatherResponse get(Integer farmId, Long actorId, boolean extendedForecast) {
         UserLoginResponseVO.FarmVO farm = fields.requireFarm(farmId, actorId);
         Instant retrievedAt = Instant.now();
         if (!weatherApi.isConfigured()) {
@@ -30,7 +35,8 @@ public class CurrentWeatherService {
             return unavailable(farm, "CONFIGURED_UNAVAILABLE", "farm center is not configured for provider lookup", retrievedAt);
         }
 
-        WeatherApiService.WeatherSnapshot snapshot = weatherApi.getWeather(center[0], center[1]);
+        WeatherApiService.WeatherSnapshot snapshot = extendedForecast ? weatherApi.getOpenMeteoWeather(center[0], center[1]) : null;
+        if (snapshot == null) snapshot = weatherApi.getWeather(center[0], center[1]);
         if (snapshot == null) {
             return unavailable(farm, "CONFIGURED_UNAVAILABLE", "weather provider returned no current observation", retrievedAt);
         }
@@ -40,6 +46,12 @@ public class CurrentWeatherService {
                 retrievedAt, snapshot.provider(), snapshot.source(), snapshot.freshness(), null,
                 snapshot.rainfall14d(), snapshot.rainfallForecast24h(), snapshot.rainfallProbability24h(),
                 snapshot.rainfallForecast(), snapshot.rainfallForecastDays(), snapshot.forecast());
+    }
+
+    public List<WeatherApiService.ForecastHour> getHourlyForecast(Integer farmId, Long actorId) {
+        var farm = fields.requireFarm(farmId, actorId);
+        double[] center = parseCenter(farm.getCenter());
+        return center == null ? List.of() : weatherApi.getHourlyForecast(center[0], center[1]);
     }
 
     private CurrentWeatherResponse unavailable(UserLoginResponseVO.FarmVO farm, String status,

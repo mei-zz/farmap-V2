@@ -1,5 +1,7 @@
 package com.mei.zhgy.controller;
 
+import com.mei.zhgy.service.copilot.CopilotApplicationService;
+
 import com.mei.zhgy.service.copilot.CopilotRouteService;
 import org.junit.jupiter.api.Test;
 
@@ -14,10 +16,10 @@ import static org.mockito.Mockito.mock;
 class CopilotPhenologyGuidanceAnswerTest {
     @Test
     void compoundPhenologyQuestionReachesModelInsteadOfReturningOnlyTheStageFact() throws Exception {
-        CopilotController controller = new CopilotController(mock(CopilotRouteService.class));
-        Method factsFromContext = CopilotController.class.getDeclaredMethod("factsFromContext", Map.class);
+        CopilotController controller = new CopilotController(new CopilotApplicationService(mock(CopilotRouteService.class)));
+        Method factsFromContext = CopilotApplicationService.class.getDeclaredMethod("factsFromContext", Map.class);
         factsFromContext.setAccessible(true);
-        Object facts = factsFromContext.invoke(controller, Map.of(
+        Object facts = factsFromContext.invoke(controller.application, Map.of(
                 "currentDate", "2026年9月23日 星期三",
                 "crop", "plum",
                 "cropLabel", "脆李",
@@ -30,11 +32,11 @@ class CopilotPhenologyGuidanceAnswerTest {
                 "fieldFactsStatus", "READY"
         ));
 
-        Method deterministicAnswer = CopilotController.class.getDeclaredMethod("deterministicPhenologyAnswer", String.class, facts.getClass());
+        Method deterministicAnswer = CopilotApplicationService.class.getDeclaredMethod("deterministicPhenologyAnswer", String.class, facts.getClass());
         deterministicAnswer.setAccessible(true);
-        Object compound = deterministicAnswer.invoke(controller, "下一个物候期是什么，有哪些农事指导", facts);
-        Object naturalCompound = deterministicAnswer.invoke(controller, "下一个物候期是什么，接下来要做什么", facts);
-        Object pureFact = deterministicAnswer.invoke(controller, "下一个物候期是什么", facts);
+        Object compound = deterministicAnswer.invoke(controller.application, "下一个物候期是什么，有哪些农事指导", facts);
+        Object naturalCompound = deterministicAnswer.invoke(controller.application, "下一个物候期是什么，接下来要做什么", facts);
+        Object pureFact = deterministicAnswer.invoke(controller.application, "下一个物候期是什么", facts);
 
         assertNull(compound);
         assertNull(naturalCompound);

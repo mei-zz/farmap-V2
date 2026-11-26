@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { createRuntime, trimContext } from './worker.mjs';
+import { createRuntime, trimContext, estimateTokens, contextBudget, CONTEXT_BUDGET_RATIO } from './worker.mjs';
 
 const wait = async (check, timeout = 5000) => {
   const end = Date.now() + timeout;
@@ -46,8 +46,8 @@ async function mockProvider(t, respond) {
     requests.push(body);
     headersList.push(request.headers);
     response.writeHead(200, { 'content-type': 'text/event-stream' });
-    const chunk = (delta, finishReason = null) => response.write(`data: ${JSON.stringify({ id: 'a', object: 'chat.completion.chunk', created: 1, model: 'mock', choices: [{ index: 0, delta, finish_reason: finishReason }] })}\n\n`);
-    const answer = text => { chunk({ content: text }); chunk({}, 'stop'); response.end('data: [DONE]\n\n'); };
+    const chunk = (delta, finishReason = null, usage) => response.write(`data: ${JSON.stringify({ id: 'a', object: 'chat.completion.chunk', created: 1, model: 'mock', choices: [{ index: 0, delta, finish_reason: finishReason }], ...(usage ? { usage } : {}) })}\n\n`);
+    const answer = (text, usage) => { chunk({ content: text }); if (usage) chunk({}, null, usage); chunk({}, 'stop'); response.end('data: [DONE]\n\n'); };
     const toolCalls = calls => {
       chunk({ tool_calls: calls.map((call, index) => ({ index, id: call.id, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.args ?? {}) } })) });
       chunk({}, 'tool_calls');
@@ -117,6 +117,25 @@ test('Java tool errors stay native and do not leak response data into events', a
   assert.ok(!JSON.stringify(outputs).includes('TOOL_DENIED'));
 });
 
+test('assistant message_end exposes only safe Pi usage counts', async t => {
+  const provider = await mockProvider(t, ({ answer }) => answer('usage answer', {
+    prompt_tokens: 123, completion_tokens: 45, prompt_tokens_details: { cached_tokens: 67 }
+  }));
+  const outputs = [];
+  const runtime = createRuntime({ emit: value => outputs.push(value), env: providerEnv(provider.url) });
+  runtime.handle(start('usage', 'usage-owner', { tools: [], toolsetId: undefined, turnId: 'turn-usage' }));
+  await wait(() => outputs.some(value => value.id === 'usage' && value.type === 'done'));
+
+  const messageEnd = outputs.find(value => value.type === 'event'
+    && value.event?.type === 'message_end' && value.event.usage);
+  assert.ok(messageEnd);
+  assert.deepEqual(messageEnd.event.usage, { inputTokens: 56, outputTokens: 45, cacheReadTokens: 67 });
+  const eventText = JSON.stringify(messageEnd);
+  assert.ok(!eventText.includes('prompt_tokens'));
+  assert.ok(!eventText.includes('completion_tokens'));
+  assert.ok(!eventText.includes('totalTokens'));
+});
+
 test('same scope reuses native transcript while refreshing environment and toolset without duplicates', async t => {
   const provider = await mockProvider(t, ({ index, toolCalls, answer }) => {
     if (index === 1) toolCalls([{ id: 'provider-old', name: 'lookup', args: { query: 'old' } }]);
@@ -126,14 +145,17 @@ test('same scope reuses native transcript while refreshing environment and tools
   });
   const outputs = [];
   const runtime = createRuntime({ emit: value => outputs.push(value), env: providerEnv(provider.url) });
-  runtime.handle(start('one', 'stable', { contextVersion: 1, scope: 'field-a', environment: 'ENV_ONE' }));
+  runtime.handle(start('one', 'stable', { contextVersion: 1, scope: 'field-a', turnId: 'turn-1', environment: 'ENV_ONE' }));
   await wait(() => toolRequests(outputs).length === 1);
   reply(runtime, toolRequests(outputs)[0], { value: 'first-native' });
   await wait(() => outputs.some(value => value.id === 'one' && value.type === 'done'));
+  assert.equal(runtime.sessions.get('stable').lastTurnId, 'turn-1');
 
   runtime.handle(start('two', 'stable', {
     contextVersion: 2,
     scope: 'field-a',
+    turnId: 'turn-2',
+    lastCompletedTurnId: 'turn-1',
     message: 'next question',
     history: [{ role: 'user', text: 'question' }, { role: 'assistant', text: 'answer-one' }],
     tools: [{ name: 'lookup', description: 'Lookup v2', parameters: TOOL_SCHEMA_V2 }],
@@ -150,16 +172,70 @@ test('same scope reuses native transcript while refreshing environment and tools
   assert.equal(count(reused, 'ENV_TWO'), 1);
   assert.equal(count(reused, 'ENV_ONE'), 0);
   assert.equal(count(reused, 'first-native'), 1);
+  assert.equal(provider.requests[2].messages.filter(message => message.role === 'user').length, 2);
   assert.equal(provider.requests[2].messages.filter(message => message.role === 'tool').length, 1);
   assert.equal(provider.requests[2].tools.find(tool => tool.function?.name === 'lookup')?.function.description, 'Lookup v2');
   assert.equal(runtime.sessions.get('stable').environment, 'ENV_TWO');
   assert.equal(runtime.sessions.get('stable').toolsetId, 'toolset-two');
+  assert.equal(runtime.sessions.get('stable').lastTurnId, 'turn-1');
+  assert.equal(runtime.sessions.get('stable').agent.state.systemPrompt, 'private system');
+  assert.ok(!JSON.stringify(runtime.sessions.get('stable').agent.state.messages).includes('ENV_TWO'));
+  assert.match(provider.requests[0].messages.find(message => message.role === 'system').content, /private system[\s\S]*ENV_ONE/);
 
   reply(runtime, secondCall, { value: 'second-native' });
   await wait(() => outputs.some(value => value.id === 'two' && value.type === 'done'));
   assert.equal(outputs.find(value => value.id === 'two' && value.type === 'done').text, 'answer-two');
+  assert.equal(runtime.sessions.get('stable').lastTurnId, 'turn-2');
   assert.ok(!JSON.stringify(outputs).includes('first-native'));
   assert.ok(!JSON.stringify(outputs).includes('second-native'));
+});
+
+test('reuse requires matching scope and turn IDs, otherwise visible history rebuilds the transcript', async t => {
+  const provider = await mockProvider(t, ({ index, toolCalls, answer }) => {
+    if (index === 1) toolCalls([{ id: 'provider-native', name: 'lookup', args: { query: 'native' } }]);
+    else if (index === 2) answer('answer-one');
+    else if (index === 3) answer('answer-two');
+    else if (index === 4) answer('answer-three');
+    else answer('answer-four');
+  });
+  const outputs = [];
+  const runtime = createRuntime({ emit: value => outputs.push(value), env: providerEnv(provider.url) });
+
+  runtime.handle(start('one', 'turns', { contextVersion: 1, scope: 'field-a', turnId: 'turn-1' }));
+  await wait(() => toolRequests(outputs).length === 1);
+  reply(runtime, toolRequests(outputs)[0], { value: 'first-native' });
+  await wait(() => outputs.some(value => value.id === 'one' && value.type === 'done'));
+
+  runtime.handle(start('two', 'turns', {
+    contextVersion: 2, scope: 'field-a', turnId: 'turn-2', message: 'second question',
+    history: [{ role: 'user', text: 'question' }, { role: 'assistant', text: 'answer-one' }]
+  }));
+  await wait(() => outputs.some(value => value.id === 'two' && value.type === 'done'));
+  const second = JSON.stringify(provider.requests[2]);
+  assert.ok(!second.includes('first-native'));
+  assert.ok(second.includes('answer-one'));
+  assert.equal(provider.requests[2].messages.filter(message => message.role === 'tool').length, 0);
+  assert.equal(runtime.sessions.get('turns').lastTurnId, 'turn-2');
+
+  runtime.handle(start('three', 'turns', {
+    contextVersion: 3, scope: 'field-a', turnId: 'turn-3', lastCompletedTurnId: 'turn-other',
+    message: 'third question', history: []
+  }));
+  await wait(() => outputs.some(value => value.id === 'three' && value.type === 'done'));
+  const third = JSON.stringify(provider.requests[3]);
+  assert.ok(!third.includes('answer-two'));
+  assert.equal(provider.requests[3].messages.filter(message => message.role === 'tool').length, 0);
+  assert.equal(runtime.sessions.get('turns').lastTurnId, 'turn-3');
+
+  runtime.handle(start('four', 'turns', {
+    contextVersion: 4, scope: 'field-b', turnId: 'turn-4', lastCompletedTurnId: 'turn-3',
+    message: 'fourth question', history: []
+  }));
+  await wait(() => outputs.some(value => value.id === 'four' && value.type === 'done'));
+  const fourth = JSON.stringify(provider.requests[4]);
+  assert.ok(!fourth.includes('answer-three'));
+  assert.equal(runtime.sessions.get('turns').scope, 'field-b');
+  assert.equal(runtime.sessions.get('turns').lastTurnId, 'turn-4');
 });
 
 test('parallel tool calls are emitted before replies and complete with both native results', async t => {
@@ -210,7 +286,7 @@ test('abort releases a pending tool call, ignores its late response, and still a
   });
   const outputs = [];
   const runtime = createRuntime({ emit: value => outputs.push(value), env: providerEnv(provider.url) });
-  runtime.handle(start('start', 's', { contextVersion: 1, scope: 'field-a' }));
+  runtime.handle(start('start', 's', { contextVersion: 1, scope: 'field-a', turnId: 'turn-abort' }));
   await wait(() => toolRequests(outputs).length === 1);
   const call = toolRequests(outputs)[0];
   assert.equal(runtime.pending.size, 1);
@@ -219,6 +295,7 @@ test('abort releases a pending tool call, ignores its late response, and still a
   await wait(() => outputs.some(value => value.id === 'start' && value.type === 'done'));
   assert.equal(outputs.find(value => value.id === 'start' && value.type === 'done').status, 'aborted');
   assert.equal(runtime.pending.size, 0);
+  assert.equal(runtime.sessions.get('s').lastTurnId, undefined);
 
   const beforeLate = outputs.length;
   runtime.handle({ op: 'tool_call_response', id: 'start', callId: call.callId, text: '{"value":"late-secret"}', isError: false });
@@ -238,6 +315,7 @@ test('abort releases a pending tool call, ignores its late response, and still a
   assert.equal(continued.type, 'done');
   assert.equal(continued.status, 'completed');
   assert.equal(continued.text, 'resumed');
+  assert.equal(runtime.sessions.get('s').lastTurnId, 'turn-abort');
   assert.equal(provider.requests.length, 3);
 });
 
@@ -341,6 +419,10 @@ test('start validation enforces tool registration bounds and tool responses bypa
   assert.equal(outputs.at(-1).code, 'INVALID_REQUEST');
   runtime.handle({ ...start('empty-message', 's'), message: '' });
   assert.equal(outputs.at(-1).code, 'INVALID_REQUEST');
+  runtime.handle({ ...start('bad-turn-id', 's'), turnId: '' });
+  assert.equal(outputs.at(-1).code, 'INVALID_REQUEST');
+  runtime.handle({ ...start('bad-completed-turn-id', 's'), lastCompletedTurnId: 'x'.repeat(129) });
+  assert.equal(outputs.at(-1).code, 'INVALID_REQUEST');
   runtime.handle({ id: 'abort', op: 'abort', session: 'unknown' });
   assert.equal(outputs.at(-1).code, 'SESSION_NOT_FOUND');
   const beforeResponse = outputs.length;
@@ -349,12 +431,61 @@ test('start validation enforces tool registration bounds and tool responses bypa
   assert.equal(runtime.sessions.size, 0);
 });
 
-test('trimming retains a system baseline and complete user-led suffix', () => {
-  const messages = [{ role: 'system', content: 'x' }, ...Array.from({ length: 50 }, (_, index) => ({ role: 'user', content: String(index) }))];
-  const result = trimContext(messages);
-  assert.equal(result[0].role, 'system');
-  assert.equal(result[1].content, '10');
-  assert.equal(result.length, 41);
+test('token estimation weights CJK and ASCII and reserves 72 percent of context', () => {
+  assert.equal(estimateTokens('abc'), 0.9);
+  assert.equal(estimateTokens('农事'), 2);
+  assert.equal(estimateTokens('a农'), 1.3);
+  assert.equal(CONTEXT_BUDGET_RATIO, 0.72);
+  assert.equal(contextBudget(32768), Math.floor(32768 * 0.72));
+  assert.equal(contextBudget(), contextBudget(32768));
+});
+
+test('trimming compacts old tool payloads before dropping turns and preserves call/result pairs', () => {
+  const call = { role: 'assistant', content: [{ type: 'toolCall', id: 'call-old', name: 'lookup', arguments: { query: 'old' } }], timestamp: 2 };
+  const result = { role: 'toolResult', toolCallId: 'call-old', toolName: 'lookup', content: [{ type: 'text', text: 'A'.repeat(1200) }], isError: false, timestamp: 3 };
+  const messages = [
+    { role: 'system', content: 'stable' },
+    { role: 'user', content: 'old question', timestamp: 1 },
+    call,
+    result,
+    { role: 'assistant', content: [{ type: 'text', text: 'old answer' }], timestamp: 4 },
+    { role: 'user', content: 'new question', timestamp: 5 },
+    { role: 'assistant', content: [{ type: 'text', text: 'new answer' }], timestamp: 6 }
+  ];
+  const trimmed = trimContext(messages, 500);
+  assert.ok(estimateTokens(trimmed) <= contextBudget(500));
+  assert.equal(trimmed.filter(message => message.role === 'user').length, 2);
+  const keptCall = trimmed.find(message => message.role === 'assistant' && message.content.some(part => part.type === 'toolCall'));
+  const keptResult = trimmed.find(message => message.role === 'toolResult');
+  assert.ok(keptCall);
+  assert.ok(keptResult);
+  assert.equal(keptResult.toolCallId, 'call-old');
+  assert.match(keptResult.content[0].text, /TOOL_RESULT_TRIMMED/);
+  assert.equal(messages[3].content[0].text.length, 1200);
+});
+
+test('trimming drops whole user turns only after old payloads and keeps complete turns', () => {
+  const bigTurn = index => [
+    { role: 'user', content: `old-${index} ` + 'A'.repeat(300), timestamp: index },
+    { role: 'assistant', content: [{ type: 'toolCall', id: `call-${index}`, name: 'lookup', arguments: { query: `q${index}` } }], timestamp: index },
+    { role: 'toolResult', toolCallId: `call-${index}`, toolName: 'lookup', content: [{ type: 'text', text: 'B'.repeat(100) }], isError: false, timestamp: index },
+    { role: 'assistant', content: [{ type: 'text', text: 'C'.repeat(100) }], timestamp: index }
+  ];
+  const messages = [
+    { role: 'system', content: 'stable' },
+    ...bigTurn(0),
+    ...bigTurn(1),
+    { role: 'user', content: 'new question', timestamp: 9 },
+    { role: 'assistant', content: [{ type: 'text', text: 'new answer' }], timestamp: 10 }
+  ];
+  const trimmed = trimContext(messages, 120);
+  assert.ok(estimateTokens(trimmed) <= contextBudget(120));
+  assert.deepEqual(trimmed.filter(message => message.role === 'user').map(message => message.content), ['new question']);
+  assert.equal(trimmed.filter(message => message.role === 'toolResult').length, 0);
+  const calls = trimmed.filter(message => message.role === 'assistant')
+    .flatMap(message => message.content.filter(part => part.type === 'toolCall').map(part => part.id));
+  const results = trimmed.filter(message => message.role === 'toolResult').map(message => message.toolCallId);
+  assert.deepEqual(results.sort(), calls.sort());
 });
 
 test('versioned abort reserves cancellation before start and for a newer version', () => {

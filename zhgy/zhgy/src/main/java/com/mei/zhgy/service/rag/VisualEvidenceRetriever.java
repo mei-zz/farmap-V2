@@ -71,10 +71,10 @@ public class VisualEvidenceRetriever implements DiagnosisRetriever {
                         .runId("vision-" + request.getFieldId())
                         .taskType(AiTaskType.IMAGE_UNDERSTANDING)
                         .systemPrompt("你是 FarMap 的农业视觉证据提取器。只根据图片提取可观察事实、图像质量和不确定性，不要编造图片之外的信息，不要输出隐藏思维过程。")
-                        .userPrompt("请用简洁的结构化文本输出：作物/树体可见状态、叶片或果实异常、图像质量、需要补拍的部位。结论必须明确区分‘观察到’与‘推测’，供后续 RAG 诊断引用。农场="
+                        .userPrompt("仅返回 JSON：{subject, visibleSymptoms:[字符串], imageClear:布尔值, observedPhenologyStage:字符串或null, missingViews:[字符串], uncertainty:字符串或null}。不得从背景中的登记阶段推断图片所见，无法判读时阶段写null；不填写病例相似度。农场="
                                 + request.getFarmId() + "，地块=" + request.getFieldId() + "，作物=" + request.getCrop() + "，生育期=" + request.getGrowthStage())
                         .imageUrls(new ArrayList<>(request.getImageUrls()))
-                        .structuredOutput(false)
+                        .structuredOutput(true)
                         .context(new LinkedHashMap<>(Map.of(
                                 "farmId", request.getFarmId() == null ? "" : request.getFarmId(),
                                 "fieldId", request.getFieldId() == null ? "" : request.getFieldId(),
@@ -97,6 +97,8 @@ public class VisualEvidenceRetriever implements DiagnosisRetriever {
                 metadata.put("latencyMs", response.getLatencyMs());
                 metadata.put("routingReason", response.getRoutingReason());
                 metadata.put("fallbackChain", response.getFallbackChain());
+                VisualObservation observation = VisualObservation.parse(response.getContent());
+                if (observation != null) metadata.put("visualObservation", observation);
                 if (response.getUsage() != null) {
                     metadata.put("inputTokens", response.getUsage().getInputTokens());
                     metadata.put("outputTokens", response.getUsage().getOutputTokens());
