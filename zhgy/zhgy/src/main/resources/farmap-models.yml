@@ -96,7 +96,7 @@ farmap:
         # The pool contains models confirmed present by the entitlement smoke;
         # FARMAP_ANSWER_POOL_ENABLED=false remains the immediate rollback.
         enabled: ${FARMAP_ANSWER_POOL_ENABLED:true}
-        selection-strategy: ${FARMAP_ANSWER_POOL_SELECTION_STRATEGY:random}
+        selection-strategy: ${FARMAP_ANSWER_POOL_SELECTION_STRATEGY:ordered_fallback}
         apply-task-types:
           - COPILOT
           - FIELD_SUMMARY

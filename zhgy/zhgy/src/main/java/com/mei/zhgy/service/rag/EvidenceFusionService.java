@@ -40,7 +40,8 @@ public class EvidenceFusionService {
     private double cosineMinimum = 0.45;
     private static final ZoneId FARM_ZONE = ZoneId.of("Asia/Shanghai");
 
-    private record Rating(DiagnosisEvidenceVO evidence, double normalized, double reliability, double weighted, String calibration) {}
+    private record Rating(DiagnosisEvidenceVO evidence, double normalized, double weight, double reliability,
+                          double weighted, String calibration) {}
 
     public List<DiagnosisEvidenceVO> fuse(List<DiagnosisEvidenceVO> evidence) {
         if (evidence == null) return List.of();
@@ -59,6 +60,7 @@ public class EvidenceFusionService {
             metadata.put("scoreCalibration", rating.calibration());
             metadata.put("fusedScore", rating.weighted());
             metadata.put("sourceReliability", rating.reliability());
+            metadata.put("modalityWeight", rating.weight());
             item.setMetadata(metadata);
             ranked.add(item);
         }
@@ -84,8 +86,12 @@ public class EvidenceFusionService {
         } else if (isEnvironment(modality)) {
             normalized = environmentScore(item, metadata, now);
             calibration = "environment-freshness-completeness";
-        } else if ("VISUAL_SIMILARITY".equals(metadata.get("retrievalType")) || "local-clip-milvus".equals(metadata.get("sourceMode"))) {
+        } else if ("VISUAL_SIMILARITY".equals(metadata.get("retrievalType"))
+                || "local-clip-milvus".equals(metadata.get("sourceMode"))
+                || "milvus-semantic".equals(metadata.get("retrievalType"))
+                || "knowledge".equals(modality) && finite(metadata.get("vectorScore")) != null) {
             Double similarity = finite(metadata.get("similarity"));
+            if (similarity == null) similarity = finite(metadata.get("vectorScore"));
             if (similarity == null) similarity = finite(metadata.get("rankingScore"));
             if (similarity == null) similarity = raw;
             double threshold = Math.min(0.99D, clamp(cosineMinimum));
@@ -97,7 +103,8 @@ public class EvidenceFusionService {
             calibration = "bounded-native";
         }
         double reliability = sourceReliability(item);
-        return new Rating(item, normalized, reliability, normalized * modalityWeight(modality) * reliability, calibration);
+        double weight = modalityWeight(modality);
+        return new Rating(item, normalized, weight, reliability, normalized * weight * reliability, calibration);
     }
 
     private double environmentScore(DiagnosisEvidenceVO item, Map<String, Object> metadata, Instant now) {

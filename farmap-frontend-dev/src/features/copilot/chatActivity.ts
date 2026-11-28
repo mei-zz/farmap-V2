@@ -52,11 +52,32 @@ export function isKnowledgeTool(name: string) {
   return /knowledge|(?:^|[_.-])rag(?:$|[_.-])/i.test(name);
 }
 
+const toolLabels: Record<string, string> = {
+  read_farm_directory: "读取农场列表",
+  list_farm_fields: "读取农场地块",
+  read_field_context: "核对地块与物候",
+  read_current_weather: "读取农场天气",
+  query_operations_tasks: "查询农事任务",
+  read_monthly_guidance: "读取月度农事指导",
+  read_orchard_memory: "读取果园记忆",
+  read_user_preferences: "读取用户偏好",
+  read_previous_analysis: "读取历史分析",
+  read_previous_visual_analysis: "读取历史视觉分析",
+  read_workflow_status: "查询工作流状态",
+  propose_task_draft: "准备任务草稿",
+  propose_memory_update: "准备果园资料提案",
+  lookup_reference_atlas: "查找病虫害图鉴",
+  search_historical_cases: "检索历史病例",
+  analyze_uploaded_images: "分析上传图片",
+  inspect_camera_maturity: "巡检摄像头画面",
+  render_ui_block: "整理可交互结果",
+  read_agricultural_knowledge: "检索农业知识",
+  search_agricultural_knowledge: "检索农业知识",
+};
+
 export function chatToolLabel(name: string, web = isWebSearch(name)) {
   if (web) return "网页搜索";
-  if (name === "read_farm_directory") return "读取农场列表";
-  if (name === "query_operations_tasks") return "查询农事任务";
-  if (name === "read_monthly_guidance") return "读取月度农事指导";
+  if (toolLabels[name]) return toolLabels[name];
   if (/farm_maturity_scan/.test(name)) return "分析成熟度";
   if (/weather/.test(name)) return "查询天气";
   if (isKnowledgeTool(name)) return "检索农业知识库";

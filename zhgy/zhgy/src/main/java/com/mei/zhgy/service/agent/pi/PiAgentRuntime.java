@@ -322,6 +322,8 @@ public class PiAgentRuntime {
         JsonNode isError = source.get("isError");
         if (isError != null && isError.isBoolean()) safe.put("isError", isError.booleanValue());
         if ("message_end".equals(safe.get("type"))) {
+            String selectedModel = source.path("selectedModel").asText("");
+            if (selectedModel.matches("[A-Za-z0-9_.:/-]{1,180}")) safe.put("selectedModel", selectedModel);
             JsonNode usage = source.path("usage");
             Map<String, Long> counts = new LinkedHashMap<>();
             for (String key : List.of("inputTokens", "outputTokens", "cacheReadTokens")) {
@@ -429,7 +431,12 @@ public class PiAgentRuntime {
         toolTimers.shutdownNow();
     }
 
-    private static IllegalStateException failure(String code) { return new IllegalStateException("PI_" + code); }
+    public static final class ServiceFailure extends IllegalStateException {
+        private ServiceFailure(String code) { super("PI_" + code); }
+        public String code() { return getMessage(); }
+    }
+
+    private static ServiceFailure failure(String code) { return new ServiceFailure(code); }
     private record ToolCompletion(String callId, String name, ToolReply reply, String text) {}
     private record ToolProgress(String callId, String name, ToolReply reply) {}
     private record ToolInvocation(Future<?> query, Future<?> timeout) {

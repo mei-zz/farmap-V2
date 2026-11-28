@@ -22,7 +22,7 @@ public class AnswerPoolProperties {
             AiTaskType.FUTURE_AGENT_TOOL_DECISION.name());
 
     private boolean enabled = true;
-    private String selectionStrategy = "random";
+    private String selectionStrategy = "ordered_fallback";
     private List<String> applyTaskTypes = new ArrayList<>(DEFAULT_TASK_TYPES);
     private int samePoolFallbackN = 3;
     private boolean skipUnavailable = true;
@@ -41,8 +41,11 @@ public class AnswerPoolProperties {
     }
 
     public void setSelectionStrategy(String selectionStrategy) {
-        String normalized = selectionStrategy == null ? "" : selectionStrategy.trim().toLowerCase();
-        this.selectionStrategy = "round_robin".equals(normalized) ? normalized : "random";
+        String normalized = selectionStrategy == null ? "" : selectionStrategy.trim().toLowerCase(java.util.Locale.ROOT);
+        this.selectionStrategy = switch (normalized) {
+            case "round_robin", "random" -> normalized;
+            default -> "ordered_fallback";
+        };
     }
 
     public List<String> getApplyTaskTypes() {

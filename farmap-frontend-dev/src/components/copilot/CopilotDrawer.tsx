@@ -4,13 +4,14 @@ import { applyChatActivity, chatToolLabel } from "@/features/copilot/chatActivit
 import { farmMaturityPrompt } from "@/features/farm/cameras";
 import MaturityWorkspace from "@/features/maturity/MaturityWorkspace";
 import { isExecutionBlock, parsePresentation } from "@/features/copilot/presentation";
-import { parseUiBlocks, uiId, type AgentUiBlock } from "@/features/copilot/uiBlocks";
-import { messagePartCitations, parseMessageParts, type CitationRef } from "@/features/copilot/messageParts";
-import { useCopilotStream, type CopilotStreamSnapshot } from "@/features/copilot/useCopilotStream";
-import { MarkdownMessage, MessagePartRenderer } from "./MessagePartRenderer";
-import { CopilotTurnActivity } from "./CopilotTurnActivity";
+import { parseUiBlocks, uiId } from "@/features/copilot/uiBlocks";
+import { messagePartCitations, parseMessageParts } from "@/features/copilot/messageParts";
+import { isKnowledgeEvidenceBlock, useCopilotStream, type CopilotStreamSnapshot } from "@/features/copilot/useCopilotStream";
+import { CopilotEvidenceDrawer, type EvidenceSelection } from "./CopilotEvidenceDrawer";
+import { CopilotLegacyCommandPanel, type CommandBarResult } from "./CopilotLegacyCommandPanel";
+import { CopilotMessageStream } from "./CopilotMessageStream";
 import "./CopilotWorkspace.css";
-import { Alert, Button, Card, Divider, Drawer, Empty, Flex, Image, Input, Space, Tag, Typography, Upload } from "antd";
+import { Alert, Button, Card, Divider, Drawer, Flex, Image, Input, Space, Tag, Typography, Upload } from "antd";
 import { AppstoreOutlined, AudioOutlined, CalendarOutlined, CameraOutlined, CloseOutlined, DeleteOutlined, DownOutlined, FileImageOutlined, FundOutlined, HistoryOutlined, MessageOutlined, PlusOutlined, ReadOutlined, RobotOutlined, SendOutlined, StopOutlined, UpOutlined } from "@ant-design/icons";
 import { useAIContextStore } from "@/store/aiContext";
 import { useCopilotStore } from "@/store/copilot";
@@ -30,10 +31,6 @@ import {
   generateCopilotAnswer,
   searchCopilotKnowledge,
   searchHistoricalCases,
-  type CommandDiagnosisResult,
-  type CommandInsightResult,
-  type CommandPrioritiesResult,
-  type HistoricalCaseSearchResult,
 } from "@/features/copilot/commandService";
 import { getOverviewCopilotContextLabel } from "@/features/overview/copilot/context";
 import { createCopilotConversation, createCopilotRequest, getCopilotConversationId, listCopilotConversations, listCopilotMemories, loadCopilotConversation, resumeCopilotConversation, revokeCopilotMemory, routeCopilot } from "@/features/copilot/service";
@@ -100,13 +97,6 @@ type DiagnosisProposal = {
   error?: string;
 };
 
-type CommandBarResult =
-  | { type: "PRIORITIES"; data: CommandPrioritiesResult }
-  | { type: "HISTORICAL_CASES"; data: HistoricalCaseSearchResult }
-  | { type: "FARM_STATUS"; data: CommandInsightResult }
-  | { type: "FIELD_STATUS"; data: CommandInsightResult }
-  | { type: "DIAGNOSIS"; data: CommandDiagnosisResult };
-
 type CopilotAgentProgress = {
   runId: string;
   diagnosisId?: string;
@@ -161,15 +151,6 @@ const COPILOT_CHAT_TIMEOUT_MS = 45000;
 const MATURITY_CHAT_TIMEOUT_MS = 240_000;
 const maturityQuestionPattern = /成熟|熟没熟|熟了没有|果实熟了|采收|物候|长势|摄像头|ripeness|maturity/i;
 const ACTIVE_DIAGNOSIS_KEY = "farmap.copilot.active-diagnosis";
-const citationModalityLabels: Record<CitationRef["modality"], string> = {
-  knowledge: "农业知识库",
-  camera: "现场图像",
-  historical_case: "历史病例",
-  weather: "气象证据",
-  field: "地块记录",
-  atlas: "病虫害图鉴",
-};
-
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
@@ -283,19 +264,6 @@ function responsePresentation(result: CopilotRouteResult, hasImages = false): Co
   return { mode: "SIMPLE", label: "农事咨询" };
 }
 
-function responseClassName(message: CopilotMessage): string {
-  return message.role === "assistant" && message.responseMode
-    ? `farmap-copilot__message--${message.responseMode.toLowerCase()}`
-    : "";
-}
-
-function responseModeIcon(mode?: CopilotResponseMode) {
-  if (mode === "AGENT") return <RobotOutlined />;
-  if (mode === "GUIDED") return <CalendarOutlined />;
-  if (mode === "KNOWLEDGE") return <ReadOutlined />;
-  return <MessageOutlined />;
-}
-
 function responsePresentationFromMetadata(metadata: CopilotResponseMetadata): CopilotResponsePresentation {
   const labels: Record<CopilotResponseMode, string> = {
     SIMPLE: "农事咨询",
@@ -313,11 +281,6 @@ function shouldShowRouteAcknowledgement(result: CopilotRouteResult): boolean {
     || ["MEMORY_WRITE_REQUEST", "MEMORY_QUERY", "MEMORY_FORGET_REQUEST", "NAVIGATION_REQUEST"].includes(result.intent);
 }
 
-function isKnowledgeEvidenceBlock(block: AgentUiBlock): boolean {
-  return block.componentType === "KnowledgeSourceCard"
-    || (block.componentType === "EvidenceCard" && block.title === "知识依据");
-}
-
 function messagesFromConversation(view: CopilotConversationView): CopilotMessage[] {
   return (view.historyTurns ?? view.recentTurns ?? [])
     .filter((turn) => turn.role !== "SYSTEM_EVENT" && !isLegacyRoutingStatus(turn.role, turn.message))
@@ -325,9 +288,12 @@ function messagesFromConversation(view: CopilotConversationView): CopilotMessage
       const persisted = turn.responseMetadata;
       const referenceImages = persisted?.referenceImages?.filter((image) => Boolean(image.refId && image.label && image.imageUrl));
       const blocks = parseUiBlocks(persisted?.uiBlocks);
-      const parts = parseMessageParts(persisted?.messageParts);
+      const restoredParts = parseMessageParts(persisted?.messageParts);
+      const parts = restoredParts.filter((part) => part.type !== "ui_block" || !isKnowledgeEvidenceBlock(part.block));
       const ordered = parsePresentation(persisted?.presentation);
-      const count = persisted?.knowledgeCount ?? blocks.find(isKnowledgeEvidenceBlock)?.data?.items?.length;
+      const knowledgePart = restoredParts.find((part) => part.type === "ui_block" && isKnowledgeEvidenceBlock(part.block));
+      const count = persisted?.knowledgeCount ?? blocks.find(isKnowledgeEvidenceBlock)?.data?.items?.length
+        ?? (knowledgePart?.type === "ui_block" ? knowledgePart.block.data?.items?.length : undefined);
       return {
         id: turn.turnId,
         role: turn.role.toLowerCase() as "user" | "assistant",
@@ -423,7 +389,7 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const [contextToast, setContextToast] = useState("");
   const [draftingTask, setDraftingTask] = useState(false);
-  const [evidenceDrawer, setEvidenceDrawer] = useState<{ messageId: string; evidenceId: string }>();
+  const [evidenceDrawer, setEvidenceDrawer] = useState<EvidenceSelection>();
   const requestSequence = useRef(0);
   const conversationSequence = useRef(0);
   const activeRequestId = useRef<string | undefined>(undefined);
@@ -873,7 +839,7 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
         }));
       }
       const responseCompleted = snapshot.terminal && snapshot.phase !== "aborted";
-      const visibleBlocks = responseCompleted || snapshot.presentation?.summary ? snapshot.blocks : snapshot.blocks.filter(isExecutionBlock);
+      const visibleBlocks = snapshot.blocks;
       const fallbackBody = responseCompleted && visibleBlocks.some((block) => !isExecutionBlock(block))
         ? snapshot.route?.clarificationQuestion || "本次查询结果已整理。" : "";
       const body = snapshot.presentation?.summary ?? (snapshot.text || fallbackBody);
@@ -1466,8 +1432,7 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
         continuation: route,
         onUpdate: (snapshot) => {
           if (activeRequestId.current !== requestId) return;
-          const blocks = snapshot.terminal || snapshot.presentation?.summary
-            ? snapshot.blocks : snapshot.blocks.filter(isExecutionBlock);
+          const blocks = snapshot.blocks;
           if (snapshot.text || snapshot.parts.length || snapshot.error || blocks.length || snapshot.activity) {
             upsertMessage({
               id: "copilot-stream-" + requestId,
@@ -1587,134 +1552,8 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
         {isComplete ? "展开完整证据与模型信息" : "打开完整调查台（可选）"}
       </Button>
     </Card>;
-  }
-
-  function renderResponseMetadata(metadata?: CopilotResponseMetadata) {
-    if (!metadata) return null;
-    const cards = metadata.cards ?? [];
-    const suggestions = (metadata.suggestions ?? []).filter((suggestion) =>
-      suggestion.text !== "查看知识依据"
-      && (metadata.responseType !== "KNOWLEDGE" || suggestion.text !== "结合当前地块解释"));
-    const actions = (metadata.actions ?? []).filter((action) => action.enabled);
-    if (!cards.length && !suggestions.length && !actions.length) return null;
-    return (
-      <div className="farmap-copilot__response-blocks">
-        {cards.length > 0 && (
-          <Flex vertical gap={6} className="farmap-copilot__response-cards">
-            {cards.map((card) => (
-              <Card key={card.id} size="small" className="farmap-copilot__response-card" title={card.title}>
-                <Text>{card.content}</Text>
-              </Card>
-            ))}
-          </Flex>
-        )}
-        {suggestions.length > 0 && (
-          <Flex wrap gap={6} className="farmap-copilot__response-suggestions">
-            {suggestions.map((suggestion) => (
-              <Button key={suggestion.id} size="small" onClick={() => setDraft(suggestion.text)}>{suggestion.text}</Button>
-            ))}
-          </Flex>
-        )}
-        {actions.length > 0 && (
-          <Flex wrap gap={6} className="farmap-copilot__response-actions">
-            {actions.map((action) => (
-              <Tag key={action.id} color="green">{action.label}</Tag>
-            ))}
-          </Flex>
-        )}
-      </div>
-    );
-  }
-
-  function renderCommandBarResult() {
-    if (commandBarLoading === "PRIORITIES") {
-      return <Card className="farmap-copilot__command-result" size="small" title="今日优先事项"><Text type="secondary">正在读取诊断、任务与地块上下文…</Text></Card>;
-    }
-    if (commandBarLoading === "HISTORICAL_CASES") {
-      return <Card className="farmap-copilot__command-result" size="small" title="相似历史病例"><Text type="secondary">正在检索专家确认的历史病例…</Text></Card>;
-    }
-    if (commandBarLoading === "FARM_STATUS") {
-      return <Card className="farmap-copilot__command-result" size="small" title="当前农场状态"><Text type="secondary">正在读取地块、天气、诊断和任务上下文…</Text></Card>;
-    }
-    if (commandBarLoading === "FIELD_STATUS") {
-      return <Card className="farmap-copilot__command-result" size="small" title="当前地块状态"><Text type="secondary">正在读取地块、天气和近期农情…</Text></Card>;
-    }
-    if (commandBarLoading === "DIAGNOSIS") {
-      return <Card className="farmap-copilot__command-result" size="small" title="最近一次诊断"><Text type="secondary">正在读取已保存 Diagnosis 和 Evidence…</Text></Card>;
-    }
-    if (!commandBarResult) return null;
-    if (commandBarResult.type === "PRIORITIES") {
-      const data = commandBarResult.data;
-      return <Card className="farmap-copilot__command-result" size="small" title="今日优先事项">
-        {data.status === "READY" ? <>
-          <Text type="secondary">基于当前农场真实诊断与未完成任务</Text>
-          <Flex vertical gap={8} className="farmap-copilot__command-list">
-            {data.items.map((item) => <div key={`${item.kind}-${item.id}`} className="farmap-copilot__command-item">
-              <Flex align="center" justify="space-between" gap={8}>
-                <Text strong>{item.title}</Text>
-                <Tag color={item.priority === "HIGH" ? "red" : "orange"}>{item.priority === "HIGH" ? "高" : "中"}</Tag>
-              </Flex>
-              <span>{item.summary}</span>
-              <Button type="link" size="small" onClick={() => openCommandItem(item.path)}>{item.kind === "DIAGNOSIS" ? "查看诊断" : "查看任务"}</Button>
-            </div>)}
-          </Flex>
-          <Button type="link" size="small" onClick={() => openCommandItem("/overview")}>查看全部</Button>
-        </> : <Alert type={data.status === "EMPTY" ? "info" : "warning"} showIcon message={data.status === "EMPTY" ? "当前没有可验证的优先事项" : "优先事项数据暂不可用"} description={data.reason} />}
-      </Card>;
-    }
-    if (commandBarResult.type === "FARM_STATUS" || commandBarResult.type === "FIELD_STATUS") {
-      const data = commandBarResult.data;
-      return <Card className="farmap-copilot__command-result" size="small" title={data.title}>
-        {data.status === "READY" ? <>
-          {data.summary && <Text type="secondary">{data.summary}</Text>}
-          <div className="farmap-copilot__evidence-heading">依据 / 证据</div>
-          <Flex vertical gap={6} className="farmap-copilot__evidence-list">
-            {data.evidence.map((item, index) => <div className="farmap-copilot__evidence-row" key={`${item.label}-${index}`}><span>{item.label}</span><b>{item.value}</b>{item.source && <Tag>{item.source}</Tag>}</div>)}
-          </Flex>
-          <div className="farmap-copilot__command-meta">来源 · {data.sources.join(" · ") || "暂不可用"}{data.updatedAt ? ` · 更新于 ${data.updatedAt}` : ""}</div>
-        </> : <Alert type={data.status === "EMPTY" ? "info" : "warning"} showIcon message={data.status === "EMPTY" ? "当前没有可验证的农情信号" : "农情数据暂不可用"} description={data.reason} />}
-      </Card>;
-    }
-    if (commandBarResult.type === "DIAGNOSIS") {
-      const data = commandBarResult.data;
-      return <Card className="farmap-copilot__command-result" size="small" title={data.title || "最近一次诊断"}>
-        {data.status === "READY" ? <>
-          <Flex wrap gap={6}>{data.riskLevel && <Tag color={data.riskLevel === "high" ? "red" : data.riskLevel === "medium" ? "orange" : "green"}>风险 · {data.riskLevel}</Tag>}{data.confidence !== undefined && <Tag>置信度 · {Math.round(data.confidence * 100)}%</Tag>}</Flex>
-          {data.summary && <Text className="farmap-copilot__diagnosis-goal">{data.summary}</Text>}
-          <div className="farmap-copilot__evidence-heading">依据 / 证据</div>
-          <Flex vertical gap={6} className="farmap-copilot__evidence-list">
-            {data.evidence.map((item, index) => <div className="farmap-copilot__evidence-row" key={`${item.label}-${index}`}><span>{item.label}</span><b>{item.value}</b>{item.source && <Tag>{item.source}</Tag>}</div>)}
-          </Flex>
-          <div className="farmap-copilot__command-meta">来源 · {data.sources.join(" · ") || "Diagnosis"}{data.updatedAt ? ` · 更新于 ${data.updatedAt}` : ""}</div>
-          {data.diagnosisId && <Button type="link" size="small" onClick={() => openCommandItem(`/diagnosis/${encodeURIComponent(data.diagnosisId as string)}`)}>查看完整 Evidence</Button>}
-        </> : <Alert type={data.status === "EMPTY" ? "info" : "warning"} showIcon message={data.status === "EMPTY" ? "当前没有已保存的诊断" : "诊断数据暂不可用"} description={data.reason} />}
-      </Card>;
-    }
-    const data = commandBarResult.data;
-    if (data.status === "IMAGE_REQUIRED") {
-      return <Card className="farmap-copilot__command-result" size="small" title="相似历史病例">
-        <Alert type="info" showIcon message="需要现场图片" description={data.reason} />
-        <Button className="farmap-copilot__command-action" onClick={() => openDiagnosisPage("查找与当前情况最相似的历史病例")}>打开诊断页添加图片</Button>
-      </Card>;
-    }
-    return <Card className="farmap-copilot__command-result" size="small" title="相似历史病例">
-      {data.status === "READY" ? <>
-        <Text type="secondary">来自真实历史病例索引 · 返回 {data.items.length} 条</Text>
-        <Flex vertical gap={8} className="farmap-copilot__command-list">
-          {data.items.map((item, index) => <div key={item.caseId ?? `case-${index}`} className="farmap-copilot__command-item">
-            <Flex align="center" justify="space-between" gap={8}>
-              <Text strong>{item.caseId ?? "未命名病例"}</Text>
-              {item.similarityScore !== undefined && <Tag color="purple">匹配度 {item.similarityScore}%</Tag>}
-            </Flex>
-            <span>{[item.treeSpecies, item.diseaseType, item.pestType, item.nutritionStatus].filter(Boolean).join(" · ") || "专家案例，待结合当前证据核验"}</span>
-            {item.updatedAt && <span className="farmap-copilot__command-meta">更新时间 · {item.updatedAt}</span>}
-          </div>)}
-        </Flex>
-      </> : <Alert type={data.status === "EMPTY" ? "info" : "warning"} showIcon message={data.status === "EMPTY" ? "没有返回可验证的相似病例" : "历史病例检索暂不可用"} description={data.reason} />}
-    </Card>;
-  }
-
-  const drawerTitle =
+   }
+   const drawerTitle =
         <div className="farmap-copilot__header">
           <div className="farmap-copilot__header-identity">
             <span className="farmap-copilot__header-mark"><RobotOutlined /></span>
@@ -1756,38 +1595,6 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
     const message = messages.find((item) => item.id === evidenceDrawer.messageId);
     return message ? messagePartCitations(message.parts ?? []).get(evidenceDrawer.evidenceId) : undefined;
   }, [evidenceDrawer, messages]);
-  const renderMessageBody = (message: CopilotMessage) => {
-    const pending = sending && message.id === activeAssistantId;
-    const uiBlocks = message.uiBlocks?.map((block) => block.summary === message.content ? { ...block, summary: undefined } : block);
-    return <MessagePartRenderer
-      parts={message.parts}
-      content={message.content}
-      presentation={message.presentation}
-      uiBlocks={uiBlocks}
-      activity={message.activity}
-      pending={pending}
-      answering={Boolean(message.content || message.parts?.length || message.streamError)}
-      preparing={pending ? preparationLabel : undefined}
-      error={message.streamError}
-      busy={sending}
-      onPrompt={(prompt) => void handleSend(prompt)}
-      onDraftTask={(payload) => void createTaskDraft(payload)}
-      onOpenEvidence={(evidenceId) => setEvidenceDrawer({ messageId: message.id, evidenceId })}
-      onOpenAnalysis={(runId, farmId, fieldId) => {
-        const current = useAIContextStore.getState().context.currentFarm.id;
-        if (current > 0 && (farmId === undefined || farmId === current)) {
-          useCopilotStore.getState().openAnalysis({ runId, farmId: current, fieldId });
-          setChatCollapsed(false);
-        } else setContextToast("请切换到报告所属农场后再打开。");
-      }}
-      onSelectField={(fieldId) => {
-        const field = message.uiBlocks?.flatMap((block) => block.data?.fields ?? []).find((item) => item.id === "fieldId")?.options?.find((option) => option.value === fieldId);
-        setContext({ currentField: { id: fieldId, name: field?.label ?? fieldId, area: 0, crop: "" }, currentCrop: undefined, currentPhenology: undefined, selectedDevice: undefined, selectedDiagnosis: undefined, agentRunId: undefined, taskId: undefined });
-        useCopilotStore.getState().setContext(undefined);
-      }}
-      onOpenDetail={navigate}
-    />;
-  };
   const preparationLabel = activity?.requestId === activeRequestId.current
     ? activity?.steps.find((step) => step.status === "RUNNING")?.detail
     : undefined;
@@ -1995,87 +1802,33 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
         </Card>
       )}
 
-      <Divider />
+       <Divider />
 
-      <Flex vertical gap={12} className="farmap-copilot__messages">
-        {messages.length === 0 ? (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有对话" />
-        ) : (
-          <>{messages.filter((message) => (variant !== "workspace" || message.id !== "welcome") &&
-            (message.content || message.parts?.length || message.streamError || message.uiBlocks?.length || message.activity?.tools.length || message.activity?.thinking || message.activity?.knowledge || (sending && message.id === activeAssistantId))).map((message) => (
-            <div
-              key={message.id}
-              className={`farmap-copilot__message farmap-copilot__message--${message.role} ${responseClassName(message)}`}
-            >
-              {message.role === "assistant" && message.responseLabel && (
-                <div className="farmap-copilot__message-mode">
-                  {responseModeIcon(message.responseMode)}
-                  <span>{message.responseLabel}</span>
-                </div>
-              )}
-              {message.role === "assistant" ? renderMessageBody(message) : message.content && <p>{message.content}</p>}
-              {message.imageAttachments && message.imageAttachments.length > 0 && (
-                <div className="farmap-copilot__message-images">
-                  <Image.PreviewGroup>
-                    {message.imageAttachments.map((image) => (
-                      <Image
-                        key={image.id}
-                        src={image.url}
-                        alt={image.name}
-                        width={148}
-                        height={104}
-                        preview={{ mask: "查看图片" }}
-                        fallback="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
-                        style={{ objectFit: "cover", borderRadius: 8, border: "1px solid #d9e8df" }}
-                      />
-                    ))}
-                  </Image.PreviewGroup>
-                </div>
-              )}
-              {message.role === "assistant" && message.referenceImages && message.referenceImages.length > 0 && (
-                <div
-                  className="farmap-copilot__reference-images"
-                  style={{ display: "flex", gap: 8, overflowX: "auto", maxWidth: "100%", paddingTop: 8, paddingBottom: 2 }}
-                >
-                  <Image.PreviewGroup>
-                    {message.referenceImages.map((image) => (
-                      <div key={image.refId} data-reference-image="true" style={{ flex: "0 0 92px", minWidth: 0 }}>
-                        <Image
-                          src={image.imageUrl}
-                          alt={image.label}
-                          width={92}
-                          height={68}
-                          fallback="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
-                          onError={(event) => {
-                            event.currentTarget.closest("[data-reference-image='true']")?.setAttribute("hidden", "true");
-                          }}
-                          style={{ objectFit: "cover", borderRadius: 6, border: "1px solid #d9e8df" }}
-                        />
-                        <small style={{ display: "block", marginTop: 3, color: "#6b7280", lineHeight: 1.35, wordBreak: "break-all" }}>{image.label}</small>
-                      </div>
-                    ))}
-                  </Image.PreviewGroup>
-                </div>
-              )}
-              {message.role === "assistant" && message.referenceImageNotice && (
-                <small className="farmap-copilot__reference-image-note">{message.referenceImageNotice}</small>
-              )}
-              {message.role === "assistant" && message.presentation?.analysis && <section className="farmap-response__analysis" aria-label="补充分析">
-                <h3>补充分析</h3><MarkdownMessage text={message.presentation.analysis} />
-              </section>}
-              {message.role === "assistant" && !message.presentation?.followUps?.length && renderResponseMetadata(message.responseMeta)}
-              {message.role === "assistant" && !!message.presentation?.followUps?.length && <div className="farmap-response__followups" aria-label="下一步">
-                {message.presentation.followUps.map(({ label, prompt }) => <button type="button" key={prompt} onClick={() => setDraft(prompt)}>{label}</button>)}
-              </div>}
-            </div>
-          ))}</>
-        )}
-        {sending && !messages.some((message) => message.id === activeAssistantId) && (
-          <div className="farmap-copilot__message farmap-copilot__message--assistant">
-            <CopilotTurnActivity pending answering={false} preparing={preparationLabel} />
-          </div>
-        )}
-      </Flex>
+      <CopilotMessageStream
+        messages={messages}
+        variant={variant}
+        sending={sending}
+        activeAssistantId={activeAssistantId}
+        preparationLabel={preparationLabel}
+        busy={sending}
+        onPrompt={(prompt) => void handleSend(prompt)}
+        onDraftTask={(payload) => void createTaskDraft(payload)}
+        onOpenEvidence={(messageId, evidenceId) => setEvidenceDrawer({ messageId, evidenceId })}
+        onOpenAnalysis={(runId, farmId, fieldId) => {
+          const current = useAIContextStore.getState().context.currentFarm.id;
+          if (current > 0 && (farmId === undefined || farmId === current)) {
+            useCopilotStore.getState().openAnalysis({ runId, farmId: current, fieldId });
+            setChatCollapsed(false);
+          } else setContextToast("请切换到报告所属农场后再打开。");
+        }}
+        onSelectField={(message, fieldId) => {
+          const field = message.uiBlocks?.flatMap((block) => block.data?.fields ?? []).find((item) => item.id === "fieldId")?.options?.find((option) => option.value === fieldId);
+          setContext({ currentField: { id: fieldId, name: field?.label ?? fieldId, area: 0, crop: "" }, currentCrop: undefined, currentPhenology: undefined, selectedDevice: undefined, selectedDiagnosis: undefined, agentRunId: undefined, taskId: undefined });
+          useCopilotStore.getState().setContext(undefined);
+        }}
+        onOpenDetail={navigate}
+        onSetDraft={setDraft}
+      />
 
       {((runtimeActivity?.events?.length ?? 0) > 0 || (runtimeActivity?.pendingInputs?.length ?? 0) > 0) && <details className="farmap-copilot-workspace__activity">
         <summary>查看已保存的执行记录</summary>
@@ -2085,7 +1838,15 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
           {input.status !== "delivered" && <Button size="small" onClick={() => setDraft(input.message)}>填入输入框</Button>}
         </div>)}
       </details>}
-      <div className="farmap-copilot__inline-results">{!(agentProgress && messages.some((message) => message.uiBlocks?.some((block) => block.data?.runId === agentProgress.runId))) && renderAgentProgress()}{renderCommandBarResult()}</div>
+      <div className="farmap-copilot__inline-results">
+        {!(agentProgress && messages.some((message) => message.uiBlocks?.some((block) => block.data?.runId === agentProgress.runId))) && renderAgentProgress()}
+        <CopilotLegacyCommandPanel
+          loading={commandBarLoading}
+          result={commandBarResult}
+          onOpenPath={openCommandItem}
+          onOpenDiagnosisPage={(goal) => openDiagnosisPage(goal)}
+        />
+      </div>
       </div>
       {hasConversation && <div className="farmap-copilot__jump-row">{showLatest && <button type="button" className="farmap-copilot__jump" onClick={scrollToLatest}><ArrowDown size={14} />回到最新消息</button>}</div>}
 
@@ -2192,42 +1953,13 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
           </Button>
         </Flex>
         <small className="farmap-copilot__composer-note">图片、地块与知识依据会按问题需要调用；涉及农事执行时始终由你确认。</small>
-      </div>
-      <Drawer
-        title="证据溯源"
-        placement="right"
-        width={420}
+       </div>
+      <CopilotEvidenceDrawer
         open={Boolean(evidenceDrawer)}
+        evidence={selectedEvidence}
         onClose={() => setEvidenceDrawer(undefined)}
-        closeIcon={<CloseOutlined />}
-        className="farmap-copilot-evidence-drawer"
-      >
-        {selectedEvidence ? <article className="farmap-evidence-detail" data-evidence-id={selectedEvidence.evidenceId}>
-          <header>
-            <span className="farmap-evidence-detail__index">[{selectedEvidence.evidenceId}]</span>
-            <Tag color="green">{citationModalityLabels[selectedEvidence.modality]}</Tag>
-            {selectedEvidence.stageLabel && <Tag>{selectedEvidence.stageLabel}</Tag>}
-          </header>
-          <h2>{selectedEvidence.title}</h2>
-          <dl className="farmap-evidence-detail__meta">
-            <div><dt>来源</dt><dd>{selectedEvidence.sourceName}</dd></div>
-            {selectedEvidence.documentName && <div><dt>文档</dt><dd>{selectedEvidence.documentName}</dd></div>}
-            {selectedEvidence.score !== undefined && <div><dt>匹配度</dt><dd>{Math.round(selectedEvidence.score * 100)}%</dd></div>}
-            {selectedEvidence.expertStatus && <div><dt>审核状态</dt><dd>{selectedEvidence.expertStatus}</dd></div>}
-          </dl>
-          {selectedEvidence.snippet && <section>
-            <h3>检索原文</h3>
-            <blockquote>{selectedEvidence.snippet}</blockquote>
-          </section>}
-          {selectedEvidence.imageUrl && <Image
-            src={selectedEvidence.imageUrl}
-            alt={`证据 ${selectedEvidence.evidenceId} 图像`}
-            fallback="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
-          />}
-          <small>证据用于解释回答来源，不改变任务授权、用药安全校验或人工审批。</small>
-        </article> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={evidenceDrawer ? "这条证据暂未返回可展示内容。" : "选择正文引用或卡片角标查看证据。"} />}
-      </Drawer>
-    </>
+      />
+     </>
   );
   const splitWorkspace = Boolean(activeAnalysis);
   const chatContent = <div ref={workspaceChat} className={`farmap-copilot-workspace ${hasConversation || splitWorkspace ? "has-conversation" : "is-empty"}`}>

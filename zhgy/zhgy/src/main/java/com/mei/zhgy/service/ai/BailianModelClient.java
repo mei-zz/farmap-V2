@@ -303,6 +303,7 @@ public class BailianModelClient {
                                             .model(root.path("model").asText(model))
                                             .inputTokens(longValue(usageNode, "prompt_tokens"))
                                             .outputTokens(longValue(usageNode, "completion_tokens"))
+                                            .cacheReadTokens(cacheReadTokens(usageNode))
                                             .thinkingTokens(thinkingTokens(usageNode))
                                             .totalTokens(longValue(usageNode, "total_tokens"))
                                             .finishReason(finishReason).build();
@@ -532,6 +533,7 @@ public class BailianModelClient {
                     .model(root.path("model").asText(requestedModel))
                     .inputTokens(longValue(usage, "prompt_tokens"))
                     .outputTokens(longValue(usage, "completion_tokens"))
+                    .cacheReadTokens(cacheReadTokens(usage))
                     .thinkingTokens(thinkingTokens(usage))
                     .totalTokens(longValue(usage, "total_tokens"))
                     .finishReason(choices.get(0).path("finish_reason").asText(null))
@@ -576,6 +578,11 @@ public class BailianModelClient {
         Long direct = longValue(usage, "thinking_tokens");
         if (direct != null) return direct;
         return longValue(usage.path("completion_tokens_details"), "reasoning_tokens");
+    }
+
+    private Long cacheReadTokens(JsonNode usage) {
+        Long cached = longValue(usage.path("prompt_tokens_details"), "cached_tokens");
+        return cached != null ? cached : longValue(usage, "prompt_cache_hit_tokens");
     }
 
     private String classifyStatus(int status) {

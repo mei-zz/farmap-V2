@@ -59,6 +59,7 @@ public class ReviewedCaseTextSearch {
         result.put("summary", hit.summary());
         result.put("learningValue", candidate.get("learningValue"));
         result.put("source", "FarMap 专家复核的作业结果");
+        result.put("expertStatus", "EXPERT_REVIEWED");
         // Historical expert endorsement is tied to the recorded recommendation and outcome.
         if ("SUCCESS_CASE".equals(candidate.get("learningValue"))) {
             var review = reviews.get(string(candidate.get("reviewId")), actor);

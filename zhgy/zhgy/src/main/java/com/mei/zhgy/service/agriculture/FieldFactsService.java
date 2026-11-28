@@ -3,6 +3,10 @@ package com.mei.zhgy.service.agriculture;
 import com.mei.zhgy.service.field.FieldAccessException;
 import com.mei.zhgy.service.field.FieldContext;
 import com.mei.zhgy.service.field.FarmFieldService;
+import com.mei.zhgy.service.copilot.CopilotMemoryProposalService;
+import com.mei.zhgy.service.copilot.PlumAgronomyEvidenceCatalog;
+import com.mei.zhgy.service.copilot.PlumAgronomyRuleEngine;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -20,6 +24,9 @@ public class FieldFactsService {
     private final FarmFieldService fields;
     private final CropResolver crops;
     private final PhenologyService phenology;
+    @Autowired(required = false) private CopilotMemoryProposalService memory;
+    @Autowired(required = false) private PlumAgronomyEvidenceCatalog agronomyEvidence;
+    @Autowired(required = false) private PlumAgronomyRuleEngine agronomyRules;
 
     public FieldFactsService(FarmFieldService fields, CropResolver crops, PhenologyService phenology) {
         this.fields = fields; this.crops = crops; this.phenology = phenology;
@@ -43,11 +50,15 @@ public class FieldFactsService {
                         sources("serverDate", "SERVER_ASIA_SHANGHAI", "crop", "UNKNOWN"), trusted);
             }
             String registered = text(trusted.getField(), "growthStage");
-            PhenologyResult result = phenology.calculate(crop.code(), today, registered);
+            Integer farmId = number(trusted.getFarm(), "id");
+            Map<String, String> sources = sources("serverDate", "SERVER_ASIA_SHANGHAI", "crop", "MYSQL_FIELD_CROP",
+                    "dateDerivedStage", "SERVER_RULE", "currentStage", registered == null ? "SERVER_RULE" : "MYSQL_FIELD");
+            PhenologyResult result = "plum".equals(crop.code()) && farmId != null
+                    ? plumPhenology(farmId, fieldId, userId, today, registered, trusted.getAccumulatedTemperature(), sources)
+                    : phenology.calculate(crop.code(), today, registered);
             String registeredLabel = result.registeredStage() == null ? null : result.registeredStage().name();
-            Map<String, String> sources = sources("serverDate", "SERVER_ASIA_SHANGHAI", "crop", "MYSQL_FIELD_CROP", "dateDerivedStage", "SERVER_RULE", "currentStage", registered == null ? "SERVER_RULE" : "MYSQL_FIELD");
             PhenologyCalendar calendar = phenology.calendarForCrop(crop.code());
-            return new FieldFacts("READY", today, formatted, fieldId, number(trusted.getFarm(), "id"), rawCrop,
+            return new FieldFacts("READY", today, formatted, fieldId, farmId, rawCrop,
                     crop.code(), crop.name(), registered, registeredLabel, result.dateDerivedCode(), result.dateDerivedName(),
                     result.currentCode(), result.currentName(), result.previousCode(), result.previousName(), result.nextCode(), result.nextName(), result.daysUntilNext(),
                     calendar == null ? null : calendar.cycleType(), calendar == null ? List.of() : calendar.stages().stream().map(PhenologyStage::name).toList(),
@@ -57,6 +68,58 @@ public class FieldFactsService {
         } catch (RuntimeException error) {
             return empty("UNAVAILABLE", today, formatted);
         }
+    }
+
+    private PhenologyResult plumPhenology(Integer farmId, String fieldId, Long actor, LocalDate today, String registered,
+                                          Map<String, Object> heat, Map<String, String> sources) {
+        var verified = agronomyEvidence == null ? null : agronomyEvidence.calendarProfile(farmId, fieldId, "plum", today);
+        Map<String, Object> declared = Map.of();
+        if (memory != null) {
+            try { declared = memory.profileMap(actor, farmId.toString(), fieldId); }
+            catch (RuntimeException unavailable) { /* An unavailable profile does not erase verified field facts. */ }
+        }
+        Double elevation = verified != null && verified.elevationMeters() != null ? verified.elevationMeters()
+                : declared.get("elevationMeters") instanceof Number number ? number.doubleValue() : null;
+        String cultivar = verified != null && verified.cultivar() != null ? verified.cultivar()
+                : text(declared, "plum_variety");
+        if (cultivar == null) cultivar = text(declared, "variety");
+
+        Double thermalSum = heat != null && "READY".equals(heat.get("status"))
+                && heat.get("accumulatedTemp") instanceof Number value && Double.isFinite(value.doubleValue())
+                ? value.doubleValue() : null;
+        LocalDate measuredOn = null;
+        if (thermalSum != null && heat.get("date") instanceof String date) {
+            try { measuredOn = LocalDate.parse(date); }
+            catch (java.time.format.DateTimeParseException invalid) { /* A calibration still requires a verified measurement date. */ }
+        }
+        sources.put("accumulatedTemperatureStatus", thermalSum == null ? "UNAVAILABLE" : "READY");
+        if (thermalSum != null) sources.put("accumulatedTemperature", thermalSum.toString());
+        if (measuredOn != null) sources.put("temperatureMeasuredOn", measuredOn.toString());
+
+        var assessment = phenology.calculate("plum", today, registered, elevation, cultivar, thermalSum);
+        sources.put("phenologyEffectiveDate", assessment.effectiveDate().toString());
+        String basis = assessment.calendarExplanation();
+        boolean usedDeclaredElevation = elevation != null && (verified == null || verified.elevationMeters() == null);
+        boolean usedDeclaredCultivar = cultivar != null && (verified == null || verified.cultivar() == null);
+        if (usedDeclaredElevation || usedDeclaredCultivar) {
+            basis += " · 部分画像来源为用户自报";
+        }
+        sources.put("phenologyBasis", thermalSum == null ? basis : basis + " · 已记录观测积温，等待匹配校准依据");
+
+        PhenologyResult baseline = assessment.result();
+        if (agronomyRules == null || agronomyEvidence == null
+                || !agronomyEvidence.hasField(farmId, fieldId, "plum", today)) return baseline;
+        var inputs = agronomyEvidence.correction(farmId, fieldId, "plum", today, thermalSum, measuredOn);
+        var correction = agronomyRules.correctPhenology(new PlumAgronomyRuleEngine.PhenologyCorrectionRequest(
+                "plum", today, registered, baseline.dateDerivedCode(),
+                new PlumAgronomyRuleEngine.Provenance(PlumAgronomyRuleEngine.SourceKind.ORCHARD_RECORD, "FarMap:" + fieldId,
+                        "farm-field-v1", java.time.Instant.now(), false, true), inputs.observations(), inputs.windows()));
+        if (correction.requiresReview() || !correction.changed() || correction.effectiveStageCode() == null) return baseline;
+        var corrected = phenology.calculate("plum", assessment.effectiveDate(), correction.effectiveStageCode());
+        sources.put("currentStage", "VERIFIED_PHENOLOGY_CORRECTION");
+        sources.put("phenologyBasis", basis + " · 已按核验的物候观测或积温校准修正");
+        return new PhenologyResult(baseline.dateDerivedStage(), baseline.registeredStage(), corrected.currentStage(),
+                corrected.previousStage(), corrected.nextStage(), corrected.daysUntilNext(), baseline.mismatch(), corrected.cycleEnded());
     }
 
     private FieldFacts empty(String status, LocalDate date, String formatted) {

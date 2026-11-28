@@ -25,9 +25,10 @@ const priorityLabels: Record<ChecklistPriority, string> = { urgent: "紧急", ro
 type Props = {
   block: AgentUiBlock;
   onDraftTask?: (payload: DraftTaskPayload) => void;
+  onDraftBatch?: (payload: DraftTaskPayload[]) => void;
 };
 
-export function ActionChecklistCard({ block, onDraftTask }: Props) {
+export function ActionChecklistCard({ block, onDraftTask, onDraftBatch }: Props) {
   const checklist = block.data?.actionChecklist;
   const items = checklist?.items ?? emptyItems;
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -39,17 +40,18 @@ export function ActionChecklistCard({ block, onDraftTask }: Props) {
   if (!items.length) return <p>当前没有可执行的结构化农事步骤。</p>;
 
   const selectedItems = items.filter((item) => selected.has(item.id));
-  const fieldId = selectedItems.flatMap((item) => item.draftTask?.fieldId ? [item.draftTask.fieldId] : []).at(0) ?? block.data?.fieldId;
-  const scheduledFor = selectedItems.flatMap((item) => item.scheduledFor ?? item.draftTask?.scheduledFor ?? []).sort()[0];
-  const task: DraftTaskPayload | undefined = fieldId && selectedItems.length ? {
-    fieldId,
-    title: selectedItems.length === 1
-      ? selectedItems[0].draftTask?.title ?? selectedItems[0].title
-      : `${block.title}（${selectedItems.length}项）`.slice(0, 120),
-    detail: selectedItems.map((item) => item.draftTask?.detail ?? [item.title, item.detail].filter(Boolean).join("："))
-      .join("\n").slice(0, 880),
-    scheduledFor,
-  } : undefined;
+  const tasks = selectedItems.flatMap((item) => {
+    if (item.draftTask) return [item.draftTask];
+    const fieldId = block.data?.fieldId;
+    return fieldId && item.detail ? [{ fieldId, title: item.title, detail: item.detail, scheduledFor: item.scheduledFor }] : [];
+  });
+  const actionable = tasks.length > 0 && tasks.length === selectedItems.length
+    && (tasks.length === 1 ? Boolean(onDraftTask) : Boolean(onDraftBatch));
+  const submit = () => {
+    if (!actionable) return;
+    if (tasks.length === 1) onDraftTask?.(tasks[0]);
+    else onDraftBatch?.(tasks);
+  };
 
   const toggle = (id: string) => {
     setSelected((current) => {
@@ -80,10 +82,10 @@ export function ActionChecklistCard({ block, onDraftTask }: Props) {
     </li>)}</ul>
     <div className="farmap-checklist__footer">
       <span aria-live="polite">已选 {selectedItems.length} / {items.length} 项</span>
-      <button type="button" className="farmap-block__primary" disabled={!task || !onDraftTask} onClick={() => task && onDraftTask?.(task)}>
+      <button type="button" className="farmap-block__primary" disabled={!actionable} onClick={submit}>
         转为待审批农事任务
       </button>
     </div>
-    {!fieldId && selectedItems.length > 0 && <p role="status">当前清单缺少地块编号，暂不能生成结构化任务草稿。</p>}
+    {tasks.length < selectedItems.length && <p role="status">部分步骤缺少地块或任务说明，请先补充。</p>}
   </section>;
 }

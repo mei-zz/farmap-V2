@@ -393,8 +393,11 @@ public class PlumDefenseKnowledgeService {
         aliases.put("露白", "budding");
         aliases.put("花期", "flowering");
         aliases.put("初花", "flowering");
+        aliases.put("初花期", "flowering");
         aliases.put("盛花", "flowering");
+        aliases.put("盛花期", "flowering");
         aliases.put("末花", "flowering");
+        aliases.put("末花期", "flowering");
         aliases.put("开花", "flowering");
         aliases.put("展叶期", "leafing");
         aliases.put("展叶", "leafing");
@@ -402,18 +405,24 @@ public class PlumDefenseKnowledgeService {
         aliases.put("坐果期", "fruiting");
         aliases.put("坐果", "fruiting");
         aliases.put("幼果", "fruiting");
+        aliases.put("幼果期", "fruiting");
         aliases.put("谢花坐果", "fruiting");
         aliases.put("果实发育期", "fruit_development");
         aliases.put("果实发育", "fruit_development");
+        aliases.put("果实膨大期", "fruit_development");
         aliases.put("幼果膨大", "fruit_development");
         aliases.put("硬核", "fruit_development");
+        aliases.put("硬核期", "fruit_development");
         aliases.put("膨大", "fruit_development");
         aliases.put("成熟期", "ripening");
         aliases.put("转色", "ripening");
+        aliases.put("转色期", "ripening");
         aliases.put("软化", "ripening");
+        aliases.put("软化期", "ripening");
         aliases.put("成熟", "ripening");
         aliases.put("采收期", "harvest");
         aliases.put("采摘", "harvest");
+        aliases.put("采摘期", "harvest");
         aliases.put("上市", "harvest");
         aliases.put("采后恢复期", "post_harvest");
         aliases.put("采后", "post_harvest");
@@ -495,7 +504,7 @@ public class PlumDefenseKnowledgeService {
             new TargetSeed("plum_bag_fruit", "袋果病", TargetType.DISEASE,
                     stages("袋果病", "囊果病", "plum pockets", "taphrina"),
                     stages("germination", "budding", "flowering", "fruiting"),
-                    stages("leafing", "fruit_development", "ripening", "harvest", "post_harvest", "dormancy"),
+                    List.of(),
                     CHEMICAL_FORBIDDEN_STAGES, List.of(
                     new MeasureSeed("early-removal", MeasureKind.CULTURAL,
                             "春季发现袋状、囊状畸形病果或病梢时尽早摘除并带出果园。"),
@@ -505,7 +514,7 @@ public class PlumDefenseKnowledgeService {
             new TargetSeed("plum_fruit_moth", "食心虫", TargetType.PEST,
                     stages("食心虫", "李小食心虫", "桃小食心虫", "梨小食心虫", "fruit moth", "grapholita"),
                     stages("fruiting", "fruit_development", "ripening"),
-                    stages("dormancy", "germination", "budding", "flowering", "leafing", "harvest", "post_harvest"),
+                    List.of(),
                     CHEMICAL_FORBIDDEN_STAGES, List.of(
                     new MeasureSeed("drop-removal", MeasureKind.CULTURAL,
                             "及时清理虫果和落果，减少幼虫继续发育和下一代虫源。"),
@@ -515,7 +524,7 @@ public class PlumDefenseKnowledgeService {
             new TargetSeed("plum_aphid", "蚜虫", TargetType.PEST,
                     stages("蚜虫", "桃蚜", "aphid"),
                     stages("germination", "budding", "leafing", "fruiting", "fruit_development"),
-                    stages("dormancy", "flowering", "ripening", "harvest", "post_harvest"),
+                    List.of(),
                     CHEMICAL_FORBIDDEN_STAGES, List.of(
                     new MeasureSeed("shoot-monitoring", MeasureKind.MONITORING,
                             "检查嫩梢、叶背和卷叶内的蚜虫及天敌数量，避免仅凭少量虫口喷药。"),
@@ -525,7 +534,7 @@ public class PlumDefenseKnowledgeService {
             new TargetSeed("plum_spider_mite", "红蜘蛛", TargetType.PEST,
                     stages("红蜘蛛", "叶螨", "spider mite", "tetranychus"),
                     stages("leafing", "fruit_development", "ripening", "post_harvest"),
-                    stages("dormancy", "germination", "budding", "flowering", "fruiting", "harvest"),
+                    List.of(),
                     CHEMICAL_FORBIDDEN_STAGES, List.of(
                     new MeasureSeed("leaf-monitoring", MeasureKind.MONITORING,
                             "翻看叶背，记录活动螨、卵和天敌数量；高温干旱后加密调查。"),

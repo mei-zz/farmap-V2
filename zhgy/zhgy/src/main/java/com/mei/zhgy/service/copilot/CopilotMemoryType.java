@@ -15,4 +15,9 @@ public enum CopilotMemoryType {
     public boolean isSelfReported() {
         return this == ORCHARD_PROFILE;
     }
+
+    /** User-level preference or operating constraint, never an orchard profile fact. */
+    public boolean isUserScopedPreference() {
+        return this == USER_PREFERENCE || this == OPERATING_CONSTRAINT;
+    }
 }

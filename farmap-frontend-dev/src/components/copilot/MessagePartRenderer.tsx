@@ -15,22 +15,20 @@ import {
   type MessageToolCallPart,
   type MessageUiBlockPart,
 } from "@/features/copilot/messageParts";
-import type { AgentUiBlock } from "@/features/copilot/uiBlocks";
+import type { AgentUiBlock, DraftTaskPayload } from "@/features/copilot/uiBlocks";
 import { CopilotTurnActivity } from "./CopilotTurnActivity";
 
-type DraftTaskIntent = { fieldId: string; title: string; detail: string; scheduledFor?: string };
-
-type BlockActions = {
+export type MessageBlockActions = {
   onPrompt: (message: string) => void;
   onSelectField?: (id: string) => void;
   onOpenDetail?: (route: string) => void;
   onOpenAnalysis?: (runId: string, farmId?: number, fieldId?: string) => void;
-  onDraftTask?: (payload: DraftTaskIntent) => void | Promise<void>;
+  onDraftTask?: (payload: DraftTaskPayload) => void | Promise<void>;
   onOpenEvidence?: (evidenceId: string) => void;
   busy?: boolean;
 };
 
-type MessagePartRendererProps = BlockActions & {
+type MessagePartRendererProps = MessageBlockActions & {
   parts?: MessagePart[];
   content: string;
   presentation?: MessagePresentation;
@@ -230,7 +228,7 @@ function StreamError({ message }: { message: string }) {
   return <div className="farmap-message-parts__error" role="alert">{message}</div>;
 }
 
-function blockActionProps(props: BlockActions) {
+function blockActionProps(props: MessageBlockActions) {
   return {
     onPrompt: props.onPrompt,
     onSelectField: props.onSelectField,
@@ -239,6 +237,15 @@ function blockActionProps(props: BlockActions) {
     ...(props.onDraftTask ? { onDraftTask: props.onDraftTask } : {}),
     ...(props.onOpenEvidence ? { onOpenEvidence: props.onOpenEvidence } : {}),
   };
+}
+
+function uniqueBlocks(blocks: readonly AgentUiBlock[] | undefined): AgentUiBlock[] {
+  const seen = new Set<string>();
+  return (blocks ?? []).filter((block) => {
+    if (seen.has(block.blockId)) return false;
+    seen.add(block.blockId);
+    return true;
+  });
 }
 
 function LegacyMessage({
@@ -252,7 +259,7 @@ function LegacyMessage({
   error,
   ...actions
 }: Omit<MessagePartRendererProps, "parts">) {
-  const visibleBlocks = (uiBlocks ?? []).filter((block) => !pending || Boolean(presentation?.summary) || isExecutionBlock(block));
+  const visibleBlocks = uniqueBlocks(uiBlocks);
   const executionBlocks = visibleBlocks.filter(isExecutionBlock);
   const contentBlocks = visibleBlocks.filter((block) => !isExecutionBlock(block));
   return (
@@ -265,6 +272,9 @@ function LegacyMessage({
         </div>
       )}
       {contentBlocks.length > 0 && <AgentUiBlocks blocks={contentBlocks} {...blockActionProps(actions)} busy={actions.busy} />}
+      {presentation?.analysis && <section className="farmap-response__analysis" aria-label="补充分析">
+        <MarkdownMessage text={presentation.analysis} />
+      </section>}
       {error && <StreamError message={error} />}
     </>
   );
@@ -279,9 +289,10 @@ export function MessagePartRenderer({ parts, ...props }: MessagePartRendererProp
   const summary = props.presentation?.summary;
   const analysis = props.presentation?.analysis;
   const summaryPart = summary ? parts.find((part): part is MessageTextPart => part.type === "text" && part.markdown === summary) : undefined;
+  const analysisPart = analysis ? parts.find((part): part is MessageTextPart => part.type === "text" && part.markdown === analysis) : undefined;
   const protocolHasText = parts.some((part) => part.type === "text" && Boolean(part.markdown.trim()));
   const blockIds = new Set(parts.flatMap((part) => part.type === "ui_block" ? [part.block.blockId] : []));
-  const missingLegacyBlocks = (props.uiBlocks ?? []).filter((block) => !blockIds.has(block.blockId));
+  const missingLegacyBlocks = uniqueBlocks(props.uiBlocks).filter((block) => !blockIds.has(block.blockId));
   const hasTraceParts = parts.some((part) => part.type === "tool_call" || part.type === "thinking");
   const hasLegacyActivity = Boolean(props.activity?.knowledge || props.activity?.thinking || props.activity?.modelStarted);
 
@@ -311,8 +322,12 @@ export function MessagePartRenderer({ parts, ...props }: MessagePartRendererProp
         }
         const part = unit.part;
         if (part.type === "text") {
-          if (analysis && part.markdown === analysis) return null;
           if (!part.markdown.trim()) return null;
+          if (analysisPart?.id === part.id) return (
+            <section key={unit.key} className="farmap-response__analysis" aria-label="补充分析" data-part-kind="text" data-part-id={part.id}>
+              <MarkdownMessage text={part.markdown} citations={part.citations?.length ? part.citations : citations} onEvidenceClick={props.onOpenEvidence} />
+            </section>
+          );
           const isSummaryPart = summaryPart?.id === part.id;
           return (
             <div
@@ -337,6 +352,9 @@ export function MessagePartRenderer({ parts, ...props }: MessagePartRendererProp
       {missingLegacyBlocks.length > 0 && (
         <AgentUiBlocks blocks={missingLegacyBlocks} {...blockActionProps(props)} busy={props.busy} />
       )}
+      {analysis && !analysisPart && <section className="farmap-response__analysis" aria-label="补充分析">
+        <MarkdownMessage text={analysis} citations={citations} onEvidenceClick={props.onOpenEvidence} />
+      </section>}
     </div>
   );
 }

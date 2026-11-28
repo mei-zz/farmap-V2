@@ -70,7 +70,9 @@ test("knowledge retrieval appears only as a count before and after the streamed 
   await page.route("**/api/copilot/conversations/knowledge-count-test", (route) => route.fulfill({ json: {
     conversationId: "knowledge-count-test", status: "ACTIVE", summaryVersion: 0, contextVersion: 2, turnCount: 2, recentTurns: [],
     historyTurns: [
-      { turnId: "legacy", role: "ASSISTANT", message: "以前的回答", responseMetadata: { uiBlocks: [legacyBlock] } },
+      { turnId: "legacy", role: "ASSISTANT", message: "以前的回答", responseMetadata: {
+        messageParts: [{ type: "ui_block", blockKey: legacyBlock.blockId, block: legacyBlock }],
+      } },
       { turnId: "current", role: "ASSISTANT", message: "观察果面是否形成霉层。", responseMetadata: { knowledgeCount: 5, knowledgeStatus: "READY" } },
     ],
   } }));
@@ -90,6 +92,7 @@ test("knowledge retrieval appears only as a count before and after the streamed 
             suggestions: [{ id: "reveal", text: "查看知识依据" }, { id: "field", text: "结合当前地块解释" }],
           });
           send("ui.block.created", { block });
+          send("message.part", { type: "ui_block", blockKey: block.blockId, block });
           window.addEventListener("test-first-answer-token", () => {
             send("agent.runtime", { type: "turn_start" });
             send("content.delta", { delta: "褐腐病常引起果实褐变。" });

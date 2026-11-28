@@ -10,6 +10,8 @@ import com.mei.zhgy.service.agriculture.CropResolver;
 import com.mei.zhgy.service.agriculture.PhenologyService;
 import com.mei.zhgy.service.field.FarmFieldService;
 import com.mei.zhgy.service.historical.HistoricalCaseSearchService;
+import com.mei.zhgy.service.knowledge.AgriculturalStructuredKnowledgeService;
+import com.mei.zhgy.service.knowledge.PlumDefenseKnowledgeService;
 import com.mei.zhgy.service.maturity.FarmMaturityService;
 import com.mei.zhgy.service.operations.OperationsTaskViewService;
 import com.mei.zhgy.service.rag.VisualEvidenceRetriever;
@@ -36,6 +38,8 @@ public class AgriculturalToolRegistry {
     private final HistoricalCaseSearchService history;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.mei.zhgy.service.historical.ReviewedCaseTextSearch reviewedCases;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private AgriculturalStructuredKnowledgeService structuredAgronomy;
     private final VisualEvidenceRetriever visual;
     private final FarmMaturityService maturity;
     private final CropResolver crops;
@@ -95,6 +99,8 @@ public class AgriculturalToolRegistry {
                         timeline.put("seasonal", facts.get("dateDerivedGrowthStageLabel"));
                         timeline.put("stages", facts.get("orderedPhenologyStages"));
                         timeline.put("daysUntilNext", facts.get("daysUntilNextPhenologyStage"));
+                        timeline.put("basis", facts.get("phenologyBasis"));
+                        timeline.put("effectiveDate", facts.get("phenologyEffectiveDate"));
                         timeline.put("accumulatedTemperature", facts.get("accumulatedTemperature"));
                         timeline.put("thermalTarget", facts.get("thermalTarget"));
                         timeline.put("temperatureMeasuredOn", facts.get("temperatureMeasuredOn"));
@@ -197,8 +203,14 @@ public class AgriculturalToolRegistry {
                     "读取已明确保存的果园画像、农场约束与沟通偏好。",
                     args -> {
                         ToolScope scope = guard.authorize(active, args.integer("farmId"), args.text("fieldId"), true, actor);
-                        var values = memories.retrieve(actor, context(scope), null).stream().limit(20)
-                                .map(item -> Map.of("scope", item.getScope().name(), "key", item.getKey(), "value", item.getValue())).toList();
+                        var preferences = new LinkedHashMap<String, com.mei.zhgy.service.copilot.CopilotLongTermMemory>();
+                        memories.retrieve(actor, context(scope), null).stream().filter(item -> !item.getType().isProfileFact())
+                                .forEach(item -> preferences.putIfAbsent(item.getKey(), item));
+                        if (scope.farmId() != null) memories.retrieve(actor, new CopilotStableContext(), null)
+                                .forEach(item -> preferences.putIfAbsent(item.getKey(), item));
+                        var values = preferences.values().stream().limit(20)
+                                .map(item -> Map.of("scope", item.getScope().name(), "type", item.getType().name(),
+                                        "key", item.getKey(), "value", item.getValue())).toList();
                         Map<String, Object> profile = new LinkedHashMap<>(reads.orchardProfile().apply(context(scope)));
                         if (scope.fieldId() != null) {
                             var record = farmFieldService.get(scope.fieldId(), actor);
@@ -273,7 +285,9 @@ public class AgriculturalToolRegistry {
     static ReadTool memoryProposal(java.util.function.Function<CopilotToolArguments, ToolReply> handler) {
         return tool("propose_memory_update", "将用户本轮明确披露的果园属性提议为长期记忆，须用户确认。", handler,
                 enumeration("scope", "资料归属", true, "FARM", "FIELD"),
-                enumeration("key", "资料类型", true, "variety", "tree_age", "elevation", "certification", "irrigation"),
+                enumeration("key", "资料类型", true, "plum_variety", "tree_age_years", "elevation_band",
+                        "irrigation_facility", "quality_certification", "historical_high_risk_pests",
+                        "variety", "tree_age", "elevation", "certification", "irrigation"),
                 requiredText("value", "用户原话中已明确给出的值", 200),
                 text("displayText", "可读说明，服务端使用固定模板", 200));
     }
@@ -284,6 +298,7 @@ public class AgriculturalToolRegistry {
 
     public List<ReadTool> tools(CopilotStableContext active, Long actor, String crop, String question, List<String> attachments,
                                 boolean presentationEnabled, AgriculturalEvidenceLedger evidence) {
+        var latestObservation = new java.util.concurrent.atomic.AtomicReference<com.mei.zhgy.service.rag.VisualObservation>();
         var farmId = integer("farmId", "授权农场编号", 1, Integer.MAX_VALUE);
         var fieldId = text("fieldId", "当前授权农场内的地块 ID 或名称", 128);
         List<ReadTool> tools = new ArrayList<>();
@@ -313,6 +328,9 @@ public class AgriculturalToolRegistry {
                 enumeration("view", "返回任务或历史记录", false, "tasks", "calendar", "records")));
         tools.add(tool("lookup_reference_atlas", "查询经过登记的病虫害及物候图鉴。",
                 args -> {
+                    if (active != null && active.getFieldId() != null && !crops.resolve(crop).ready()) {
+                        return ToolReply.error("UNKNOWN_CROP");
+                    }
                     String selectedCrop = args.text("crop") == null ? crop : args.text("crop");
                     var resolved = crops.resolve(selectedCrop);
                     if (!resolved.ready()) return ToolReply.error("CROP_REQUIRED");
@@ -326,11 +344,27 @@ public class AgriculturalToolRegistry {
                     var found = atlas.forChatResult(key == null ? stage == null ? question : args.text("growthStage") + " 物候期参考图" : key,
                             resolved.code(), stage);
                     var images = found.images().stream().limit(8).toList();
+                    Map<String, Object> comparison = new LinkedHashMap<>();
+                    comparison.put("siteImages", siteImages(attachments));
+                    var observation = latestObservation.get();
+                    if (observation != null) comparison.put("differentialFeatures", observation.visibleSymptoms().stream()
+                            .map(symptom -> Map.of("label", symptom, "present", Boolean.TRUE.equals(observation.imageClear()))).toList());
+                    if ("plum".equals(resolved.code()) && key != null) {
+                        comparison.put("diagnosisLabel", key);
+                        comparison.put("phi", Map.of("warning", "施用前需核对登记标签、适用靶标和采收安全间隔期。"));
+                        if (structuredAgronomy != null) {
+                            var advice = structuredAgronomy.assessPlumDefense(new PlumDefenseKnowledgeService.AssessmentRequest(
+                                    key, null, LocalDate.now(java.time.ZoneId.of("Asia/Shanghai")), null, null, null));
+                            advice.rows().stream().filter(row -> row.kind() != PlumDefenseKnowledgeService.MeasureKind.CHEMICAL_LABEL
+                                    && row.gateStatus() == PlumDefenseKnowledgeService.GateStatus.ELIGIBLE).findFirst()
+                                    .ifPresent(row -> comparison.put("recommendation", Map.of("title", "田间处置建议", "detail", row.guidance())));
+                        }
+                    }
                     return new ToolReply(data("status", found.status(), "count", images.size(), "items", images,
                             "uiBlockEmitted", presentationEnabled && !images.isEmpty()),
                             presentationEnabled && !images.isEmpty() ? data("componentType", "PestComparisonCard",
                                     "title", key == null ? "物候图鉴" : "病虫害对照图鉴",
-                                    "data", data("atlasFigures", images, "fieldImages", attachments)) : null, false);
+                                    "data", data("atlasFigures", images, "pestComparison", comparison)) : null, false);
                 }, text("diseaseOrPest", "病虫害名称", 80), text("growthStage", "物候阶段", 64), text("crop", "作物名称或标准代码", 64)));
         tools.add(tool("search_historical_cases", "按症状查找当前农场已由专家复核的病例。有现场图时同时支持相似图检索。",
                 true, args -> {
@@ -377,9 +411,12 @@ public class AgriculturalToolRegistry {
                                         "similarity", item.getMetadata().get("similarity"))).toList();
                         var output = data("status", observations.isEmpty() ? "NO_VALID_OBSERVATIONS" : "READY", "observations", observations,
                                 "farmId", scope.farmId(), "fieldId", scope.fieldId(), "clipMatches", matches);
-                        if (visualFact != null) output.putAll(data("subject", visualFact.subject(), "visibleSymptoms", visualFact.visibleSymptoms(),
-                                "imageClear", visualFact.imageClear(), "observedPhenologyStage", visualFact.observedPhenologyStage(),
-                                "missingViews", visualFact.missingViews(), "uncertainty", visualFact.uncertainty()));
+                        if (visualFact != null) {
+                            latestObservation.set(visualFact);
+                            output.putAll(data("subject", visualFact.subject(), "visibleSymptoms", visualFact.visibleSymptoms(),
+                                    "imageClear", visualFact.imageClear(), "observedPhenologyStage", visualFact.observedPhenologyStage(),
+                                    "missingViews", visualFact.missingViews(), "uncertainty", visualFact.uncertainty()));
+                        }
                         return ToolReply.result(output);
                     }
                     return inspection(scope, actor, List.of(), photos, args.text("focus"), "IMAGE", presentationEnabled, ignored -> {});
@@ -406,6 +443,10 @@ public class AgriculturalToolRegistry {
                     strings("evidenceIds", "本轮已取得的证据编号", 16)));
         }
         return tools;
+    }
+
+    static List<Map<String, Object>> siteImages(List<String> attachments) {
+        return attachments.stream().limit(6).map(url -> Map.<String, Object>of("imageUrl", url, "label", "现场观测")).toList();
     }
 
     private ToolReply inspection(CopilotSecurityGuard.ToolScope scope, Long actor, List<String> cameras, List<String> photos,
@@ -440,8 +481,8 @@ public class AgriculturalToolRegistry {
         if (!(source instanceof List<?> parcels)) return List.of();
         List<String> stages = List.of("UNRIPE", "TURNING", "RIPE", "OVER_RIPE", "MIXED");
         List<String> labels = List.of("未成熟", "转色", "成熟", "过熟", "混合");
-        List<List<Map<String, Object>>> groups = stages.stream().map(stage -> new ArrayList<Map<String, Object>>())
-                .map(points -> (List<Map<String, Object>>) points).toList();
+        List<List<Map<String, Object>>> groups = new ArrayList<>();
+        for (String stage : stages) groups.add(new ArrayList<>());
         for (Object value : parcels) {
             if (!(value instanceof Map<?, ?> parcel) || parcel.get("fieldId") == null
                     || !(parcel.get("name") instanceof String name) || !(parcel.get("observations") instanceof List<?> observations)) continue;
@@ -460,7 +501,7 @@ public class AgriculturalToolRegistry {
         if (groups.get(0).size() < 2) return List.of();
         List<Map<String, Object>> result = new ArrayList<>();
         for (int index = 0; index < labels.size(); index++) {
-            result.add(Map.of("label", labels.get(index) + "有效观测占比 (%)", "points", groups.get(index)));
+            result.add(CopilotUiBlockValidator.chartSeries("stacked-bar", labels.get(index), groups.get(index)));
         }
         return List.copyOf(result);
     }

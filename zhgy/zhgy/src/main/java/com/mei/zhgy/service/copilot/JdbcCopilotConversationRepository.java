@@ -14,6 +14,8 @@ import java.util.Optional;
 /** MySQL-backed bounded conversation state. No Redis or vector memory is used in Phase 1.5. */
 @Repository
 public class JdbcCopilotConversationRepository implements CopilotConversationRepository {
+    private static final String TURN_COLUMNS = "turn_id,conversation_id,user_id,role,message,intent,trace_id,client_message_id,"
+            + "COALESCE(response_metadata,result_json) AS result_json,created_at";
     private final JdbcTemplate jdbc;
     private volatile boolean schemaChecked;
 
@@ -63,7 +65,7 @@ public class JdbcCopilotConversationRepository implements CopilotConversationRep
     public List<CopilotConversationTurn> recentTurns(String conversationId, Long userId, int limit) {
         ensureSchema();
         int safeLimit = Math.max(1, Math.min(limit, 10));
-        List<CopilotConversationTurn> reverse = jdbc.query("SELECT turn_id,conversation_id,user_id,role,message,intent,trace_id,client_message_id,result_json,created_at FROM copilot_turns WHERE conversation_id=? AND user_id=? ORDER BY created_at DESC LIMIT " + safeLimit, (rs, row) -> turn(rs), conversationId, userId);
+        List<CopilotConversationTurn> reverse = jdbc.query("SELECT " + TURN_COLUMNS + " FROM copilot_turns WHERE conversation_id=? AND user_id=? ORDER BY created_at DESC LIMIT " + safeLimit, (rs, row) -> turn(rs), conversationId, userId);
         List<CopilotConversationTurn> result = new ArrayList<>(reverse);
         java.util.Collections.reverse(result);
         return result;
@@ -72,13 +74,13 @@ public class JdbcCopilotConversationRepository implements CopilotConversationRep
     @Override
     public List<CopilotConversationTurn> allTurns(String conversationId, Long userId) {
         ensureSchema();
-        return jdbc.query("SELECT turn_id,conversation_id,user_id,role,message,intent,trace_id,client_message_id,result_json,created_at FROM copilot_turns WHERE conversation_id=? AND user_id=? ORDER BY created_at ASC", (rs, row) -> turn(rs), conversationId, userId);
+        return jdbc.query("SELECT " + TURN_COLUMNS + " FROM copilot_turns WHERE conversation_id=? AND user_id=? ORDER BY created_at ASC", (rs, row) -> turn(rs), conversationId, userId);
     }
 
     @Override
     public Optional<CopilotConversationTurn> findByClientMessageId(String conversationId, Long userId, String clientMessageId) {
         ensureSchema();
-        List<CopilotConversationTurn> result = jdbc.query("SELECT turn_id,conversation_id,user_id,role,message,intent,trace_id,client_message_id,result_json,created_at FROM copilot_turns WHERE conversation_id=? AND user_id=? AND client_message_id=? LIMIT 1", (rs, row) -> turn(rs), conversationId, userId, clientMessageId);
+        List<CopilotConversationTurn> result = jdbc.query("SELECT " + TURN_COLUMNS + " FROM copilot_turns WHERE conversation_id=? AND user_id=? AND client_message_id=? LIMIT 1", (rs, row) -> turn(rs), conversationId, userId, clientMessageId);
         return result.stream().findFirst();
     }
 
@@ -103,8 +105,11 @@ public class JdbcCopilotConversationRepository implements CopilotConversationRep
         int owner = jdbc.queryForObject("SELECT COUNT(*) FROM copilot_conversations WHERE conversation_id=? AND user_id=?", Integer.class,
                 turn.getConversationId(), turn.getUserId());
         if (owner != 1) throw new CopilotConversationException("CONVERSATION_NOT_FOUND", "conversation 不存在或不属于当前用户。", 404);
-        jdbc.update("INSERT INTO copilot_turns(turn_id,conversation_id,user_id,role,message,intent,trace_id,client_message_id,result_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                turn.getTurnId(), turn.getConversationId(), turn.getUserId(), turn.getRole(), turn.getMessage(), enumName(turn.getIntent()), turn.getTraceId(), turn.getClientMessageId(), turn.getResultJson(), timestamp(turn.getCreatedAt()));
+        boolean assistant = "ASSISTANT".equalsIgnoreCase(turn.getRole());
+        jdbc.update("INSERT INTO copilot_turns(turn_id,conversation_id,user_id,role,message,intent,trace_id,client_message_id,result_json,response_metadata,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                turn.getTurnId(), turn.getConversationId(), turn.getUserId(), turn.getRole(), turn.getMessage(), enumName(turn.getIntent()),
+                turn.getTraceId(), turn.getClientMessageId(), assistant ? null : turn.getResultJson(),
+                assistant ? turn.getResultJson() : null, timestamp(turn.getCreatedAt()));
         // Do not advance the optimistic context version: the answer does not
         // mutate routing context, but it must count as a visible conversation turn.
         Instant now = Instant.now();
@@ -116,6 +121,13 @@ public class JdbcCopilotConversationRepository implements CopilotConversationRep
     public void updateResult(String conversationId, String turnId, Long userId, String resultJson) {
         ensureSchema();
         jdbc.update("UPDATE copilot_turns SET result_json=? WHERE conversation_id=? AND turn_id=? AND user_id=? AND role='USER'", resultJson, conversationId, turnId, userId);
+    }
+
+    @Override
+    public void updateAssistantMetadata(String conversationId, String turnId, Long userId, String metadata) {
+        ensureSchema();
+        jdbc.update("UPDATE copilot_turns SET response_metadata=? WHERE conversation_id=? AND turn_id=? AND user_id=? AND role='ASSISTANT'",
+                metadata, conversationId, turnId, userId);
     }
 
     private CopilotConversationSnapshot row(java.sql.ResultSet rs) throws java.sql.SQLException {
@@ -150,8 +162,22 @@ public class JdbcCopilotConversationRepository implements CopilotConversationRep
             if (schemaChecked) return;
             jdbc.execute("CREATE TABLE IF NOT EXISTS copilot_conversations (conversation_id VARCHAR(96) PRIMARY KEY,user_id BIGINT NOT NULL,status VARCHAR(16) NOT NULL,active_farm_id VARCHAR(128),active_field_id VARCHAR(128),active_diagnosis_id VARCHAR(128),active_recommendation_id VARCHAR(128),active_run_id VARCHAR(128),active_action_id VARCHAR(128),active_task_id VARCHAR(128),active_outcome_id VARCHAR(128),last_intent VARCHAR(64),summary_json LONGTEXT,summary_version INT NOT NULL DEFAULT 0,turn_count INT NOT NULL DEFAULT 0,version BIGINT NOT NULL DEFAULT 0,pending_type VARCHAR(64),pending_question TEXT,pending_created_turn INT,pending_expires_after_turn INT,created_at TIMESTAMP(3) NULL,updated_at TIMESTAMP(3) NULL,expires_at TIMESTAMP(3) NULL,INDEX idx_copilot_conversations_user_updated (user_id,updated_at))");
             jdbc.execute("CREATE TABLE IF NOT EXISTS copilot_turns (turn_id VARCHAR(96) PRIMARY KEY,conversation_id VARCHAR(96) NOT NULL,user_id BIGINT NOT NULL,role VARCHAR(20) NOT NULL,message LONGTEXT NOT NULL,intent VARCHAR(64),trace_id VARCHAR(96),client_message_id VARCHAR(160),result_json LONGTEXT,created_at TIMESTAMP(3) NULL,UNIQUE KEY uq_copilot_turn_client (conversation_id,client_message_id),INDEX idx_copilot_turns_conversation_created (conversation_id,created_at),INDEX idx_copilot_turns_user (user_id))");
+            if (!hasResponseMetadata()) {
+                try { jdbc.execute("ALTER TABLE copilot_turns ADD COLUMN response_metadata LONGTEXT NULL"); }
+                catch (org.springframework.dao.DataAccessException error) {
+                    if (!hasResponseMetadata()) throw error;
+                }
+            }
             schemaChecked = true;
         }
+    }
+
+    private boolean hasResponseMetadata() {
+        Integer count = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='copilot_turns' AND COLUMN_NAME='response_metadata'
+                """, Integer.class);
+        return count != null && count > 0;
     }
 
     private String id(CopilotStableContext context, String field) {

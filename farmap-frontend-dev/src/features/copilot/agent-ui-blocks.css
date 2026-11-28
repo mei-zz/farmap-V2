@@ -86,22 +86,192 @@
 .farmap-parcel-overview dl { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 9px 0 0; }
 .farmap-parcel-overview dt { color: #4c6658; font-size: 12px; }
 .farmap-parcel-overview dd { margin: 3px 0 0; color: #263e33; font-weight: 600; }
-.farmap-phenology ol {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: .5rem;
-  padding: 0;
-  list-style: none;
-}
-.farmap-phenology li { display: grid; gap: .3rem; border-top: 2px solid #dce8df; padding-top: .5rem; }
-.farmap-phenology li[aria-current="step"] { border-color: #28784f; }
-.farmap-phenology p, .farmap-spray-weather p { margin: .45rem 0; }
-.farmap-spray-weather__table { overflow-x: auto; }
-.farmap-spray-weather table { width: 100%; border-collapse: collapse; text-align: left; }
-.farmap-spray-weather th, .farmap-spray-weather td { padding: .45rem; border-bottom: 1px solid #dce8df; }
-.farmap-spray-weather th { font-weight: 600; }
-.farmap-atlas-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: .75rem; }
-.farmap-atlas-grid figure { margin: 0; }
-.farmap-atlas-grid img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: .5rem; }
-.farmap-atlas-grid figcaption { margin-top: .3rem; font-size: .9em; }
+.farmap-block__evidence { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 7px 9px; border-radius: 9px; background: #f3f7f3; color: #52695a; font-size: 11px; }
+.farmap-block__evidence > span { font-weight: 650; }
+.farmap-block__evidence button { min-height: 27px; padding: 2px 8px; border: 1px solid #d7e5da; border-radius: 7px; background: #fff; color: #23543e; font-size: 11px; cursor: pointer; }
+.farmap-block__evidence button:disabled { cursor: default; opacity: .7; }
+
+.farmap-phenology { display: grid; gap: 10px; min-width: 0; }
+.farmap-phenology p { margin: 0; }
+.farmap-phenology__meta { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 5px 12px; color: #5c7063; font-size: 12px; }
+.farmap-phenology__meta span { display: inline-flex; align-items: center; gap: 5px; color: #345443; }
+.farmap-phenology__meta time { font-variant-numeric: tabular-nums; }
+.farmap-phenology__basis { margin: 0; color: #52675a; font-size: 12px; line-height: 1.5; }
+.farmap-phenology__conflict { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; padding: 9px 10px; border: 1px solid #efd49e; border-radius: 9px; background: #fff8e8; color: #79551b; }
+.farmap-phenology__conflict > svg { flex: none; }
+.farmap-phenology__conflict > div { display: grid; flex: 1 1 260px; gap: 1px; min-width: 0; }
+.farmap-phenology__conflict strong { font-size: 12px; }
+.farmap-phenology__conflict span { font-size: 11px; line-height: 1.45; }
+.farmap-phenology__conflict button { min-height: 29px; padding: 3px 9px; border: 1px solid #d8ae5d; border-radius: 7px; background: #fff; color: #76501a; font-size: 11px; cursor: pointer; }
+.farmap-phenology__conflict button:disabled { opacity: .65; cursor: default; }
+.farmap-phenology__scroller { overflow-x: auto; overscroll-behavior-inline: contain; padding: 1px 0 4px; scrollbar-width: thin; }
+.farmap-phenology__track { position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(82px, 1fr); gap: 0; min-width: max-content; margin: 0; padding: 3px 0 9px; list-style: none; }
+.farmap-phenology__track::before { content: ""; position: absolute; z-index: 0; top: 16px; left: 22px; right: 22px; height: 2px; background: #dce7df; }
+.farmap-phenology__track li { position: relative; z-index: 1; display: grid; justify-items: center; align-content: start; gap: 4px; min-width: 0; padding: 0 5px; text-align: center; }
+.farmap-phenology__dot { display: grid; place-items: center; width: 27px; height: 27px; border: 2px solid #d8e4dc; border-radius: 50%; background: #fff; color: #728176; font-size: 10px; font-weight: 700; }
+.farmap-phenology__track li[data-state="done"] .farmap-phenology__dot { border-color: #3e8666; background: #3e8666; color: #fff; }
+.farmap-phenology__track li[data-state="current"] .farmap-phenology__dot { width: 31px; height: 31px; margin-top: -2px; border-color: #176b4d; background: #176b4d; color: #fff; box-shadow: 0 0 0 4px #dceee4; }
+.farmap-phenology__track strong { max-width: 100%; color: #4c6154; font-size: 11px; line-height: 1.35; font-weight: 600; overflow-wrap: anywhere; }
+.farmap-phenology__track li[data-state="current"] strong { color: #174e37; font-weight: 750; }
+.farmap-phenology__track small { color: #829087; font-size: 9.5px; line-height: 1.3; white-space: nowrap; }
+.farmap-phenology__marker { padding: 1px 5px; border-radius: 999px; background: #f7ecd7; color: #835e23; font-size: 9px; line-height: 1.4; white-space: nowrap; }
+.farmap-phenology__summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.farmap-phenology__summary > div { display: grid; gap: 2px; min-width: 0; padding: 8px 9px; border-radius: 9px; background: #f5f8f4; }
+.farmap-phenology__summary span { display: inline-flex; align-items: center; gap: 4px; color: #697b70; font-size: 10.5px; }
+.farmap-phenology__summary strong { color: #244633; font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; }
+.farmap-phenology__summary small { color: #6e7d73; font-size: 10px; }
+.farmap-phenology__gdd { grid-column: span 1; }
+.farmap-phenology__gdd-track { display: block; width: 100%; height: 5px; overflow: hidden; border-radius: 99px; background: #dfe9e1; }
+.farmap-phenology__gdd-track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #4c9b70, #176b4d); }
+.farmap-phenology__note { color: #6b7b71; font-size: 10.5px; }
+
+.farmap-spray-weather { display: grid; gap: 10px; min-width: 0; }
+.farmap-spray-weather p { margin: 0; }
+.farmap-spray-weather small { color: #6b7c72; font-size: 10.5px; }
+.farmap-spray-weather__notice { display: flex; align-items: flex-start; gap: 7px; padding: 8px 10px; border: 1px solid #dbe7dd; border-radius: 9px; background: #f5f9f5; color: #52695a; }
+.farmap-spray-weather__notice[data-verified="false"] { border-color: #efd8aa; background: #fff9eb; color: #75551f; }
+.farmap-spray-weather__notice svg { flex: none; margin-top: 1px; }
+.farmap-spray-weather__notice p { font-size: 11.5px; line-height: 1.5; }
+.farmap-spray-weather__matrix-wrap { overflow-x: auto; }
+.farmap-spray-weather__matrix { width: 100%; min-width: 560px; border-collapse: separate; border-spacing: 4px; table-layout: fixed; }
+.farmap-spray-weather__matrix caption { padding: 0 0 4px; color: #43594a; text-align: left; font-size: 12px; font-weight: 650; }
+.farmap-spray-weather__matrix th { color: #52675a; font-size: 10.5px; font-weight: 600; text-align: left; }
+.farmap-spray-weather__matrix thead th { padding: 5px 6px; border-radius: 6px; background: #f1f6f2; }
+.farmap-spray-weather__matrix thead th svg { margin-right: 4px; vertical-align: -2px; }
+.farmap-spray-weather__matrix thead th:first-child { width: 78px; }
+.farmap-spray-weather__matrix tbody th { padding: 8px 6px; color: #334f3e; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.farmap-spray-weather__matrix td { min-width: 0; padding: 7px 8px; border: 1px solid transparent; border-radius: 7px; vertical-align: top; }
+.farmap-spray-weather__matrix td[data-level="suitable"] { border-color: #cfe5d6; background: #edf8f0; color: #1f633f; }
+.farmap-spray-weather__matrix td[data-level="caution"] { border-color: #efdfb8; background: #fff9e9; color: #79591f; }
+.farmap-spray-weather__matrix td[data-level="unsuitable"] { border-color: #f0d4d1; background: #fff1f0; color: #953f37; }
+.farmap-spray-weather__matrix td[data-level="unknown"] { border-color: #e2e7e2; background: #f6f7f5; color: #67736b; }
+.farmap-spray-weather__matrix td small { display: block; margin-top: 2px; color: inherit; opacity: .78; font-size: 9.5px; line-height: 1.35; }
+.farmap-spray-weather__slot-matrix { min-width: 0; width: max-content; }
+.farmap-spray-weather__slot-matrix td { min-width: 56px; }
+.farmap-spray-weather__level { display: block; font-size: 12px; font-weight: 700; }
+.farmap-spray-weather__windows summary { cursor: pointer; color: #405e4b; font-size: 11.5px; }
+.farmap-spray-weather__table { overflow-x: auto; margin-top: 5px; }
+.farmap-spray-weather table:not(.farmap-spray-weather__matrix) { width: 100%; min-width: 470px; border-collapse: collapse; text-align: left; }
+.farmap-spray-weather table:not(.farmap-spray-weather__matrix) th,
+.farmap-spray-weather table:not(.farmap-spray-weather__matrix) td { padding: 5px 6px; border-bottom: 1px solid #e5ebe5; font-size: 10.5px; }
+.farmap-spray-weather table:not(.farmap-spray-weather__matrix) th { color: #617267; font-weight: 600; }
+.farmap-spray-weather__score { display: inline-block; min-width: 26px; padding: 1px 5px; border-radius: 5px; text-align: center; font-weight: 700; }
+.farmap-spray-weather__score.is-suitable { background: #e6f5eb; color: #1f6841; }
+.farmap-spray-weather__score.is-caution { background: #fff4d9; color: #805a1d; }
+.farmap-spray-weather__score.is-unsuitable { background: #fdeae8; color: #9c3e36; }
+.farmap-spray-weather__decision { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0; padding: 7px 9px; border-radius: 8px; background: #f5f8f4; }
+.farmap-spray-weather__decision div { display: flex; gap: 5px; }
+.farmap-spray-weather__decision dt { color: #6b7b70; font-size: 10.5px; }
+.farmap-spray-weather__decision dd { margin: 0; color: #2f4c3b; font-size: 10.5px; font-weight: 650; }
+
+.farmap-pest { display: grid; gap: 10px; min-width: 0; }
+.farmap-pest p { margin: 0; }
+.farmap-pest__comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.farmap-pest__side { display: grid; align-content: start; gap: 5px; min-width: 0; margin: 0; }
+.farmap-pest__side figcaption { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #425c4c; font-size: 11.5px; font-weight: 650; }
+.farmap-pest__side figcaption small { color: #7b897f; font-size: 9.5px; font-weight: 400; }
+.farmap-pest__side > p { color: #5b6e61; font-size: 10.5px; line-height: 1.4; overflow-wrap: anywhere; }
+.farmap-pest__frame { position: relative; overflow: hidden; border: 1px solid #e1e8e1; border-radius: 10px; background: #f4f6f3; aspect-ratio: 4 / 3; }
+.farmap-pest__frame img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.farmap-pest__zoom { position: absolute; right: 7px; bottom: 7px; display: inline-flex; align-items: center; gap: 3px; padding: 3px 7px; border: 1px solid #ffffffb8; border-radius: 6px; background: #152b20b8; color: #fff; font-size: 10px; cursor: pointer; backdrop-filter: blur(4px); }
+.farmap-pest__empty { display: grid; place-items: center; align-content: center; gap: 6px; min-height: 150px; border: 1px dashed #d6e1d8; border-radius: 10px; background: #f7f9f6; color: #7a8980; font-size: 10.5px; text-align: center; }
+.farmap-pest__atlas { position: relative; }
+.farmap-pest__nav { position: absolute; top: 50%; display: grid; place-items: center; width: 27px; height: 27px; padding: 0; border: 1px solid #e1e8e1; border-radius: 50%; background: #ffffffdc; color: #27503a; cursor: pointer; transform: translateY(-50%); box-shadow: 0 2px 8px #1a33220f; }
+.farmap-pest__nav.is-prev { left: 6px; }
+.farmap-pest__nav.is-next { right: 6px; }
+.farmap-pest__thumbs { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 2px; }
+.farmap-pest__thumbs button { flex: none; width: 43px; height: 35px; padding: 0; overflow: hidden; border: 2px solid transparent; border-radius: 6px; background: #f1f4f0; cursor: pointer; }
+.farmap-pest__thumbs button[aria-current="true"] { border-color: #28784f; }
+.farmap-pest__thumbs img { width: 100%; height: 100%; object-fit: cover; }
+.farmap-pest__features { display: grid; gap: 6px; padding: 9px 10px; border: 1px solid #e1e9e2; border-radius: 9px; background: #f9fbf8; }
+.farmap-pest__features-heading { display: flex; justify-content: space-between; gap: 10px; color: #345442; font-size: 11.5px; }
+.farmap-pest__features-heading small { color: #728178; font-size: 10px; font-weight: 400; }
+.farmap-pest__features ul { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.farmap-pest__features li { display: grid; gap: 1px; }
+.farmap-pest__features label { display: flex; align-items: flex-start; gap: 6px; color: #3f5748; font-size: 11px; cursor: pointer; }
+.farmap-pest__features input { flex: none; width: 14px; height: 14px; margin: 1px 0 0; accent-color: #28784f; }
+.farmap-pest__features li small { margin-left: 20px; color: #748279; font-size: 9.5px; line-height: 1.4; }
+.farmap-pest__recommendation { padding: 8px 10px; border-left: 3px solid #4e8d6a; border-radius: 4px 8px 8px 4px; background: #f3f8f3; color: #3e5948; }
+.farmap-pest__recommendation strong { font-size: 11.5px; }
+.farmap-pest__recommendation p { margin-top: 2px; font-size: 11px; line-height: 1.5; }
+.farmap-pest__phi { display: flex; align-items: flex-start; gap: 7px; padding: 8px 10px; border: 1px solid #efdcae; border-radius: 8px; background: #fff9e9; color: #78561d; }
+.farmap-pest__phi[data-blocked="true"] { border-color: #f0cac5; background: #fff0ee; color: #923e35; }
+.farmap-pest__phi svg { flex: none; margin-top: 1px; }
+.farmap-pest__phi div { display: grid; gap: 1px; font-size: 10.5px; line-height: 1.45; }
+.farmap-pest__phi strong { font-size: 11px; }
+.farmap-pest__phi small { color: inherit; opacity: .82; }
+.farmap-pest__note { color: #748279; font-size: 9.5px; }
+.farmap-pest__preview { display: block; max-width: 100%; max-height: 76vh; margin: 0 auto; object-fit: contain; }
+
+.farmap-analytics { display: grid; gap: 7px; min-width: 0; }
+.farmap-analytics__toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #697a6f; font-size: 10.5px; }
+.farmap-analytics__toolbar button { display: inline-flex; align-items: center; gap: 3px; min-height: 27px; padding: 2px 8px; border: 1px solid #d9e4da; border-radius: 7px; background: #fff; color: #315843; font-size: 10.5px; cursor: pointer; }
+.farmap-analytics__chart { width: 100%; min-height: 12rem; border: 1px solid #e1e9e2; border-radius: 10px; background: #fff; }
+.farmap-analytics__data { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); gap: 8px; margin-top: 5px; }
+.farmap-analytics__data > div { min-width: 0; padding: 7px 8px; border-radius: 8px; background: #f7f9f6; }
+.farmap-analytics__data strong { color: #3a5544; font-size: 10.5px; }
+.farmap-analytics__data .farmap-block__rows > div { padding: 3px 0; }
+.farmap-analytics__data .farmap-block__rows dt,
+.farmap-analytics__data .farmap-block__rows dd { font-size: 10px; }
+.farmap-analytics-modal .farmap-analytics__chart { border: 0; }
+.farmap-chart-loading { display: flex; min-height: 12rem; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px 8px; padding: 20px; border: 1px dashed #dbe6dd; border-radius: 10px; background: linear-gradient(135deg, #f8fbf7, #eef5ed); color: #496252; font-size: 12px; text-align: center; }
+.farmap-chart-loading svg { color: #176b4d; }
+.farmap-chart-loading small { flex-basis: 100%; color: #75857a; font-size: 10.5px; }
+
+.farmap-comparison { min-width: 0; }
+.farmap-comparison__scroller { overflow-x: auto; }
+.farmap-comparison table { width: 100%; min-width: 640px; border-collapse: collapse; table-layout: fixed; }
+.farmap-comparison caption { padding: 0 0 7px; color: #68786e; text-align: left; font-size: 10.5px; line-height: 1.45; }
+.farmap-comparison th,
+.farmap-comparison td { padding: 7px 8px; border: 1px solid #e2e9e2; text-align: left; vertical-align: top; font-size: 10.5px; line-height: 1.45; overflow-wrap: anywhere; }
+.farmap-comparison thead th { background: #edf5ef; color: #244a34; vertical-align: middle; }
+.farmap-comparison thead th:first-child { width: 90px; }
+.farmap-comparison thead th > span { display: block; font-size: 12px; font-weight: 700; }
+.farmap-comparison thead th > small { display: block; margin-top: 2px; color: #617568; font-size: 9.5px; font-weight: 400; }
+.farmap-comparison__recommended { display: inline-block !important; margin-top: 4px !important; padding: 1px 6px; border-radius: 99px; background: #d9eee1; color: #1c6841 !important; font-size: 9px !important; font-weight: 700 !important; }
+.farmap-comparison tbody th { background: #f7f9f6; color: #405a49; font-weight: 650; }
+.farmap-comparison tbody tr:nth-child(even) td { background: #fcfdfb; }
+.farmap-comparison tfoot th,
+.farmap-comparison tfoot td { background: #f4f8f4; }
+.farmap-comparison tfoot button { width: 100%; min-height: 29px; padding: 3px 7px; border: 1px solid #cfe1d3; border-radius: 7px; background: #176b4d; color: #fff; font-size: 10px; line-height: 1.35; cursor: pointer; }
+.farmap-comparison tfoot button:disabled { opacity: .58; cursor: default; }
+.farmap-comparison tfoot span { color: #89958d; font-size: 9.5px; }
+
+.farmap-checklist { display: grid; gap: 8px; min-width: 0; }
+.farmap-checklist p { margin: 0; }
+.farmap-checklist__note { color: #68786e; font-size: 10.5px; line-height: 1.45; }
+.farmap-checklist > ul { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.farmap-checklist > ul > li { border: 1px solid #e2e9e2; border-radius: 9px; background: #fff; transition: border-color .16s, background .16s; }
+.farmap-checklist > ul > li[data-selected="true"] { border-color: #a9cdb5; background: #f6fbf7; }
+.farmap-checklist__select { position: relative; display: flex; align-items: flex-start; gap: 8px; padding: 9px 10px; cursor: pointer; }
+.farmap-checklist__select input { position: absolute; z-index: 1; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.farmap-checklist__check { display: grid; flex: none; place-items: center; width: 21px; height: 21px; margin-top: 1px; border: 1.5px solid #cbd9ce; border-radius: 6px; background: #fff; color: transparent; }
+.farmap-checklist__select input:checked + .farmap-checklist__check { border-color: #28784f; background: #28784f; color: #fff; }
+.farmap-checklist__select input:focus-visible + .farmap-checklist__check { outline: 2px solid #88b99b; outline-offset: 2px; }
+.farmap-checklist__content { display: grid; flex: 1; gap: 3px; min-width: 0; }
+.farmap-checklist__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.farmap-checklist__heading strong { color: #2e4939; font-size: 11.5px; line-height: 1.4; overflow-wrap: anywhere; }
+.farmap-checklist__content > small { color: #68796e; font-size: 10px; line-height: 1.45; }
+.farmap-checklist__priority { flex: none; padding: 1px 6px; border-radius: 99px; font-size: 9px; font-weight: 700; line-height: 1.5; }
+.farmap-checklist__priority.is-urgent { background: #fde9e7; color: #9c3f36; }
+.farmap-checklist__priority.is-routine { background: #e8f2ec; color: #2f6b4b; }
+.farmap-checklist__priority.is-preventive { background: #fbf0d8; color: #815d20; }
+.farmap-checklist__preconditions,
+.farmap-checklist__schedule { display: flex; align-items: flex-start; gap: 4px; color: #7a6650; font-size: 9.5px; line-height: 1.4; }
+.farmap-checklist__schedule { color: #6a7b70; }
+.farmap-checklist__preconditions svg,
+.farmap-checklist__schedule svg { flex: none; margin-top: 1px; }
+.farmap-checklist__footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding-top: 2px; color: #64766a; font-size: 10.5px; }
+.farmap-checklist__footer button { min-height: 31px; padding: 4px 10px; border: 1px solid #176b4d; border-radius: 8px; background: #176b4d; color: #fff; font-size: 10.5px; cursor: pointer; }
+.farmap-checklist__footer button:disabled { opacity: .55; cursor: default; }
+
 .farmap-evidence-chart { width: 100%; height: 15rem; }
+
+@media (max-width: 640px) {
+  .farmap-phenology__summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .farmap-phenology__gdd { grid-column: span 2; }
+  .farmap-pest__comparison { grid-template-columns: 1fr; }
+  .farmap-pest__frame { aspect-ratio: 16 / 10; }
+  .farmap-spray-weather__matrix { min-width: 500px; }
+  .farmap-comparison table { min-width: 590px; }
+}

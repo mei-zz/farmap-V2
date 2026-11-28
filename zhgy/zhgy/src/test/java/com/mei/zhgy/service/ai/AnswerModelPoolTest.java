@@ -18,6 +18,7 @@ class AnswerModelPoolTest {
     @Test
     void randomUsesInjectedSourceAndIsApproximatelyUniform() {
         AnswerPoolProperties properties = enabled(List.of("a", "b", "c", "d"));
+        properties.setSelectionStrategy("random");
         AtomicInteger calls = new AtomicInteger();
         AnswerModelPool pool = new AnswerModelPool(properties, availability,
                 () -> (calls.getAndIncrement() / 4) % 4);
@@ -66,9 +67,19 @@ class AnswerModelPoolTest {
         properties.setSamePoolFallbackN(99);
         properties.setModels(List.of(" a ", "", "a", "b"));
 
-        assertEquals("random", properties.getSelectionStrategy());
+        assertEquals("ordered_fallback", properties.getSelectionStrategy());
         assertEquals(8, properties.getSamePoolFallbackN());
         assertIterableEquals(List.of("a", "b"), properties.getModels());
+    }
+
+    @Test
+    void orderedFallbackKeepsConfigurationOrderWhenThePrimaryIsUnavailable() {
+        AnswerPoolProperties properties = enabled(List.of("primary", "next", "last"));
+        AnswerModelPool pool = new AnswerModelPool(properties, availability, () -> 2);
+        assertEquals(List.of("primary", "next", "last"), pool.orderedCandidates(AiTaskType.COPILOT));
+        availability.markUnavailable("primary", "permission_denied");
+        assertEquals(List.of("next", "last"), pool.orderedCandidates(AiTaskType.COPILOT));
+        assertEquals(List.of("next", "last"), pool.orderedCandidates(AiTaskType.COPILOT));
     }
 
     private AnswerPoolProperties enabled(List<String> models) {

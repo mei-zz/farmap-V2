@@ -305,6 +305,7 @@ export function createRuntime({ emit = () => {}, stream = streamSimple, env = pr
         const safe = { type: event.type };
         if (event.type === 'message_end' && event.message.role === 'assistant') {
           if (event.message.stopReason === 'error') s.failure = true;
+          if (typeof event.message.model === 'string' && /^[A-Za-z0-9_.:/-]{1,180}$/.test(event.message.model)) safe.selectedModel = event.message.model;
           const usage = safeUsage(event.message);
           if (usage) safe.usage = usage;
         }

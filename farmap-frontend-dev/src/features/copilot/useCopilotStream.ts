@@ -100,11 +100,16 @@ function protocolActivity(activity: ChatActivity | undefined, part: ReturnType<t
   return applyChatActivity(activity, event, { toolName: part.toolName, status: part.status });
 }
 
+export function isKnowledgeEvidenceBlock(block: AgentUiBlock): boolean {
+  return block.componentType === "KnowledgeSourceCard"
+    || (block.componentType === "EvidenceCard" && block.title === "知识依据");
+}
+
 function keyedBlockPart(value: Record<string, unknown>): MessagePart | undefined {
   const block = parseUiBlock(value.block ?? value);
   const rawKey = typeof value.blockKey === "string" && /^[\w.:-]{1,180}$/u.test(value.blockKey) ? value.blockKey : undefined;
   const blockKey = rawKey ?? block?.blockId;
-  if (!block || !blockKey) return undefined;
+  if (!block || !blockKey || isKnowledgeEvidenceBlock(block)) return undefined;
   return { type: "ui_block", blockKey, block };
 }
 
@@ -133,8 +138,9 @@ function applyEvent(snapshot: CopilotStreamSnapshot, event: ServerSentEvent): Co
     const raw = data.part ?? data;
     const part = parseMessagePart(raw);
     if (!part) return withText(next);
-    next = { ...next, parts: mergeMessagePart(snapshot.parts, raw), activity: protocolActivity(snapshot.activity, part) };
-    if (part.type === "ui_block") {
+    const hiddenBlock = part.type === "ui_block" && isKnowledgeEvidenceBlock(part.block);
+    next = { ...next, parts: hiddenBlock ? snapshot.parts : mergeMessagePart(snapshot.parts, raw), activity: protocolActivity(snapshot.activity, part) };
+    if (part.type === "ui_block" && !hiddenBlock) {
       next.blocks = upsertBlock(snapshot.blocks, part.block);
     } else if (part.type === "follow_ups") {
       next.presentation = { ...snapshot.presentation, followUps: part.items };
@@ -152,9 +158,6 @@ function applyEvent(snapshot: CopilotStreamSnapshot, event: ServerSentEvent): Co
 
   if (event.event.startsWith("presentation.")) {
     next.presentation = mergePresentation(snapshot.presentation, event.event, data);
-    if (event.event === "presentation.followups" && Array.isArray(data.items)) {
-      next.parts = mergeMessagePart(snapshot.parts, { type: "follow_ups", items: data.items });
-    }
     return withText(next);
   }
 
@@ -174,7 +177,7 @@ function applyEvent(snapshot: CopilotStreamSnapshot, event: ServerSentEvent): Co
       next.parts = removeBlockPart(snapshot.parts, data);
     } else {
       const part = keyedBlockPart(data);
-      if (part) next.parts = mergeMessagePart(snapshot.parts, part);
+      if (part?.type === "ui_block") next.parts = mergeMessagePart(snapshot.parts, part);
     }
     return withText(next);
   }
@@ -333,9 +336,9 @@ function finishFailed(snapshot: CopilotStreamSnapshot, error: unknown): CopilotS
 }
 
 /**
- * Owns the ordered Copilot SSE state machine. Legacy events remain available
- * as fallback data, but once `message.part` arrives it is the canonical order
- * for text, tools, activity, blocks and evidence.
+ * Owns the ordered Copilot SSE state machine. Legacy blocks enter the canonical
+ * timeline at their arrival position and canonical `message.part` updates merge
+ * in place, so the two transports cannot render duplicate cards.
  */
 export function useCopilotStream() {
   const [snapshot, setSnapshot] = useState<CopilotStreamSnapshot>(emptySnapshot);

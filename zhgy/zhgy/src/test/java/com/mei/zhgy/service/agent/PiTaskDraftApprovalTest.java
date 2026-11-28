@@ -7,6 +7,7 @@ import com.mei.zhgy.service.field.FarmFieldService;
 import com.mei.zhgy.service.field.FieldAccessException;
 import com.mei.zhgy.service.field.FieldContext;
 import com.mei.zhgy.service.operations.OperationsTaskService;
+import com.mei.zhgy.vo.DiagnosisEvidenceVO;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
@@ -48,13 +49,17 @@ class PiTaskDraftApprovalTest {
     void persistedDraftDoesNotRunThePlannerAndOnlyApprovalCreatesOneTask() {
         AgentRuntime runtime = approvalEngine();
         String date = LocalDate.now(FieldFactsService.ZONE).plusDays(1).toString();
-        var draft = new AgentRuntime.TaskDraft("检查土壤后滴灌", "测量土壤湿度后安排滴灌。", date);
+        var draft = new AgentRuntime.TaskDraft("field-1", "检查土壤后滴灌", "测量土壤湿度后安排滴灌。", date,
+                List.of(evidence("weather-1", "weather", "field-1"), evidence("growth-1", "field", "field-1"),
+                        evidence("knowledge-1", "knowledge", null), evidence("proposal-1", "proposal_explanation", "field-1")));
         try {
             AgentRun pending = runtime.prepareTaskDraft("安排明天的浇水任务",
                     AgentContext.builder().fieldId("field-1").farmId("42").build(), 7L, draft);
             assertEquals(RunStatus.WAITING_FOR_APPROVAL, pending.getStatus());
             assertEquals(0, operations.count());
             assertTrue(pending.getEvidenceSufficiency().isAllowsWrite());
+            var savedEvidence = runtime.require(pending.getRunId(), 7L).getEvidence().stream().map(DiagnosisEvidenceVO::getId).toList();
+            assertTrue(savedEvidence.containsAll(List.of("weather-1", "growth-1", "knowledge-1", "proposal-1")));
             assertEquals(List.of("task"), pending.getSteps().stream().map(AgentPlanStep::getToolName).toList());
             ProposedAction action = pending.getActions().get(0);
             assertEquals(date, action.getScheduledFor());
@@ -84,8 +89,17 @@ class PiTaskDraftApprovalTest {
             var draft = new AgentRuntime.TaskDraft("检查", "巡查", null);
             assertThrows(FieldAccessException.class, () -> runtime.prepareTaskDraft("安排巡查任务",
                     AgentContext.builder().fieldId("field-1").farmId("99").build(), 7L, draft));
+            var crossedEvidence = new AgentRuntime.TaskDraft("field-1", "检查", "巡查", null,
+                    List.of(evidence("other-field", "weather", "field-2")));
+            assertThrows(IllegalArgumentException.class, () -> runtime.prepareTaskDraft("安排巡查任务",
+                    AgentContext.builder().fieldId("field-1").farmId("42").build(), 7L, crossedEvidence));
             verify(runs, never()).save(any());
             assertEquals(0, operations.count());
         } finally { runtime.shutdownExecutor(); }
+    }
+
+    private DiagnosisEvidenceVO evidence(String id, String modality, String fieldId) {
+        return DiagnosisEvidenceVO.builder().id(id).modality(modality).summary(id)
+                .source(DiagnosisEvidenceVO.Source.builder().fieldId(fieldId).type(modality).build()).build();
     }
 }

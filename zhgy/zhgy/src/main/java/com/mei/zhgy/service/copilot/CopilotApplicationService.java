@@ -1,6 +1,5 @@
 package com.mei.zhgy.service.copilot;
 
-import com.mei.zhgy.service.agent.AgentAccessException;
 import com.mei.zhgy.service.copilot.CopilotSecurityGuard.ToolScope;
 import com.mei.zhgy.service.field.FieldAccessException;
 import com.mei.zhgy.service.ai.AiTaskType;
@@ -13,7 +12,6 @@ import com.mei.zhgy.service.rag.KnowledgeEvidenceRetriever;
 import com.mei.zhgy.service.diagnosis.DiagnosisJobService;
 import com.mei.zhgy.service.field.FarmFieldService;
 import com.mei.zhgy.service.field.FarmField;
-import com.mei.zhgy.service.field.FieldContext;
 import com.mei.zhgy.service.agent.AgentRuntime;
 import com.mei.zhgy.service.agent.AgentRun;
 import com.mei.zhgy.service.agent.AgentContext;
@@ -22,7 +20,6 @@ import com.mei.zhgy.service.agent.pi.PiAgentRuntime.ToolReply;
 import com.mei.zhgy.service.agriculture.FieldFacts;
 import com.mei.zhgy.service.agriculture.FieldFactsService;
 import com.mei.zhgy.service.agriculture.CropResolver;
-import com.mei.zhgy.service.agriculture.PhenologyResult;
 import com.mei.zhgy.service.agriculture.PhenologyService;
 import com.mei.zhgy.service.reference.ReferenceImageAttacher;
 import com.mei.zhgy.service.reference.ReferenceImageLookup;
@@ -66,11 +63,14 @@ public class CopilotApplicationService {
     private final CopilotSecurityGuard securityGuard;
     private final AgentRuntime agentRuntime;
     private final FieldFactsService fieldFactsService;
+    private final CopilotFieldFactsResolver fieldContext;
+    private final CopilotPhenologyGuidance phenologyGuidance;
     private final CropResolver cropResolver;
     private final PhenologyService phenologyService;
     private final ReferenceImageAttacher referenceImageAttacher;
     private PiAgentRuntime piRuntime;
     private final AgriculturalAgentHarness harness = new AgriculturalAgentHarness();
+    private final CopilotContinuationGrounding continuationGrounding = new CopilotContinuationGrounding();
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private AgriculturalToolRegistry agriculturalTools;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -201,6 +201,9 @@ public class CopilotApplicationService {
         this.cropResolver = cropResolver == null ? new CropResolver() : cropResolver;
         this.phenologyService = phenologyService == null ? new PhenologyService(this.cropResolver) : phenologyService;
         this.referenceImageAttacher = referenceImageAttacher;
+        this.fieldContext = new CopilotFieldFactsResolver(farmFieldService, fieldFactsService, this.cropResolver,
+                this.phenologyService, this::orchardProfile, this::recentConversation);
+        this.phenologyGuidance = new CopilotPhenologyGuidance(this.cropResolver, this.phenologyService);
     }
 
     public com.mei.zhgy.service.copilot.CopilotConversationView createConversation(Long userId) {
@@ -241,6 +244,7 @@ public class CopilotApplicationService {
             throw new CopilotConversationException("PI_AGENT_CONTROL_INVALID", "请使用当前会话版本和有效的 Agent 控制指令。", 400);
         }
         UiStream controlUi = new UiStream(); controlUi.conversationId = conversationId; controlUi.userId = userId;
+        controlUi.telemetry.mode("PI_CONTROL");
         uiStreams.put(emitter, controlUi);
         String controlId = java.util.UUID.randomUUID().toString();
         boolean queuedInput = "steer".equals(command.operation()) || "followUp".equals(command.operation());
@@ -248,13 +252,23 @@ public class CopilotApplicationService {
                 "operation", command.operation(), "message", command.message(), "status", "requested", "at", Instant.now().toString()));
         CompletableFuture.runAsync(() -> {
             try {
-                PiTurn turn = new PiTurn();
                 CopilotConversationTurn userTurn = view.getRecentTurns().stream()
                         .filter(entry -> "USER".equalsIgnoreCase(entry.getRole())).reduce((first, next) -> next).orElse(null);
+                var key = "continue".equals(command.operation()) && userTurn != null
+                        ? continuationKey(view, userId, userTurn.getTurnId()) : null;
+                PiTurn turn = new PiTurn(continuationGrounding.read(key));
                 PiAgentRuntime.Result result = piRuntime.control(piSession(userId, conversationId), view.getContextVersion(),
-                        command.operation(), command.message(), allowUngrounded ? delta -> streamDelta(emitter, delta) : null,
+                        command.operation(), command.message(), delta -> {
+                            if (!delta.isEmpty()) controlUi.telemetry.token();
+                            if (allowUngrounded) streamDelta(emitter, delta);
+                        },
                         event -> streamPiEvent(emitter, event),
-                        observation -> observePiTool(emitter, userTurn == null ? null : userTurn.getMessage(), turn, observation));
+                        observation -> {
+                            observePiTool(emitter, userTurn == null ? null : userTurn.getMessage(), turn, observation);
+                            continuationGrounding.remember(key, turn.grounding());
+                        });
+                if ("completed".equals(result.status())) continuationGrounding.clear(key);
+                else if ("aborted".equals(result.status())) continuationGrounding.remember(key, turn.grounding());
                 if (queuedInput) conversations.recordActivity(conversationId, userId, Map.of("type", "input", "requestId", controlId,
                         "operation", command.operation(), "status", "delivered", "at", Instant.now().toString()));
                 if ("continue".equals(command.operation()) && "completed".equals(result.status()) && !safe(result.text()).isBlank()) {
@@ -265,7 +279,7 @@ public class CopilotApplicationService {
                     }
                     emitPiSource(emitter, turn);
                     if (userTurn != null) conversations.appendAssistantAnswer(conversationId, userId,
-                            userTurn.getIntent(), userTurn.getTraceId(), answer, responsePersistence(null, controlUi));
+                            userTurn.getIntent(), userTurn.getTraceId(), answer, responsePersistence(null, controlUi, userTurn.getTraceId()));
                 }
                 sendDone(emitter, "aborted".equals(result.status()) ? "ABORTED" : "COMPLETED");
             } catch (Exception error) {
@@ -310,6 +324,7 @@ public class CopilotApplicationService {
                     : routes.route(request, userId, hasImages);
             if (routed.getConversationId() != null) request.setConversationId(routed.getConversationId());
             ui.conversationId = request.getConversationId(); ui.userId = userId;
+            ui.traceId = routed.getTraceId(); ui.intent = routed.getIntent();
             recordActivity(ui, Map.of("type", "run.started", "runId", ui.runId, "at", Instant.now().toString()));
             send(emitter, "route", routed);
             if (streamFarmDirectory(request, routed, userId, emitter)) return;
@@ -343,7 +358,7 @@ public class CopilotApplicationService {
             if (routed.getIntent() != CopilotIntent.GENERAL_QA && routed.getIntent() != CopilotIntent.KNOWLEDGE_QUERY) {
                 if (routed.getIntent() == CopilotIntent.DIAGNOSIS_REQUEST && routed.getResolutionStatus() == CopilotResolutionStatus.RESOLVED) {
                     if (asksVisualEvidence(request.getMessage()) && !hasImages) {
-                        CopilotFacts knownFacts = resolveCopilotFacts(request, routed, userId);
+                        CopilotFacts knownFacts = fieldContext.resolve(request, routed, userId);
                         sendResponseMetadata(emitter, request, routed, knownFacts, false,
                                 knownFacts != null && "READY".equals(knownFacts.status()),
                                 knownFacts == null ? null : knownFacts.cropLabel(),
@@ -415,7 +430,7 @@ public class CopilotApplicationService {
             if ("UNKNOWN_CROP".equals(facts.status())) send(emitter, "status", Map.of("message", "暂不支持当前作物，未按其他作物猜测。", "code", "UNKNOWN_CROP"));
             if ("UNAVAILABLE".equals(facts.status())) send(emitter, "status", Map.of("message", "当前地块事实暂不可用，未使用未经验证的地块数据。", "code", "FIELD_FACTS_UNAVAILABLE"));
             if ("PUBLIC_GENERIC".equals(facts.status())) send(emitter, "status", Map.of("message", "未使用地块实时数据，已按" + facts.cropLabel() + "通用物候历和服务器日期推算。", "code", "PUBLIC_GENERIC"));
-            KnowledgeBundle knowledge = usesPi() ? KnowledgeBundle.notRequested() : retrieveKnowledge(request, routed, facts, userId);
+            CopilotKnowledgeBundle knowledge = usesPi() ? CopilotKnowledgeBundle.notRequested() : retrieveKnowledge(request, routed, facts, userId);
             if (!usesPi()) emitKnowledgeSummary(emitter, knowledge);
             ReferenceImageResponse referenceImages = emitReferenceImages(emitter, request, routed, facts);
             Map<String, Object> source = answerSource(routed, facts, knowledge, request.getMessage());
@@ -425,7 +440,7 @@ public class CopilotApplicationService {
                     facts == null ? null : facts.growthStageLabel(), knowledge);
             if ("UNAVAILABLE".equals(knowledge.status())) send(emitter, "status", Map.of("message", "当前知识库暂不可用；不会伪造地块事实，通用问题将按兜底策略处理。", "code", "KNOWLEDGE_UNAVAILABLE"));
             send(emitter, "status", Map.of("message", "正在生成建议…"));
-            if (modelGateway == null) send(emitter, "status", Map.of("message", "模型暂不可用，无法生成建议。", "code", "MODEL_UNAVAILABLE"));
+            if (modelGateway == null && !usesPi()) send(emitter, "status", Map.of("message", "模型暂不可用，无法生成建议。", "code", "MODEL_UNAVAILABLE"));
             beginModelPresentation(emitter);
             String answer = streamModelAnswer(request, routed, facts, knowledge, userId, emitter);
             appendChatAnswer(request, routed, answer, userId, referenceImages);
@@ -440,7 +455,11 @@ public class CopilotApplicationService {
                     error instanceof ModelCallException modelError ? modelError.getErrorType() : error.getClass().getSimpleName(),
                     error);
             try {
-                send(emitter, "error", Map.of("message", "Copilot 暂时不可用，请稍后重试。"));
+                String code = error instanceof PiAgentRuntime.ServiceFailure failure ? failure.code() : "COPILOT_UNAVAILABLE";
+                String message = "PI_TIMEOUT".equals(code) ? "Agent 响应超时，请稍后重试。" : "Copilot 暂时不可用，请稍后重试。";
+                send(emitter, "error", Map.of("code", code, "message", message));
+                if (ui.traceId != null) appendChatAnswer(request, CopilotRouteResult.builder().traceId(ui.traceId)
+                        .intent(ui.intent).build(), message, userId);
                 sendDone(emitter, "FAILED");
             } catch (IOException ignored) {
                 emitter.completeWithError(error);
@@ -457,8 +476,15 @@ public class CopilotApplicationService {
 
     private void streamHarnessTurn(CopilotChatRequest request, CopilotRouteResult route, Long actor,
                                    SseEmitter emitter, boolean hasImages) throws IOException {
-        var facts = initialPiScopeFacts(request, route, actor);
+        var facts = fieldContext.scopeOnly(request, route, actor);
         sendResponseMetadata(emitter, request, route, facts, hasImages, false, facts.cropLabel(), null, null);
+        if ("UNKNOWN_CROP".equals(facts.status()) && phenologyGuidance.asksTemporalPhenology(request.getMessage())) {
+            String clarification = phenologyGuidance.temporalPhenologyAnswer(request.getMessage(), facts);
+            streamDelta(emitter, clarification);
+            appendChatAnswer(request, route, clarification, actor);
+            sendDone(emitter, "COMPLETED");
+            return;
+        }
         PiTurn turn = new PiTurn();
         String answer = runPiAnswer(request, route, facts, actor, emitter, null, turn, false);
         if (!allowUngrounded) {
@@ -601,7 +627,9 @@ public class CopilotApplicationService {
         UiStream ui = uiStreams.get(emitter);
         if (ui != null) ui.presentation.put("summary", summary);
         send(emitter, "presentation.summary", Map.of("text", summary));
-        streamDelta(emitter, summary);
+        for (String event : List.of("content.delta", "message.delta")) {
+            emitter.send(SseEmitter.event().name(event).data(Map.of("delta", summary)));
+        }
     }
 
     private void finishPresentedTurn(CopilotChatRequest request, CopilotRouteResult route, Long userId, SseEmitter emitter,
@@ -889,6 +917,8 @@ public class CopilotApplicationService {
     }
 
     private void startDiagnosisAndAgent(CopilotChatRequest request, CopilotRouteResult routed, Long userId, SseEmitter emitter, boolean createAgentRun) throws IOException {
+        UiStream telemetryUi = uiStreams.get(emitter);
+        if (telemetryUi != null) telemetryUi.telemetry.mode("ASYNC_DIAGNOSIS");
         if (diagnosisJobs == null) throw new IllegalStateException("诊断任务服务未初始化");
         CopilotFacts knownFacts = null;
         if (fieldFactsService != null && routed.getResolvedContext() != null && routed.getResolvedContext().getFieldId() != null) {
@@ -958,6 +988,7 @@ public class CopilotApplicationService {
             case "historical_case" -> "历史病例";
             case "weather" -> "气象证据";
             case "knowledge" -> "农业知识";
+            case "agronomy_guardrail" -> "农事安全条件";
             case "soil" -> "土壤证据";
             case "spatial" -> "空间证据";
             case "satellite" -> "遥感证据";
@@ -979,22 +1010,40 @@ public class CopilotApplicationService {
         }
         String recommendationId = completed.getResult() == null || completed.getResult().getRecommendations() == null || completed.getResult().getRecommendations().isEmpty()
                 ? null : completed.getResult().getRecommendations().get(0).getId();
-        emitDiagnosisBlocks(emitter, completed.getDiagnosisId(), completed.getResult());
-        emitPestComparison(emitter, completed.getDiagnosisId(), completed.getResult(), trustedImageUrls(request.getImageUrls()));
+        var citations = CopilotDiagnosisPresentation.citations(completed.getResult());
+        for (var reference : citations.entries()) send(emitter, "knowledge.evidence", reference);
+        var details = completed.getResult() == null ? null : completed.getResult().getMetadata();
+        UiStream telemetryUi = uiStreams.get(emitter);
+        if (telemetryUi != null) {
+            telemetryUi.telemetry.source("MULTIMODAL_DIAGNOSIS");
+            if (details != null) telemetryUi.telemetry.model(details.get("selectedModel"), details);
+        }
         if (!createAgentRun) {
-            String summary = diagnosisSummary(completed.getResult());
+            String summary = CopilotDiagnosisPresentation.summary(completed.getResult());
             send(emitter, "diagnosis.completed", Map.of("diagnosisId", completed.getDiagnosisId(), "summary", summary));
             streamDelta(emitter, summary);
+            emitDiagnosisPresentation(emitter, completed, trustedImageUrls(request.getImageUrls()), citations.sources());
             appendChatAnswer(request, routed, summary, userId);
             sendDone(emitter, "COMPLETED");
             return;
         }
+        emitDiagnosisPresentation(emitter, completed, trustedImageUrls(request.getImageUrls()), citations.sources());
         AgentRun run = createAgentFromDiagnosis(request.getMessage(), completed.getDiagnosisId(), recommendationId, userId);
         emitWorkflowBlock(request, routed, userId, emitter, run.getRunId(), completed.getDiagnosisId());
+        appendChatAnswer(request, routed, "已打开农事工作流，可核对草稿和查看进度。", userId);
         send(emitter, "run.created", Map.of("runId", run.getRunId(), "diagnosisId", completed.getDiagnosisId(),
                 "status", usesPi() ? run.getStatus().name() : "PLANNING"));
         projectWorkflow(request, routed, userId, emitter, run.getRunId());
         sendDone(emitter, "RUN_CREATED");
+    }
+
+    private void emitDiagnosisPresentation(SseEmitter emitter, DiagnosisJobService.DiagnosisJobResponse completed,
+                                           List<String> images, List<Map<String, Object>> sources) throws IOException {
+        for (var card : CopilotDiagnosisPresentation.reportCards(completed.getDiagnosisId(), completed.getResult())) {
+            emitCard(emitter, card);
+        }
+        var comparison = CopilotDiagnosisPresentation.pestComparison(completed.getDiagnosisId(), completed.getResult(), images, sources);
+        if (comparison != null) emitCard(emitter, comparison);
     }
 
     private void startAgentFromDiagnosis(CopilotChatRequest request, CopilotRouteResult routed, Long userId, SseEmitter emitter) throws IOException {
@@ -1006,6 +1055,7 @@ public class CopilotApplicationService {
                 null, null, null);
         AgentRun run = createAgentFromDiagnosis(request.getMessage(), routed.getResolvedContext().getDiagnosisId(), routed.getResolvedContext().getRecommendationId(), userId);
         emitWorkflowBlock(request, routed, userId, emitter, run.getRunId(), routed.getResolvedContext().getDiagnosisId());
+        appendChatAnswer(request, routed, "已打开农事工作流，可核对草稿和查看进度。", userId);
         send(emitter, "run.created", Map.of("runId", run.getRunId(), "diagnosisId", routed.getResolvedContext().getDiagnosisId(),
                 "status", usesPi() ? run.getStatus().name() : "PLANNING"));
         projectWorkflow(request, routed, userId, emitter, run.getRunId());
@@ -1026,7 +1076,7 @@ public class CopilotApplicationService {
         if (agentRuntime == null || taskScope == null || (!farmBatchScope && safe(taskScope.getFieldId()).isBlank())) {
             throw new IllegalStateException("创建农事任务需要已验证的地块上下文。");
         }
-        CopilotFacts knownFacts = resolveCopilotFacts(request, routed, userId);
+        CopilotFacts knownFacts = fieldContext.resolve(request, routed, userId);
         sendResponseMetadata(emitter, request, routed, knownFacts, !trustedImageUrls(request.getImageUrls()).isEmpty(),
                 knownFacts != null && "READY".equals(knownFacts.status()),
                 knownFacts == null ? null : knownFacts.cropLabel(),
@@ -1042,24 +1092,37 @@ public class CopilotApplicationService {
                 ? request.getMessage() : routed.getRequestedAction();
         boolean draftingWithPi = usesPi();
         List<AgentRun> runs;
+        String explanation = "";
         if (draftingWithPi) {
             PiTurn turn = new PiTurn();
             try {
-                runPiAnswer(request, routed, knownFacts, userId, emitter, null, turn, true);
-            } catch (IllegalStateException unavailable) {
-                // Only a completed Pi run can supply a pending action.
-                turn.draft = null;
-                turn.batch = null;
+                explanation = runPiAnswer(request, routed, knownFacts, userId, emitter, null, turn, true);
+            } catch (PiAgentRuntime.ServiceFailure failure) {
+                String message = "PI_TIMEOUT".equals(failure.code()) ? "草稿生成超时，请稍后重试。"
+                        : "草稿生成服务暂时不可用，请稍后重试。";
+                send(emitter, "error", Map.of("code", failure.code(), "message", message));
+                appendChatAnswer(request, routed, message, userId);
+                sendDone(emitter, "FAILED");
+                return;
             }
+            emitPiSource(emitter, turn);
             if ((turn.draft == null && turn.batch == null) || turn.conflictingDrafts) {
                 String answer = "未得到可确认的农事任务草稿。请明确要执行的操作和日期后重试。";
+                if (!explanation.isBlank()) answer = explanation + "\n\n" + answer;
                 streamDelta(emitter, answer);
                 appendChatAnswer(request, routed, answer, userId);
                 sendDone(emitter, "COMPLETED");
                 return;
             }
-            runs = turn.batch != null ? agentRuntime.prepareTaskDraftBatch(goal, userId, turn.batch.tasks())
-                    : List.of(agentRuntime.prepareTaskDraft(goal, context, userId, turn.draft));
+            final String reviewNote = explanation;
+            if (!reviewNote.isBlank()) streamDelta(emitter, reviewNote);
+            if (turn.batch != null) {
+                var drafts = turn.batch.tasks().stream().map(item -> new AgentRuntime.ScopedTaskDraft(
+                        item.scope(), approvalDraft(item.scope(), item.draft(), turn, reviewNote), item.evidence())).toList();
+                runs = agentRuntime.prepareTaskDraftBatch(goal, userId, drafts);
+            } else {
+                runs = List.of(agentRuntime.prepareTaskDraft(goal, context, userId, approvalDraft(context, turn.draft, turn, reviewNote)));
+            }
         } else {
             runs = List.of(agentRuntime.createRun(goal, context, "real", userId));
         }
@@ -1070,7 +1133,23 @@ public class CopilotApplicationService {
             if (!draftingWithPi) agentRuntime.start(run.getRunId());
             projectWorkflow(request, routed, userId, emitter, run.getRunId());
         }
+        appendChatAnswer(request, routed, explanation.isBlank() ? "已打开农事工作流，可核对草稿和查看进度。" : explanation, userId);
         sendDone(emitter, "RUN_CREATED");
+    }
+
+    private AgentRuntime.TaskDraft approvalDraft(AgentContext scope, AgentRuntime.TaskDraft draft, PiTurn turn, String explanation) {
+        var evidence = new LinkedHashMap<String, com.mei.zhgy.vo.DiagnosisEvidenceVO>();
+        for (var item : draft.supportingEvidence()) evidence.put(item.getId(), item);
+        for (var item : turn.evidence.taskEvidence(parseInt(scope.getFarmId()), scope.getFieldId())) evidence.putIfAbsent(item.getId(), item);
+        if (!explanation.isBlank()) {
+            String id = "draft-explanation-" + java.util.UUID.randomUUID();
+            evidence.put(id, com.mei.zhgy.vo.DiagnosisEvidenceVO.builder().id(id).modality("proposal_explanation")
+                    .title("Agent 草稿说明").summary(bound(explanation, 6000))
+                    .source(com.mei.zhgy.vo.DiagnosisEvidenceVO.Source.builder().type("model_explanation")
+                            .name("FarMap Agent").fieldId(scope.getFieldId()).build())
+                    .metadata(Map.of("independentEvidence", false)).build());
+        }
+        return new AgentRuntime.TaskDraft(scope.getFieldId(), draft.title(), draft.detail(), draft.scheduledFor(), List.copyOf(evidence.values()));
     }
 
     /**
@@ -1083,7 +1162,7 @@ public class CopilotApplicationService {
         send(emitter, "fallback", Map.of("reason", reason, "intent", routed.getIntent().name(), "mode", "CONVERSATIONAL"));
         send(emitter, "status", Map.of("message", "当前能力缺少可验证上下文，已转为普通对话回答；不会因本次降级自动执行写操作。", "code", "CONVERSATIONAL_FALLBACK"));
         CopilotFacts facts = initialAnswerFacts(request, routed, userId);
-        KnowledgeBundle knowledge = usesPi() ? KnowledgeBundle.notRequested() : retrieveKnowledge(request, routed, facts, userId);
+        CopilotKnowledgeBundle knowledge = usesPi() ? CopilotKnowledgeBundle.notRequested() : retrieveKnowledge(request, routed, facts, userId);
         if (!usesPi()) emitKnowledgeSummary(emitter, knowledge);
         ReferenceImageResponse referenceImages = emitReferenceImages(emitter, request, routed, facts);
         if (!usesPi()) send(emitter, "answer.source", answerSource(routed, facts, knowledge, request.getMessage()));
@@ -1102,7 +1181,7 @@ public class CopilotApplicationService {
                 : agentRuntime.createRunFromPersistedDiagnosis(goal, diagnosisId, recommendationId, userId);
     }
 
-    private void emitKnowledgeSummary(SseEmitter emitter, KnowledgeBundle knowledge) throws IOException {
+    private void emitKnowledgeSummary(SseEmitter emitter, CopilotKnowledgeBundle knowledge) throws IOException {
         int count = knowledge == null || knowledge.items() == null ? 0 : knowledge.items().size();
         String status = knowledge == null || knowledge.status() == null ? "UNAVAILABLE" : knowledge.status();
         UiStream ui = uiStreams.get(emitter);
@@ -1118,7 +1197,7 @@ public class CopilotApplicationService {
 
     private void sendResponseMetadata(SseEmitter emitter, CopilotChatRequest request, CopilotRouteResult routed,
                                       CopilotFacts facts, boolean hasImages, boolean fieldFactsReady,
-                                      String cropLabel, String growthStageLabel, KnowledgeBundle knowledge) throws IOException {
+                                      String cropLabel, String growthStageLabel, CopilotKnowledgeBundle knowledge) throws IOException {
         String messageId = request == null || request.getClientMessageId() == null || request.getClientMessageId().isBlank()
                 ? routed == null ? "copilot-response" : routed.getTraceId() : request.getClientMessageId();
         String knowledgeStatus = knowledge == null || knowledge.status() == null ? "NOT_REQUESTED" : knowledge.status();
@@ -1156,6 +1235,8 @@ public class CopilotApplicationService {
         CopilotMediaNeed mediaNeed = CopilotMediaPolicy.decide(request == null ? null : request.getMessage(),
                 routed == null ? null : routed.getIntent(), hasUserImages);
         ReferenceImageLookup lookup = mediaNeed == CopilotMediaNeed.NONE || referenceImageAttacher == null
+                ? ReferenceImageLookup.notRequested()
+                : facts != null && "UNKNOWN_CROP".equals(facts.status())
                 ? ReferenceImageLookup.notRequested()
                 : referenceImageAttacher.forChatResult(request == null ? null : request.getMessage(),
                 facts == null ? null : facts.crop(), facts == null ? null : facts.growthStage());
@@ -1229,231 +1310,26 @@ public class CopilotApplicationService {
                 || java.util.regex.Pattern.compile("(?:不(?:要|用|必)?|无需|别)\\s*(?:创建|生成|新建|安排|执行)\\s*(?:任何|任何的|一条|一个|相关|新的|农事|现场|生产|实际|执行|作业|诊断|管理)*\\s*(?:任务|工单|工作流|作业)").matcher(value).find();
     }
 
-    private String diagnosisSummary(com.mei.zhgy.vo.DiagnosisAnalysisResponse result) {
-        if (result == null) return "诊断已完成，但暂未返回可展示的结构化结论。";
-        StringBuilder output = new StringBuilder("### 只读诊断结果\n\n");
-        if (result.getDiagnosis() != null) {
-            String title = result.getDiagnosis().getTitle();
-            String summary = result.getDiagnosis().getSummary();
-            if (title != null && !title.isBlank()) output.append("**结论：** ").append(title).append("\n\n");
-            if (summary != null && !summary.isBlank()) output.append(summary).append("\n\n");
-        }
-        if (result.getRecommendations() != null && !result.getRecommendations().isEmpty()) {
-            output.append("**下一步建议：**\n");
-            result.getRecommendations().stream().limit(3).forEach(item -> {
-                if (item != null && item.getTitle() != null && !item.getTitle().isBlank()) {
-                    output.append("- ").append(item.getTitle());
-                    if (item.getDetail() != null && !item.getDetail().isBlank()) output.append("：").append(item.getDetail());
-                    output.append("\n");
-                }
-            });
-        }
-        return output.toString().trim();
-    }
-
-    private void emitDiagnosisBlocks(SseEmitter emitter, String diagnosisId, com.mei.zhgy.vo.DiagnosisAnalysisResponse result) throws IOException {
-        List<Map<String, Object>> findings = new ArrayList<>();
-        if (result != null && result.getDiagnosis() != null) addItem(findings, "诊断结论", result.getDiagnosis().getTitle());
-        String summary = result == null || result.getDiagnosis() == null ? null : result.getDiagnosis().getSummary();
-        emitBlock(emitter, "DiagnosisCard", "诊断结果", summary, Map.of("diagnosisId", diagnosisId, "items", findings),
-                "completed", List.of(Map.of("label", "诊断记录", "reference", diagnosisId)));
-        if (result == null || result.getEvidence() == null || result.getEvidence().isEmpty()) return;
-        List<Map<String, Object>> rows = new ArrayList<>();
-        List<Map<String, Object>> provenance = new ArrayList<>();
-        for (var evidence : result.getEvidence().stream().limit(10).toList()) {
-            if (evidence == null) continue;
-            String label = safe(evidence.getTitle()).isBlank() ? "诊断证据" : evidence.getTitle();
-            addItem(rows, label, evidence.getSummary());
-            String reference = safe(evidence.getId());
-            if (evidence.getSource() != null && !safe(evidence.getSource().getName()).isBlank()) label = evidence.getSource().getName();
-            provenance.add(Map.of("label", label, "reference", reference));
-        }
-        if (!provenance.isEmpty()) emitBlock(emitter, "DiagnosisEvidenceCard", "诊断依据", null,
-                Map.of("items", rows, "diagnosisId", diagnosisId), "ready", provenance);
-    }
-
-    private void emitPestComparison(SseEmitter emitter, String diagnosisId, com.mei.zhgy.vo.DiagnosisAnalysisResponse result,
-                                    List<String> fieldImages) throws IOException {
-        if (result == null || result.getEvidence() == null) return;
-        List<Map<String, Object>> atlasFigures = new ArrayList<>();
-        List<String> features = new ArrayList<>();
-        for (var evidence : result.getEvidence()) {
-            if (evidence == null || evidence.getMetadata() == null) continue;
-            var metadata = evidence.getMetadata();
-            if (metadata.get("visualObservation") instanceof com.mei.zhgy.service.rag.VisualObservation observed) {
-                for (String symptom : observed.visibleSymptoms()) if (features.size() < 10 && !features.contains(symptom)) features.add(symptom);
-            }
-            if ("reference-image".equals(metadata.get("retrievalType")) && evidence.getPreview() != null
-                    && !safe(evidence.getPreview().getImageUrl()).isBlank() && atlasFigures.size() < 8) {
-                atlasFigures.add(Map.of("refId", safe(evidence.getId()), "label", safe(evidence.getTitle()),
-                        "imageUrl", evidence.getPreview().getImageUrl()));
-            }
-        }
-        if (fieldImages.isEmpty() && atlasFigures.isEmpty()) return;
-        boolean conflict = result.getMetadata() != null && Boolean.TRUE.equals(result.getMetadata().get("evidenceConflict"));
-        var data = Map.<String, Object>of("diagnosisId", diagnosisId, "fieldImages", fieldImages,
-                "atlasFigures", atlasFigures, "features", features, "evidenceConflict", conflict);
-        emitBlock(emitter, "PestComparisonCard", "现场与病害图鉴对照",
-                conflict ? "证据存在冲突，请复核田间症状与登记信息。" : null, data,
-                atlasFigures.isEmpty() ? "unavailable" : "ready",
-                List.of(Map.of("label", "已保存诊断", "reference", diagnosisId)), "PestComparisonCard:diagnosis:" + diagnosisId);
-    }
-
     private CopilotFacts initialAnswerFacts(CopilotChatRequest request, CopilotRouteResult routed, Long userId) {
-        if (!usesPi() || asksTemporalPhenology(request.getMessage()) || CopilotMediaPolicy.decide(request.getMessage(),
+        if (!usesPi() || phenologyGuidance.asksTemporalPhenology(request.getMessage()) || CopilotMediaPolicy.decide(request.getMessage(),
                 routed.getIntent(), !trustedImageUrls(request.getImageUrls()).isEmpty()) != CopilotMediaNeed.NONE) {
-            return resolveCopilotFacts(request, routed, userId);
+            return fieldContext.resolve(request, routed, userId);
         }
-        return initialPiScopeFacts(request, routed, userId);
+        return fieldContext.scopeOnly(request, routed, userId);
     }
 
-    private CopilotFacts initialPiScopeFacts(CopilotChatRequest request, CopilotRouteResult routed, Long userId) {
-        LocalDate today = LocalDate.now(COPILOT_ZONE);
-        String currentDate = today.format(COPILOT_DATE_FORMAT);
-        CopilotStableContext scope = routed.getResolvedContext();
-        if (scope != null && scope.getFieldId() != null && farmFieldService != null
-                && (routed.getResolutionStatus() == null || routed.getResolutionStatus() == CopilotResolutionStatus.RESOLVED)) {
-            FarmField field = farmFieldService.get(scope.getFieldId(), userId);
-            CropResolver.ResolvedCrop crop = cropResolver.resolve(field.getCrop());
-            if (crop.ready()) {
-                var stage = phenologyService.resolveStage(crop.code(), field.getGrowthStage());
-                return CopilotFacts.scopeOnly(currentDate, crop, stage == null ? null : stage.code());
-            }
-            return CopilotFacts.scopeOnly(currentDate, null, null);
-        }
-        CropResolver.ResolvedCrop crop = cropResolver.resolve(request.getMessage());
-        return CopilotFacts.scopeOnly(currentDate, crop.ready() ? crop : null, null);
-    }
-
-    private CopilotFacts resolveCopilotFacts(CopilotChatRequest request, CopilotRouteResult routed, Long userId) {
-        LocalDate today = LocalDate.now(COPILOT_ZONE);
-        String currentDate = today.format(COPILOT_DATE_FORMAT);
-        String fieldId = routed == null || routed.getResolvedContext() == null ? null : routed.getResolvedContext().getFieldId();
-        // The overview page can have a selected farm without a selected field.
-        // Use the farm's server-owned field master only when it has one
-        // unambiguous crop. This gives media/reference retrieval a trusted crop
-        // context without guessing from the disease name or the UI label.
-        if (fieldId == null || fieldId.isBlank()) {
-            CopilotFacts farmFacts = farmFactsFromContext(request, routed, userId, today, currentDate);
-            if (farmFacts != null) return farmFacts;
-        }
-        if (fieldFactsService != null) {
-            try {
-                FieldFacts facts = fieldFactsService.forField(fieldId, userId);
-                CopilotFacts resolved = CopilotFacts.from(facts);
-                if (resolved.ready()) return resolved;
-                CopilotFacts publicFacts = publicFactsFromQuery(request, userId, today, currentDate);
-                return publicFacts == null ? resolved : publicFacts;
-            } catch (FieldAccessException error) {
-                throw error;
-            } catch (RuntimeException failure) {
-                log.warn("COPILOT_FIELD_FACTS_DEGRADED userId={} fieldBound={}", userId, fieldId != null && !fieldId.isBlank(), failure);
-                CopilotFacts publicFacts = publicFactsFromQuery(request, userId, today, currentDate);
-                return publicFacts == null ? CopilotFacts.empty(currentDate, "UNAVAILABLE") : publicFacts;
-            }
-        }
-        if (fieldId == null || fieldId.isBlank()) {
-            CopilotFacts publicFacts = publicFactsFromQuery(request, userId, today, currentDate);
-            return publicFacts == null ? CopilotFacts.empty(currentDate, "NO_FIELD") : publicFacts;
-        }
-        if (farmFieldService == null) {
-            CopilotFacts publicFacts = publicFactsFromQuery(request, userId, today, currentDate);
-            return publicFacts == null ? CopilotFacts.empty(currentDate, "UNAVAILABLE") : publicFacts;
-        }
-        try {
-            FieldContext trusted = farmFieldService.context(fieldId, userId);
-            String rawCrop = mapText(trusted.getCrop(), "name");
-            String growthStage = mapText(trusted.getField(), "growthStage");
-            CropResolver.ResolvedCrop crop = cropResolver.resolve(rawCrop);
-            if (!crop.ready()) {
-                CopilotFacts publicFacts = publicFactsFromQuery(request, userId, today, currentDate);
-                return publicFacts == null ? CopilotFacts.empty(currentDate, "UNKNOWN_CROP") : publicFacts;
-            }
-            PhenologyResult result = phenologyService.calculate(crop.code(), today, growthStage);
-            return CopilotFacts.from(currentDate, crop, result, phenologyService.orderedStageNames(crop.code()), phenologyService.cycleType(crop.code()),
-                    Map.of("serverDate", "SERVER_ASIA_SHANGHAI", "currentStage", growthStage == null ? "SERVER_RULE" : "MYSQL_FIELD"));
-        } catch (FieldAccessException error) {
-            // Preserve the existing owner/access boundary. Do not turn an
-            // authorization failure into a cross-user fact lookup.
-            throw error;
-        } catch (RuntimeException ignored) {
-            CopilotFacts publicFacts = publicFactsFromQuery(request, userId, today, currentDate);
-            return publicFacts == null ? CopilotFacts.empty(currentDate, "UNAVAILABLE") : publicFacts;
-        }
-    }
-
-    private CopilotFacts farmFactsFromContext(CopilotChatRequest request, CopilotRouteResult routed,
-                                              Long userId, LocalDate today, String currentDate) {
-        if (farmFieldService == null) return null;
-        String rawFarmId = routed == null || routed.getResolvedContext() == null
-                ? null : routed.getResolvedContext().getFarmId();
-        if (rawFarmId == null || rawFarmId.isBlank()) {
-            CopilotPageContext page = request == null ? null : request.getPageContext();
-            rawFarmId = page == null ? null : page.getFarmId();
-        }
-        Integer farmId = parseInt(rawFarmId);
-        if (farmId == null) return null;
-        try {
-            List<FarmField> fields = farmFieldService.list(farmId, userId);
-            if (fields == null || fields.isEmpty()) return null;
-            List<CropResolver.ResolvedCrop> crops = fields.stream()
-                    .map(FarmField::getCrop)
-                    .map(cropResolver::resolve)
-                    .filter(CropResolver.ResolvedCrop::ready)
-                    .filter(crop -> crop.code() != null && !crop.code().isBlank())
-                    .collect(java.util.stream.Collectors.toMap(
-                            CropResolver.ResolvedCrop::code,
-                            crop -> crop,
-                            (left, ignored) -> left,
-                            LinkedHashMap::new))
-                    .values().stream().toList();
-            // A mixed-crop farm needs a field selection before a reference image
-            // can be attached; never silently choose one crop in that case.
-            if (crops.size() != 1) return null;
-            CropResolver.ResolvedCrop crop = crops.get(0);
-            PhenologyResult result = phenologyService.calculate(crop.code(), today, null);
-            return CopilotFacts.from(currentDate, crop, result,
-                    phenologyService.orderedStageNames(crop.code()), phenologyService.cycleType(crop.code()),
-                    Map.of("serverDate", "SERVER_ASIA_SHANGHAI", "crop", "MYSQL_FARM_FIELDS",
-                            "currentStage", "SERVER_RULE"),
-                    "FARM_CONTEXT");
-        } catch (RuntimeException failure) {
-            log.warn("COPILOT_FARM_FACTS_DEGRADED userId={} farmId={}", userId, farmId,
-                    failure.getClass().getSimpleName());
-            return null;
-        }
-    }
-
-    private CopilotFacts publicFactsFromQuery(String message, LocalDate today, String currentDate) {
-        CropResolver.ResolvedCrop crop = cropResolver.resolve(message);
-        if (!crop.ready()) return null;
-        PhenologyResult result = phenologyService.calculate(crop.code(), today, null);
-        return CopilotFacts.from(currentDate, crop, result, phenologyService.orderedStageNames(crop.code()), phenologyService.cycleType(crop.code()),
-                Map.of("serverDate", "SERVER_ASIA_SHANGHAI", "crop", "PUBLIC_CROP_QUERY", "currentStage", "SERVER_RULE"), "PUBLIC_GENERIC");
-    }
-
-    private CopilotFacts publicFactsFromQuery(CopilotChatRequest request, Long userId, LocalDate today, String currentDate) {
-        String message = request == null ? null : request.getMessage();
-        CropResolver.ResolvedCrop crop = cropResolver.resolve(message);
-        if (!crop.ready() && !crop.unknown()) crop = cropResolver.resolve(recentConversation(request, userId));
-        if (!crop.ready()) return null;
-        PhenologyResult result = phenologyService.calculate(crop.code(), today, null);
-        return CopilotFacts.from(currentDate, crop, result, phenologyService.orderedStageNames(crop.code()), phenologyService.cycleType(crop.code()),
-                Map.of("serverDate", "SERVER_ASIA_SHANGHAI", "crop", "PUBLIC_CROP_QUERY", "currentStage", "SERVER_RULE"), "PUBLIC_GENERIC");
-    }
-
-    private KnowledgeBundle retrieveKnowledge(CopilotChatRequest request, CopilotRouteResult routed, CopilotFacts facts, Long userId) {
+    private CopilotKnowledgeBundle retrieveKnowledge(CopilotChatRequest request, CopilotRouteResult routed, CopilotFacts facts, Long userId) {
         return retrieveKnowledge(request, routed, facts, userId, null, null);
     }
 
-    private KnowledgeBundle retrieveKnowledge(CopilotChatRequest request, CopilotRouteResult routed, CopilotFacts facts, Long userId,
+    private CopilotKnowledgeBundle retrieveKnowledge(CopilotChatRequest request, CopilotRouteResult routed, CopilotFacts facts, Long userId,
                                               String stage, Integer topK) {
-        if (knowledgeRetriever == null) return new KnowledgeBundle("UNAVAILABLE", List.of());
+        if (knowledgeRetriever == null) return new CopilotKnowledgeBundle("UNAVAILABLE", List.of());
         // Without a crop, ask the retriever for only untagged public chunks;
         // this keeps a generic question from mixing crop-specific evidence.
         boolean untaggedOnly = facts == null || facts.crop() == null || facts.crop().isBlank();
         String crop = facts == null ? null : facts.crop();
-        String growthStage = stage == null ? knowledgeStageFor(request == null ? null : request.getMessage(), facts) : stage;
+        String growthStage = stage == null ? phenologyGuidance.knowledgeStageFor(request == null ? null : request.getMessage(), facts) : stage;
         DiagnosisAnalyzeRequest query = new DiagnosisAnalyzeRequest();
         CopilotPageContext page = request.getPageContext();
         String fieldId = routed == null || routed.getResolvedContext() == null ? null : routed.getResolvedContext().getFieldId();
@@ -1486,17 +1362,20 @@ public class CopilotApplicationService {
             // into a total outage. The response model can still provide the
             // configured, clearly labelled L3 general-agriculture fallback.
             log.warn("COPILOT_KNOWLEDGE_DEGRADED userId={} cropBound={}", userId, crop != null && !crop.isBlank(), failure);
-            return new KnowledgeBundle("UNAVAILABLE", List.of());
+            return new CopilotKnowledgeBundle("UNAVAILABLE", List.of());
         }
         List<Map<String, Object>> output = new ArrayList<>();
-        if (result == null || result.getEvidence() == null) return new KnowledgeBundle("UNAVAILABLE", output);
+        if (result == null || result.getEvidence() == null) return new CopilotKnowledgeBundle("UNAVAILABLE", output);
         result.getEvidence().forEach(item -> {
             Map<String, Object> value = new LinkedHashMap<>();
             value.put("title", item.getTitle());
-            value.put("content", item.getPreview() == null ? item.getSummary() : item.getPreview().getTextSnippet());
-            value.put("score", item.getScore());
-            value.put("source", item.getSource() == null ? null : item.getSource().getDocument());
+            String excerpt = item.getPreview() == null ? null : item.getPreview().getTextSnippet();
+            value.put("content", safe(excerpt).isBlank() ? item.getSummary() : excerpt);
+            value.put("score", item.getSource() != null && item.getSource().getRerankScore() != null
+                    ? item.getSource().getRerankScore() : item.getScore());
             if (item.getSource() != null) {
+                value.put("documentName", item.getSource().getDocument());
+                value.put("source", item.getSource().getName() == null ? item.getSource().getDocument() : item.getSource().getName());
                 value.put("sourceId", item.getSource().getSourceId());
                 value.put("documentId", item.getSource().getDocumentId());
                 value.put("versionId", item.getSource().getVersionId());
@@ -1505,24 +1384,25 @@ public class CopilotApplicationService {
             value.put("chunkId", item.getId());
             output.add(value);
         });
-        return new KnowledgeBundle(result.getStatus(), output);
+        return new CopilotKnowledgeBundle(result.getStatus(), output);
     }
 
     private String streamModelAnswer(CopilotChatRequest request, CopilotRouteResult routed, CopilotFacts facts,
-                                     KnowledgeBundle knowledge, Long userId, SseEmitter emitter) {
+                                     CopilotKnowledgeBundle knowledge, Long userId, SseEmitter emitter) {
         return streamModelAnswer(request, routed, facts, knowledge, userId, emitter, null);
     }
 
     private String streamModelAnswer(CopilotChatRequest request, CopilotRouteResult routed, CopilotFacts facts,
-                                     KnowledgeBundle knowledge, Long userId, SseEmitter emitter, String commandReport) {
+                                     CopilotKnowledgeBundle knowledge, Long userId, SseEmitter emitter, String commandReport) {
         return streamModelAnswer(request, routed, facts, knowledge, userId, emitter, commandReport, new PiTurn());
     }
 
     private String streamModelAnswer(CopilotChatRequest request, CopilotRouteResult routed, CopilotFacts facts,
-                                     KnowledgeBundle knowledge, Long userId, SseEmitter emitter, String commandReport, PiTurn turn) {
-        boolean compositePhenologyGuidance = isCompositePhenologyGuidance(request.getMessage());
-        String verifiedPhenologyAnswer = temporalPhenologyAnswer(request.getMessage(), facts);
-        String deterministicAnswer = compositePhenologyGuidance ? null : verifiedPhenologyAnswer;
+                                     CopilotKnowledgeBundle knowledge, Long userId, SseEmitter emitter, String commandReport, PiTurn turn) {
+        boolean compositePhenologyGuidance = phenologyGuidance.isCompositePhenologyGuidance(request.getMessage());
+        String verifiedPhenologyAnswer = phenologyGuidance.temporalPhenologyAnswer(request.getMessage(), facts);
+        String deterministicAnswer = compositePhenologyGuidance && !"UNKNOWN_CROP".equals(facts.status())
+                ? null : verifiedPhenologyAnswer;
         if (deterministicAnswer != null && commandReport == null) {
             streamDelta(emitter, deterministicAnswer);
             if (usesPi()) {
@@ -1591,7 +1471,7 @@ public class CopilotApplicationService {
         if (ui != null && ui.weather != null) context.put("currentWeather", ui.weather);
         if (compositePhenologyGuidance && verifiedPhenologyAnswer != null) {
             context.put("verifiedPhenologyAnswer", verifiedPhenologyAnswer);
-            context.put("guidanceGrowthStage", knowledgeStageFor(request.getMessage(), facts));
+            context.put("guidanceGrowthStage", phenologyGuidance.knowledgeStageFor(request.getMessage(), facts));
         }
         context.put("maxOutputTokens", Math.max(256, copilotMaxOutputTokens));
         Map<String, Object> source = answerSource(routed, facts, knowledge, request.getMessage());
@@ -1632,22 +1512,35 @@ public class CopilotApplicationService {
                 + "\n" + sourceInstruction
                 + "\n始终不要虚构地块温度、湿度、土壤、历史用药、诊断或产量；知识库不可用时不要跨作物猜测。请直接用中文回答，不要输出隐藏思维链或 <think> 标签。";
         StringBuilder answer = new StringBuilder();
+        if (ui != null) ui.telemetry.mode("MODEL_GATEWAY");
         ModelCallResult result = modelGateway.stream(ModelCallRequest.builder()
                 .requestId("copilot-chat-" + java.util.UUID.randomUUID())
                 .taskType(AiTaskType.COPILOT)
                 .systemPrompt("你是 FarMap 农业 Copilot，只输出用户可读的最终答复。")
                 .userPrompt(prompt).structuredOutput(false).context(context).build(), delta -> {
                     answer.append(delta);
+                    if (ui != null && !delta.isEmpty()) ui.telemetry.token();
                     streamDelta(emitter, delta);
                 });
+        if (ui != null) {
+            var counts = new LinkedHashMap<String, Long>();
+            if (result.getUsage() != null) {
+                counts.put("inputTokens", result.getUsage().getInputTokens());
+                counts.put("outputTokens", result.getUsage().getOutputTokens());
+                counts.put("cacheReadTokens", result.getUsage().getCacheReadTokens());
+            }
+            ui.telemetry.model(result.getSelectedModel(), counts);
+            ui.telemetry.source(source.get("layer"));
+        }
         String finalAnswer = finalAnswer(result.getContent());
         if (answer.isEmpty()) streamDelta(emitter, finalAnswer);
         return finalAnswer;
     }
 
     private String deterministicPhenologyAnswer(String message, CopilotFacts facts) {
-        if (isCompositePhenologyGuidance(message)) return null;
-        return temporalPhenologyAnswer(message, facts);
+        if (phenologyGuidance.isCompositePhenologyGuidance(message)
+                && (facts == null || !"UNKNOWN_CROP".equals(facts.status()))) return null;
+        return phenologyGuidance.temporalPhenologyAnswer(message, facts);
     }
 
     private boolean usesPi() {
@@ -1670,7 +1563,7 @@ public class CopilotApplicationService {
             tools.add(memoryProposalTool(request, routed.getTurnId(), scope, userId));
         }
         Integer activeFarm = parseInt(scope.getFarmId());
-        tools = tools.stream().map(tool -> withEvidence(tool, turn.evidence, activeFarm)).toList();
+        tools = tools.stream().map(tool -> CopilotPiToolEvidence.bind(tool, turn.evidence, activeFarm)).toList();
         AgriculturalAgentHarness.TurnContext aligned = harness.history(view == null ? List.of() : view.getRecentTurns(),
                 routed.getTurnId(), routed.getTraceId());
         String message = drafting && routed.getRequestedAction() != null
@@ -1687,14 +1580,33 @@ public class CopilotApplicationService {
                 .map(value -> java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
                         safe(value).getBytes(java.nio.charset.StandardCharsets.UTF_8)))
                 .collect(java.util.stream.Collectors.joining("."));
+        UiStream ui = requestUiStreams.get(request);
+        if (ui != null) ui.telemetry.mode(drafting ? "PI_DRAFT" : "PI_CHAT");
+        boolean liveText = !drafting && (allowUngrounded || commandReport != null);
+        var groundingKey = liveChat ? continuationKey(view, userId, routed.getTurnId()) : null;
         PiAgentRuntime.Result result = piRuntime.run(session, liveChat ? view.getContextVersion() : null, scopeKey,
                 message, AgriculturalAgentHarness.SYSTEM_PROMPT, environment, liveChat ? routed.getTurnId() : null,
                 liveChat ? aligned.lastCompletedTurnId() : null, aligned.history(), tools,
-                emitter != null && !drafting && (allowUngrounded || commandReport != null) ? delta -> streamDelta(emitter, delta) : null,
+                emitter == null ? null : delta -> {
+                    if (ui != null && !delta.isEmpty()) ui.telemetry.token();
+                    if (liveText) streamDelta(emitter, delta);
+                },
                 emitter == null ? null : event -> streamPiEvent(emitter, event),
-                observation -> observePiTool(emitter, request.getMessage(), turn, observation));
-        if ("aborted".equals(result.status())) throw new PiTurnAborted();
+                observation -> {
+                    observePiTool(emitter, request.getMessage(), turn, observation);
+                    continuationGrounding.remember(groundingKey, turn.grounding());
+                });
+        if ("aborted".equals(result.status())) {
+            continuationGrounding.remember(groundingKey, turn.grounding());
+            throw new PiTurnAborted();
+        }
+        continuationGrounding.clear(groundingKey);
         return finalAnswer(result.text());
+    }
+
+    private CopilotContinuationGrounding.Key continuationKey(CopilotConversationView view, Long userId, String turnId) {
+        return turnId == null ? null : new CopilotContinuationGrounding.Key(
+                userId, view.getConversationId(), view.getContextVersion(), turnId);
     }
 
     private Map<String, Object> orchardProfile(CopilotStableContext scope, Long actor) {
@@ -1752,16 +1664,17 @@ public class CopilotApplicationService {
         if (args.text("category") != null) term += "（知识类别：" + args.text("category") + "）";
         CopilotChatRequest query = toolQuery(request, term);
         CopilotRouteResult route = toolRoute(scope);
-        CopilotFacts facts = resolveCopilotFacts(query, route, actor);
+        CopilotFacts facts = fieldContext.resolve(query, route, actor);
         String requestedCrop = args.text("crop");
         if (requestedCrop != null) {
+            if (scope.fieldId() != null && facts.crop() == null) return ToolReply.error("UNKNOWN_CROP");
             LocalDate today = LocalDate.now(COPILOT_ZONE);
-            CopilotFacts requested = publicFactsFromQuery(requestedCrop, today, today.format(COPILOT_DATE_FORMAT));
+            CopilotFacts requested = fieldContext.publicFacts(requestedCrop, today, today.format(COPILOT_DATE_FORMAT));
             if (requested == null) return ToolReply.error("UNKNOWN_CROP");
             if (scope.fieldId() != null && facts.crop() != null && !facts.crop().equals(requested.crop())) {
                 return ToolReply.error("CROP_SCOPE_MISMATCH");
             }
-            if (scope.fieldId() == null || facts.crop() == null) facts = requested;
+            if (scope.fieldId() == null) facts = requested;
         }
         String stage = args.text("growthStage");
         if (stage != null) {
@@ -1774,7 +1687,7 @@ public class CopilotApplicationService {
             }
             stage = resolved.code();
         }
-        KnowledgeBundle hits = retrieveKnowledge(query, route, facts, actor, stage, args.integer("topK"));
+        CopilotKnowledgeBundle hits = retrieveKnowledge(query, route, facts, actor, stage, args.integer("topK"));
         if (agronomyEvidence != null && args.text("productId") != null) {
             LocalDate today = LocalDate.now(COPILOT_ZONE);
             var verified = agronomyEvidence.spray(scope.farmId(), scope.fieldId(), facts.crop(), args.text("productId"), today);
@@ -1797,7 +1710,7 @@ public class CopilotApplicationService {
                 if (blocked) citation.put("content", "BLOCKED_BY_PHI：当前距离登记预期采收日不足标签安全间隔期，不得推荐此次施用。");
                 items.add(citation);
                 items.addAll(hits.items());
-                hits = new KnowledgeBundle("UNAVAILABLE".equals(hits.status()) ? "DEGRADED" : "READY", items);
+                hits = new CopilotKnowledgeBundle("UNAVAILABLE".equals(hits.status()) ? "DEGRADED" : "READY", items);
             }
         }
         if (structuredAgronomy != null && "plum".equals(facts.crop())) {
@@ -1821,11 +1734,11 @@ public class CopilotApplicationService {
                     items.add(item);
                 }
                 items.addAll(hits.items());
-                hits = new KnowledgeBundle("UNAVAILABLE".equals(hits.status()) ? "DEGRADED" : "READY", items);
+                hits = new CopilotKnowledgeBundle("UNAVAILABLE".equals(hits.status()) ? "DEGRADED" : "READY", items);
             }
         }
         Integer limit = args.integer("topK");
-        if (limit != null && hits.items().size() > limit) hits = new KnowledgeBundle(hits.status(), hits.items().subList(0, limit));
+        if (limit != null && hits.items().size() > limit) hits = new CopilotKnowledgeBundle(hits.status(), hits.items().subList(0, limit));
         return ToolReply.result(turn.cite(hits, scope));
     }
 
@@ -1853,7 +1766,7 @@ public class CopilotApplicationService {
             var record = diagnosticRecords.findRecord(diagnosisId, actor).orElse(null);
             if (record == null || !sameToolFarm(scope, record.getFarmId())) return ToolReply.error("SCOPE_UNAVAILABLE");
             var analysis = diagnosticRecords.find(diagnosisId, actor).orElse(null);
-            if (analysis != null) results.put("diagnosis", Map.of("diagnosisId", diagnosisId, "summary", diagnosisSummary(analysis)));
+            if (analysis != null) results.put("diagnosis", Map.of("diagnosisId", diagnosisId, "summary", CopilotDiagnosisPresentation.summary(analysis)));
         }
         if (workflowId != null && agentRuntime != null) {
             var run = agentRuntime.require(workflowId, actor);
@@ -1900,7 +1813,7 @@ public class CopilotApplicationService {
 
     private Map<String, Object> readFieldFacts(CopilotChatRequest original, ToolScope scope, Long actor) {
         Map<String, Object> result = new LinkedHashMap<>();
-        CopilotFacts facts = resolveCopilotFacts(toolQuery(original, original.getMessage()), toolRoute(scope), actor);
+        CopilotFacts facts = fieldContext.resolve(toolQuery(original, original.getMessage()), toolRoute(scope), actor);
         putCopilotFacts(result, facts);
         result.put("farmId", scope.farmId());
         result.put("fieldId", scope.fieldId());
@@ -1909,11 +1822,15 @@ public class CopilotApplicationService {
             result.put("fieldName", field.getName());
             result.put("area", field.getArea());
             result.put("expectedRegisteredStage", field.getGrowthStage());
-            var heat = farmFieldService.latestAccumulatedTemperature(scope.farmId(), actor);
-            Double sum = heat != null && "READY".equals(heat.get("status")) && heat.get("accumulatedTemp") instanceof Number number
+            var fromFacts = facts.sources();
+            boolean heatLoaded = fromFacts != null && fromFacts.containsKey("accumulatedTemperatureStatus");
+            var heat = heatLoaded ? Map.<String, Object>of() : farmFieldService.latestAccumulatedTemperature(scope.farmId(), actor);
+            Double sum = heatLoaded ? CopilotPiToolEvidence.validNumber(fromFacts.get("accumulatedTemperature"))
+                    : heat != null && "READY".equals(heat.get("status")) && heat.get("accumulatedTemp") instanceof Number number
                     && Double.isFinite(number.doubleValue()) ? number.doubleValue() : null;
             LocalDate measuredOn = null;
-            if (sum != null && heat.get("date") instanceof String value) try { measuredOn = LocalDate.parse(value); }
+            String thermalDate = heatLoaded ? fromFacts.get("temperatureMeasuredOn") : heat == null ? null : mapText(heat, "date");
+            if (sum != null && thermalDate != null) try { measuredOn = LocalDate.parse(thermalDate); }
             catch (java.time.format.DateTimeParseException ignored) { }
             result.put("accumulatedTemperature", sum);
             result.put("temperatureMeasuredOn", measuredOn == null ? null : measuredOn.toString());
@@ -1939,7 +1856,9 @@ public class CopilotApplicationService {
                     result.put("stageMismatch", true);
                 }
                 if (correction.changed() && correction.effectiveStageCode() != null) {
-                    var corrected = phenologyService.calculate(facts.crop(), today, correction.effectiveStageCode());
+                    String effectiveDate = facts.sources() == null ? null : facts.sources().get("phenologyEffectiveDate");
+                    var corrected = phenologyService.calculate(facts.crop(), effectiveDate == null ? today : LocalDate.parse(effectiveDate),
+                            correction.effectiveStageCode());
                     result.put("growthStage", corrected.currentCode());
                     result.put("currentGrowthStage", corrected.currentCode());
                     result.put("growthStageLabel", corrected.currentName());
@@ -1980,23 +1899,51 @@ public class CopilotApplicationService {
     }
 
     public record UiTaskDraft(String fieldId, String title, String detail, String scheduledFor) {}
+    public record UiTaskBatch(List<UiTaskDraft> tasks) {}
 
     public AgentRun draftFromComponent(UiTaskDraft requested, Long actor) {
-        if (requested == null || safe(requested.fieldId()).isEmpty() || safe(requested.title()).isEmpty()
-                || safe(requested.detail()).isEmpty() || agentRuntime == null || farmFieldService == null) {
-            throw new CopilotConversationException("TASK_DRAFT_INVALID", "请提供有效的地块、任务标题和说明。", 422);
+        var command = validateComponentDraft(requested, actor);
+        try {
+            return agentRuntime.prepareTaskDraft("确认组件农事草稿", command.scope(), actor, command.draft());
+        } catch (IllegalArgumentException invalid) {
+            throw invalidComponentDraft();
         }
+    }
+
+    public List<AgentRun> draftBatchFromComponent(UiTaskBatch requested, Long actor) {
+        if (requested == null || requested.tasks() == null || requested.tasks().isEmpty() || requested.tasks().size() > 8) {
+            throw invalidComponentDraft();
+        }
+        var commands = requested.tasks().stream().map(task -> validateComponentDraft(task, actor)).toList();
+        try {
+            return agentRuntime.prepareTaskDraftBatch("确认清单农事草稿", actor, commands);
+        } catch (IllegalArgumentException invalid) {
+            throw invalidComponentDraft();
+        }
+    }
+
+    private AgentRuntime.ScopedTaskDraft validateComponentDraft(UiTaskDraft requested, Long actor) {
+        if (requested == null || safe(requested.fieldId()).isEmpty() || safe(requested.title()).isEmpty()
+                || safe(requested.detail()).isEmpty() || agentRuntime == null || farmFieldService == null) throw invalidComponentDraft();
         if ((requested.title() + requested.detail()).matches("(?is).*(喷药|施药|打药|农药|喷雾|喷施|pesticide).*")) {
             throw new CopilotConversationException("SPRAY_EVIDENCE_REQUIRED", "施药任务需要先核对登记标签、安全间隔期和当前气象。", 422);
         }
         FarmField target = farmFieldService.get(requested.fieldId(), actor);
         try {
             var draft = new AgentRuntime.TaskDraft(requested.title(), requested.detail(), requested.scheduledFor());
-            return agentRuntime.prepareTaskDraft("确认组件农事草稿", AgentContext.builder()
-                    .farmId(target.getFarmId().toString()).fieldId(target.getFieldId()).build(), actor, draft);
+            var scope = AgentContext.builder().farmId(target.getFarmId().toString()).fieldId(target.getFieldId()).build();
+            var evidence = com.mei.zhgy.vo.DiagnosisEvidenceVO.builder().id("field:" + target.getFieldId()).modality("field")
+                    .title("已核验的任务地块").summary(safe(target.getName()))
+                    .source(com.mei.zhgy.vo.DiagnosisEvidenceVO.Source.builder().type("field-context")
+                            .name("FarMap 地块档案").fieldId(target.getFieldId()).build()).build();
+            return new AgentRuntime.ScopedTaskDraft(scope, draft, List.of(evidence));
         } catch (IllegalArgumentException invalid) {
-            throw new CopilotConversationException("TASK_DRAFT_INVALID", "任务内容或日期超出支持范围。", 422);
+            throw invalidComponentDraft();
         }
+    }
+
+    private CopilotConversationException invalidComponentDraft() {
+        return new CopilotConversationException("TASK_DRAFT_INVALID", "请提供有效的地块、任务标题、说明与日期。", 422);
     }
 
     private static final class PiTurn {
@@ -2005,200 +1952,39 @@ public class CopilotApplicationService {
         String knowledgeStatus = "NOT_REQUESTED";
         boolean privateFacts;
         boolean publicFacts;
+        final int inheritedKnowledgeCount;
         AgentRuntime.TaskDraft draft;
         AgriculturalTaskDraftTool.Batch batch;
         boolean conflictingDrafts;
 
-        boolean grounded() { return privateFacts || publicFacts || !knowledge.isEmpty(); }
+        PiTurn() { this(CopilotContinuationGrounding.Evidence.EMPTY); }
 
-        KnowledgeBundle cite(KnowledgeBundle result, ToolScope scope) {
+        PiTurn(CopilotContinuationGrounding.Evidence inherited) {
+            privateFacts = inherited.privateFacts();
+            publicFacts = inherited.publicFacts();
+            inheritedKnowledgeCount = inherited.knowledgeCount();
+        }
+
+        CopilotContinuationGrounding.Evidence grounding() {
+            return new CopilotContinuationGrounding.Evidence(privateFacts, publicFacts, inheritedKnowledgeCount + knowledge.size());
+        }
+
+        boolean grounded() { return grounding().grounded(); }
+
+        CopilotKnowledgeBundle cite(CopilotKnowledgeBundle result, ToolScope scope) {
             List<Map<String, Object>> cited = new ArrayList<>();
             for (var item : result.items()) {
                 Object key = item.get("chunkId");
                 if (key == null) key = item;
                 Map<String, Object> copy = new LinkedHashMap<>(item);
                 var entry = evidence.add(String.valueOf(key), String.valueOf(item.getOrDefault("title", "知识依据")),
-                        String.valueOf(item.getOrDefault("content", "")), String.valueOf(item.getOrDefault("source", "FarMap知识库")),
+                        String.valueOf(item.getOrDefault("content", "")), item.get("source") instanceof String source ? source : "FarMap 知识库",
                         "agricultural_knowledge", scope.farmId(), scope.fieldId());
                 if (entry != null) copy.put("evidenceId", entry.alias());
                 cited.add(copy);
             }
-            return new KnowledgeBundle(result.status(), cited);
+            return new CopilotKnowledgeBundle(result.status(), cited);
         }
-    }
-
-    private PiAgentRuntime.ReadTool withEvidence(PiAgentRuntime.ReadTool tool, AgriculturalEvidenceLedger ledger, Integer farmId) {
-        var progressExecutor = tool.progressExecutor();
-        return new PiAgentRuntime.ReadTool(tool.name(), tool.description(), tool.parameters(),
-                args -> attachCitations(citeToolResult(tool.name(), tool.execute().apply(args), ledger, farmId), ledger),
-                tool.multimodal(), progressExecutor == null ? null :
-                        (args, progress) -> attachCitations(citeToolResult(tool.name(), progressExecutor.execute(args, progress), ledger, farmId), ledger));
-    }
-
-    private ToolReply attachCitations(ToolReply reply, AgriculturalEvidenceLedger ledger) {
-        if (reply.isError()) return reply;
-        var references = new ArrayList<PiAgentRuntime.ToolCitation>();
-        if (reply.data() instanceof KnowledgeBundle hits) {
-            for (var hit : hits.items()) if (hit.get("evidenceId") instanceof String alias) {
-                var entry = ledger.lookup(alias);
-                if (entry == null) continue;
-                references.add(new PiAgentRuntime.ToolCitation(Integer.parseInt(alias.substring(1)), alias, "knowledge",
-                        entry.title(), entry.source(), mapText(hit, "growthStage"), entry.summary(), null,
-                        mapText(hit, "source"), hit.get("score") instanceof Number number ? number.doubleValue() : null, null));
-            }
-        } else if (reply.data() instanceof Map<?, ?> data && data.get("evidenceIds") instanceof List<?> aliases) {
-            for (Object alias : aliases) {
-                var entry = ledger.lookup(String.valueOf(alias));
-                if (entry == null) continue;
-                String modality = switch (entry.modality()) {
-                    case "read_current_weather" -> "weather";
-                    case "lookup_reference_atlas" -> "atlas";
-                    case "search_historical_cases" -> "historical_case";
-                    case "inspect_camera_maturity", "analyze_uploaded_images" -> "camera";
-                    default -> "field";
-                };
-                references.add(new PiAgentRuntime.ToolCitation(Integer.parseInt(entry.alias().substring(1)), entry.alias(), modality,
-                        entry.title(), entry.source(), null, entry.summary(), null, entry.reference(), null, null));
-            }
-        }
-        return references.isEmpty() ? reply : reply.withCitations(references);
-    }
-
-    private ToolReply citeToolResult(String toolName, ToolReply reply, AgriculturalEvidenceLedger ledger, Integer activeFarm) {
-        if (reply.isError()) return reply;
-        var data = new LinkedHashMap<String, Object>();
-        if (reply.data() instanceof Map<?, ?> values) values.forEach((key, value) -> {
-            if (key instanceof String field) data.put(field, value);
-        });
-        else if (reply.data() instanceof com.mei.zhgy.vo.CurrentWeatherResponse weather && "READY".equals(weather.status())) {
-            data.put("status", "READY"); data.put("weather", weather); data.put("farmId", weather.farmId());
-        } else return reply;
-        Integer farmId = data.get("farmId") instanceof Number value ? value.intValue() : activeFarm;
-        String fieldId = data.get("fieldId") instanceof String value ? value : null;
-        String status = String.valueOf(data.get("status"));
-        AgriculturalEvidenceLedger.Entry entry = null;
-        if ("READY".equals(status) && "search_historical_cases".equals(toolName) && data.get("items") instanceof List<?> cases) {
-            List<String> aliases = new ArrayList<>();
-            List<Map<String, Object>> entries = new ArrayList<>();
-            for (Object item : cases) if (item instanceof Map<?, ?> candidate && candidate.get("caseId") != null) {
-                var copy = new LinkedHashMap<String, Object>();
-                candidate.forEach((key, value) -> { if (key instanceof String name) copy.put(name, value); });
-                String summary = copy.get("summary") instanceof String text ? text : safe(String.valueOf(copy.get("diseaseType")));
-                var evidence = ledger.add(String.valueOf(copy.get("caseId")), "历史病例", summary,
-                        "FarMap 历史病例", toolName, farmId, fieldId);
-                if (evidence != null) { copy.put("evidenceId", evidence.alias()); aliases.add(evidence.alias()); }
-                entries.add(copy);
-            }
-            data.put("items", entries);
-            data.put("evidenceIds", aliases);
-            return new ToolReply(data, reply.uiBlock(), false);
-        }
-        switch (toolName) {
-            case "read_field_context" -> {
-                if ("READY".equals(data.get("fieldFactsStatus")) && fieldId != null) {
-                    entry = ledger.add(fieldId, "地块登记资料", "服务端验证的地块与物候资料", "FarMap 地块档案", toolName, farmId, fieldId);
-                }
-            }
-            case "query_operations_tasks" -> {
-                if ("READY".equals(status)) entry = ledger.add(String.valueOf(data.get("criteria")), "任务查询结果",
-                        "授权范围内的任务与排期记录", "FarMap 作业台账", toolName, farmId, fieldId);
-            }
-            case "read_current_weather" -> {
-                String observation = String.valueOf(data.getOrDefault("date", "current"));
-                if (data.get("sprayAssessment") instanceof Map<?, ?> assessment && assessment.get("verifiedProductId") instanceof String product) {
-                    observation += "/" + product;
-                }
-                if ("READY".equals(status)) entry = ledger.add(observation,
-                        "农场天气", "气象服务观测或预报", "FarMap 气象服务", toolName, farmId, fieldId);
-            }
-            case "inspect_camera_maturity", "analyze_uploaded_images" -> {
-                if ("COMPLETED".equals(status) && data.get("runId") instanceof String runId) {
-                    entry = ledger.add(runId, "地块视觉分析", String.valueOf(data.getOrDefault("summary", "")),
-                            "FarMap 视觉报告", toolName, farmId, fieldId);
-                }
-                if ("READY".equals(status) && data.get("observations") instanceof List<?> observations) {
-                    List<String> aliases = new ArrayList<>();
-                    for (Object value : observations) if (value instanceof com.mei.zhgy.vo.DiagnosisEvidenceVO observation) {
-                        var observed = ledger.add(observation.getId(), observation.getTitle(), observation.getSummary(),
-                                observation.getSource() == null ? "FarMap 视觉观测" : observation.getSource().getName(),
-                                toolName, farmId, fieldId);
-                        if (observed != null) aliases.add(observed.alias());
-                    }
-                    if (!aliases.isEmpty()) data.put("evidenceIds", aliases);
-                    return new ToolReply(data, reply.uiBlock(), false);
-                }
-            }
-            case "lookup_reference_atlas" -> {
-                if ("READY".equals(status) && data.get("items") instanceof List<?> figures) {
-                    List<String> aliases = new ArrayList<>();
-                    for (Object value : figures) if (value instanceof com.mei.zhgy.service.reference.ReferenceImage figure) {
-                        var reference = ledger.add(figure.refId(), figure.label(), "图鉴参照图像", "FarMap 图鉴", toolName, null, null);
-                        if (reference != null) aliases.add(reference.alias());
-                    }
-                    data.put("evidenceIds", aliases);
-                    return new ToolReply(data, reply.uiBlock(), false);
-                }
-            }
-            case "read_previous_analysis" -> {
-                if ("READY".equals(status)) entry = ledger.add(String.valueOf(data.keySet()), "历史分析记录",
-                        "用户已授权的业务记录", "FarMap 业务台账", toolName, farmId, fieldId);
-            }
-            default -> { }
-        }
-        if (entry == null) return reply;
-        if ("read_field_context".equals(toolName) && data.get("area") instanceof Number area
-                && data.get("fieldName") instanceof String fieldName) {
-            ledger.addMeasurement(entry, "地块登记面积", fieldName, area);
-        }
-        if ("read_field_context".equals(toolName) && data.get("accumulatedTemperatureHistory") instanceof List<?> observations) {
-            for (var observation : observations) if (observation instanceof Map<?, ?> point
-                    && point.get("label") instanceof String label && point.get("value") instanceof Number value) {
-                ledger.addMeasurement(entry, "农场累计积温", label, value);
-                if (data.get("thermalTarget") instanceof Number threshold) {
-                    ledger.addMeasurement(entry, "下一物候阶段校准阈值", label, threshold);
-                }
-            }
-        }
-        if (data.get("maturitySeries") instanceof List<?> lines) {
-            for (Object object : lines) if (object instanceof Map<?, ?> line && line.get("label") instanceof String seriesLabel
-                    && line.get("points") instanceof List<?> points) {
-                for (Object point : points) if (point instanceof Map<?, ?> item && item.get("label") instanceof String label
-                        && item.get("value") instanceof Number number) ledger.addMeasurement(entry, seriesLabel, label, number);
-            }
-        }
-        if ("read_current_weather".equals(toolName)) {
-            if (data.get("weather") instanceof com.mei.zhgy.vo.CurrentWeatherResponse weather && weather.forecast() != null) {
-                for (var day : weather.forecast()) recordForecast(ledger, entry, day);
-            } else if (data.get("forecast") instanceof com.mei.zhgy.vo.WeatherForecastDay day) {
-                recordForecast(ledger, entry, day);
-            }
-            if (data.get("sprayAssessment") instanceof Map<?, ?> assessment
-                    && assessment.get("operationDecision") == PlumAgronomyRuleEngine.Decision.ELIGIBLE
-                    && Boolean.TRUE.equals(assessment.get("useRestrictionsVerified"))
-                    && assessment.get("verifiedProductId") instanceof String productId
-                    && assessment.get("requestedDate") instanceof String plannedDate) {
-                ledger.verifySpray(entry, productId, plannedDate);
-            }
-        }
-        data.put("evidenceIds", List.of(entry.alias()));
-        var chartSeries = ledger.series(entry);
-        if (!chartSeries.isEmpty()) data.put("chartSeries", chartSeries);
-        return new ToolReply(data, reply.uiBlock(), false);
-    }
-
-    private void recordForecast(AgriculturalEvidenceLedger ledger, AgriculturalEvidenceLedger.Entry entry,
-                                com.mei.zhgy.vo.WeatherForecastDay day) {
-        if (day == null) return;
-        ledger.addMeasurement(entry, "降水量 (mm)", day.date(), day.precipitationMm());
-        ledger.addMeasurement(entry, "降水概率 (%)", day.date(), day.precipitationProbability());
-        Double maximum = validNumber(day.temperatureMax()), minimum = validNumber(day.temperatureMin());
-        ledger.addMeasurement(entry, "最高气温 (°C)", day.date(), maximum);
-        ledger.addMeasurement(entry, "最低气温 (°C)", day.date(), minimum);
-    }
-
-    private Double validNumber(String value) {
-        if (value == null) return null;
-        try { return Double.parseDouble(value); } catch (NumberFormatException invalid) { return null; }
     }
 
     private void observePiTool(SseEmitter emitter, String question, PiTurn turn, PiAgentRuntime.ToolObservation observation) {
@@ -2215,7 +2001,7 @@ public class CopilotApplicationService {
                     send(emitter, "knowledge.evidence", payload);
                 }
             }
-            if (data instanceof KnowledgeBundle hits) {
+            if (data instanceof CopilotKnowledgeBundle hits) {
                 if (turn == null) {
                     if (emitter != null) emitKnowledgeSummary(emitter, hits);
                 } else {
@@ -2224,7 +2010,7 @@ public class CopilotApplicationService {
                         turn.knowledge.putIfAbsent(id == null ? hit : id, hit);
                     }
                     turn.knowledgeStatus = turn.knowledge.isEmpty() ? hits.status() : "DEGRADED".equals(hits.status()) ? "DEGRADED" : "READY";
-                    if (emitter != null) emitKnowledgeSummary(emitter, new KnowledgeBundle(turn.knowledgeStatus, List.copyOf(turn.knowledge.values())));
+                    if (emitter != null) emitKnowledgeSummary(emitter, new CopilotKnowledgeBundle(turn.knowledgeStatus, List.copyOf(turn.knowledge.values())));
                 }
             } else if (data instanceof AgentRuntime.TaskDraft draft && turn != null) {
                 if (turn.draft == null) turn.draft = draft;
@@ -2257,7 +2043,8 @@ public class CopilotApplicationService {
                     fields.forEach((key, value) -> { if (key instanceof String name) blockData.put(name, value); });
                     List<Map<String, Object>> sources = ui.get("evidenceIds") instanceof List<?> ids
                             ? ids.stream().filter(String.class::isInstance).map(id -> Map.<String, Object>of("label", id, "reference", id)).toList()
-                            : List.of();
+                            : observation.reply().citations().stream().map(citation -> Map.<String, Object>of(
+                                    "label", citation.title(), "reference", citation.evidenceId())).toList();
                     emitBlock(emitter, type, String.valueOf(ui.get("title")),
                             ui.get("summary") instanceof String summary ? summary : null, blockData,
                             String.valueOf(ui.getOrDefault("status", "ready")), sources,
@@ -2270,25 +2057,51 @@ public class CopilotApplicationService {
                                 "仅统计已判读的画面。", Map.of("chartKind", "stacked-bar", "series", series), "ready",
                                 sources, "maturity-chart:" + blockData.get("runId"));
                     }
+                    if ("PlumPhenologyTimeline".equals(type) && data instanceof Map<?, ?> context
+                            && context.get("accumulatedTemperatureHistory") instanceof List<?> history && history.size() > 1) {
+                        emitThermalTrend(emitter, context, history, sources);
+                    }
                 }
                 if (ui.get("referenceImages") instanceof List<?> images) {
                     send(emitter, "reference.images", Map.of("status", "READY", "count", images.size(), "items", images));
                 }
             }
             if (ui != null && ui.get("weather") instanceof com.mei.zhgy.vo.CurrentWeatherResponse weather) {
-                if ("READY".equals(weather.status()) && turn != null) turn.privateFacts = true;
-                if (emitter != null && contains(safe(question), "天气", "气象", "降雨", "预报", "weather")) {
+                if ("read_current_weather".equals(observation.name()) && "READY".equals(weather.status())) {
+                    if (turn != null) turn.privateFacts = true;
+                    UiStream stream = emitter == null ? null : uiStreams.get(emitter);
+                    if (stream == null || stream.blocks.stream().anyMatch(block -> "SprayWeatherWindowCard".equals(block.get("componentType")))) return;
                     emitWeatherArtifacts(emitter, weather, contains(safe(question), "趋势", "降雨概率"));
                 }
             }
         } catch (IOException failure) { throw new ChatDeliveryException(failure); }
     }
 
+    private void emitThermalTrend(SseEmitter emitter, Map<?, ?> context, List<?> history,
+                                  List<Map<String, Object>> sources) throws IOException {
+        var points = new ArrayList<Map<String, Object>>();
+        for (Object value : history) {
+            if (value instanceof Map<?, ?> row && row.get("label") instanceof String date
+                    && row.get("value") instanceof Number reading && Double.isFinite(reading.doubleValue())) {
+                points.add(Map.of("label", date, "value", reading));
+            }
+        }
+        if (points.size() < 2) return;
+        var data = new LinkedHashMap<String, Object>();
+        data.put("chartKind", "thermal");
+        data.put("series", List.of(CopilotUiBlockValidator.chartSeries("thermal", "农场累计积温", points)));
+        if (context.get("thermalTarget") instanceof Number threshold) {
+            data.put("thresholds", List.of(Map.of("label", "下一物候阶段校准阈值", "value", threshold, "unit", "℃·d")));
+        }
+        emitBlock(emitter, "EChartsAnalyticsCard", "累计积温", null, data, "ready", sources,
+                "EChartsAnalyticsCard:thermal:" + context.get("fieldId"));
+    }
+
     private void emitPiSource(SseEmitter emitter, PiTurn turn) {
         if (emitter == null) return;
         try {
             send(emitter, "answer.source", Map.of("layer", piSource(turn), "grounded", turn.grounded(),
-                    "fieldBound", turn.privateFacts, "knowledgeCount", turn.knowledge.size()));
+                    "fieldBound", turn.privateFacts, "knowledgeCount", turn.grounding().knowledgeCount()));
         } catch (IOException failure) { throw new ChatDeliveryException(failure); }
     }
 
@@ -2304,6 +2117,8 @@ public class CopilotApplicationService {
 
     private void streamPiEvent(SseEmitter emitter, Map<String, Object> event) {
         try {
+            UiStream ui = uiStreams.get(emitter);
+            if (ui != null) ui.telemetry.event(event);
             send(emitter, "agent.runtime", event);
             String type = String.valueOf(event.get("type"));
             String mapped = switch (type) {
@@ -2313,7 +2128,6 @@ public class CopilotApplicationService {
                 default -> null;
             };
             if (mapped != null) {
-                UiStream ui = uiStreams.get(emitter);
                 Map<String, Object> activity = new LinkedHashMap<>(event);
                 activity.put("type", mapped); activity.put("at", Instant.now().toString());
                 if (ui != null) { activity.put("runId", ui.runId); recordActivity(ui, activity); }
@@ -2324,109 +2138,6 @@ public class CopilotApplicationService {
     }
 
     private static final class PiTurnAborted extends RuntimeException {}
-
-    private boolean asksTemporalPhenology(String message) {
-        String normalized = safe(message);
-        return contains(normalized, "下一个", "下一阶段", "下一期", "之后", "再下一个", "上一个", "上一阶段", "上一期", "之前")
-                || contains(normalized, "现在", "当前", "目前") && contains(normalized, "物候期", "生育期", "生长阶段",
-                "什么时期", "什么阶段", "哪一期", "哪一个阶段");
-    }
-
-    private String temporalPhenologyAnswer(String message, CopilotFacts facts) {
-        String normalized = safe(message);
-        boolean asksNext = normalized.contains("下一个") || normalized.contains("下一阶段") || normalized.contains("下一期") || normalized.contains("之后") || normalized.contains("再下一个");
-        boolean asksPrevious = normalized.contains("上一个") || normalized.contains("上一阶段") || normalized.contains("上一期") || normalized.contains("之前");
-        boolean asksTemporal = asksNext || asksPrevious;
-        if (!asksTemporalPhenology(normalized)) return null;
-        if (facts == null || facts.growthStageLabel() == null || facts.cropLabel() == null) {
-            String status = facts == null ? "UNAVAILABLE" : facts.status();
-            String reason = "UNKNOWN_CROP".equals(status) ? "当前地块的作物暂不在支持目录中" : "当前未绑定可用地块";
-            return reason + "；今天各支持作物按通用历推算为：" + publicPhenologySummary()
-                    + "。如需唯一结论，请在问题中明确作物。";
-        }
-        String crop = facts.cropLabel() == null ? "当前作物" : facts.cropLabel();
-        if (asksTemporal) {
-            boolean next = asksNext && !asksPrevious;
-            int distance = normalized.contains("再下一个") ? 2 : 1;
-            String target = next ? stageAt(facts, distance) : stageAt(facts, -1);
-            if (target == null) {
-                if (next && facts.cycleEnded()) return temporalPrefix(facts) + crop + "当前为" + facts.growthStageLabel() + "；本茬已结束，没有下一物候期。";
-                return temporalPrefix(facts) + crop + "当前为" + facts.growthStageLabel() + "，暂未配置可确定的" + (next ? "下一" : "上一") + "物候期。";
-            }
-            String relation = next ? (distance == 2 ? "再下一物候期" : "下一物候期") : "上一物候期";
-            String days = next && distance == 1 && facts.daysUntilNext() != null ? "，按历法约" + facts.daysUntilNext() + "天后进入" : "";
-            return temporalPrefix(facts) + crop + "当前处于" + facts.growthStageLabel() + "；" + relation + "是" + target + days + "。";
-        }
-        String source = facts.stageMismatch()
-                ? "地块登记为" + facts.growthStageLabel() + "，但按服务器日期推算为" + facts.dateDerivedGrowthStageLabel() + "；当前先以登记值为准，请确认。"
-                : facts.registeredGrowthStage() == null ? "根据服务器日期推算，" : "根据当前地块的服务端登记事实，";
-        if ("PUBLIC_GENERIC".equals(facts.status())) source = "按服务器日期和" + crop + "通用物候历推算，";
-        return ("PUBLIC_GENERIC".equals(facts.status()) ? "未使用地块实时数据，" : "截至" + facts.currentDate() + "，") + source + crop + "目前处于" + facts.growthStageLabel() + ("PUBLIC_GENERIC".equals(facts.status()) ? "。该结论不是你的地块实时事实。" : "。");
-    }
-
-    private boolean isCompositePhenologyGuidance(String message) {
-        String normalized = safe(message);
-        boolean asksPhenology = normalized.contains("物候期") || normalized.contains("生育期") || normalized.contains("生长阶段")
-                || normalized.contains("什么时期") || normalized.contains("什么阶段") || normalized.contains("哪一期") || normalized.contains("哪一个阶段");
-        boolean asksTemporal = normalized.contains("下一个") || normalized.contains("下一阶段") || normalized.contains("下一期")
-                || normalized.contains("之后") || normalized.contains("再下一个") || normalized.contains("上一个")
-                || normalized.contains("上一阶段") || normalized.contains("上一期") || normalized.contains("之前")
-                || normalized.contains("现在") || normalized.contains("当前") || normalized.contains("目前");
-        return asksPhenology && asksTemporal && asksGuidance(normalized);
-    }
-
-    private boolean asksGuidance(String message) {
-        return contains(safe(message), "农事指导", "农事建议", "管理指导", "管理建议", "管理重点", "注意事项",
-                "指导什么", "怎么管理", "如何管理", "怎么管", "怎么办", "怎么做", "如何做", "做什么",
-                "干什么", "干啥", "要做什么", "要干什么", "接下来", "后续", "下一步", "需要做", "应该做",
-                "如何安排", "怎么安排", "注意什么", "注意啥", "管护", "田间管理", "栽培管理", "农活",
-                "建议", "指导", "措施", "水肥管理", "肥水管理", "病虫防治");
-    }
-
-    private String knowledgeStageFor(String message, CopilotFacts facts) {
-        if (facts == null) return null;
-        String normalized = safe(message);
-        if (asksGuidance(normalized)) {
-            if (contains(normalized, "下一个", "下一阶段", "下一期", "之后", "再下一个")
-                    && facts.nextGrowthStage() != null && !facts.nextGrowthStage().isBlank()) {
-                return facts.nextGrowthStage();
-            }
-            if (contains(normalized, "上一个", "上一阶段", "上一期", "之前")
-                    && facts.previousGrowthStage() != null && !facts.previousGrowthStage().isBlank()) {
-                return facts.previousGrowthStage();
-            }
-        }
-        return facts.growthStage();
-    }
-
-    private String temporalPrefix(CopilotFacts facts) {
-        return "PUBLIC_GENERIC".equals(facts.status())
-                ? "未使用地块实时数据，按" + facts.cropLabel() + "通用物候历和服务器日期（" + facts.currentDate() + "）推算，"
-                : "截至" + facts.currentDate() + "，";
-    }
-
-    private String publicPhenologySummary() {
-        LocalDate date = LocalDate.now(COPILOT_ZONE);
-        StringBuilder summary = new StringBuilder();
-        for (var crop : cropResolver.supportedCrops()) {
-            PhenologyResult result = phenologyService.calculate(crop.code(), date, null);
-            if (summary.length() > 0) summary.append("；");
-            summary.append(crop.name()).append("：").append(result.currentName() == null ? "暂无已配置阶段" : result.currentName());
-        }
-        return summary.toString();
-    }
-
-    private String stageAt(CopilotFacts facts, int offset) {
-        if (facts.orderedStageNames() == null || facts.orderedStageNames().isEmpty() || facts.growthStageLabel() == null) return null;
-        int current = facts.orderedStageNames().indexOf(facts.growthStageLabel());
-        if (current < 0) return null;
-        int target = current + offset;
-        if ("deciduous_annual_cycle".equalsIgnoreCase(facts.cycleType()) || "evergreen_annual_cycle".equalsIgnoreCase(facts.cycleType())) {
-            int size = facts.orderedStageNames().size();
-            target = ((target % size) + size) % size;
-        }
-        return target < 0 || target >= facts.orderedStageNames().size() ? null : facts.orderedStageNames().get(target);
-    }
 
     private String mapText(Map<String, Object> values, String key) {
         if (values == null) return null;
@@ -2457,6 +2168,10 @@ public class CopilotApplicationService {
         context.put("phenologyCycleEnded", facts.cycleEnded());
         context.put("fieldFactsStatus", facts.status());
         context.put("factSources", facts.sources());
+        if (facts.sources() != null) {
+            context.put("phenologyBasis", facts.sources().get("phenologyBasis"));
+            context.put("phenologyEffectiveDate", facts.sources().get("phenologyEffectiveDate"));
+        }
     }
 
     private void putCopilotFacts(Map<String, Object> context, CopilotFacts facts) {
@@ -2486,7 +2201,7 @@ public class CopilotApplicationService {
         context.put("factSources", facts.sources());
     }
 
-    private Map<String, Object> answerSource(CopilotRouteResult routed, CopilotFacts facts, KnowledgeBundle knowledge, String message) {
+    private Map<String, Object> answerSource(CopilotRouteResult routed, CopilotFacts facts, CopilotKnowledgeBundle knowledge, String message) {
         boolean fieldBound = routed != null && routed.getResolvedContext() != null
                 && routed.getResolvedContext().getFieldId() != null
                 && !routed.getResolvedContext().getFieldId().isBlank();
@@ -2550,8 +2265,14 @@ public class CopilotApplicationService {
 
     private void send(SseEmitter emitter, String event, Object data) throws IOException {
         UiStream ui = uiStreams.get(emitter);
+        if (ui != null && data instanceof Map<?, ?> row && "answer.source".equals(event)) ui.telemetry.source(row.get("layer"));
         if ("knowledge.evidence".equals(event)) {
             if (ui != null) ui.parts.afterLegacyEvent(emitter, event, data);
+            return;
+        }
+        if (ui != null && "presentation.summary".equals(event)) {
+            ui.parts.afterLegacyEvent(emitter, event, data);
+            emitter.send(SseEmitter.event().name(event).data(data));
             return;
         }
         emitter.send(SseEmitter.event().name(event).data(data));
@@ -2586,7 +2307,7 @@ public class CopilotApplicationService {
             answer = ui.presentation.get("summary") + "\n\n" + answer;
         }
         try { conversations.appendAssistantAnswer(request.getConversationId(), userId, routed.getIntent(), routed.getTraceId(), answer,
-                responsePersistence(referenceImages, ui)); }
+                responsePersistence(referenceImages, ui, routed.getTraceId())); }
         catch (RuntimeException ignored) { /* optional conversation persistence must not break the answer */ }
     }
 
@@ -2673,42 +2394,11 @@ public class CopilotApplicationService {
     }
 
     private void emitWeatherArtifacts(SseEmitter emitter, com.mei.zhgy.vo.CurrentWeatherResponse weather, boolean showTrend) throws IOException {
-            List<Map<String, Object>> metrics = new ArrayList<>();
-            addItem(metrics, "天气", weather.condition()); addItem(metrics, "温度", weather.temperature());
-            addItem(metrics, "湿度", weather.humidity()); addItem(metrics, "风向", weather.windDirection());
-            addItem(metrics, "风力", weather.windPower());
-            String status = "READY".equals(weather.status()) ? "ready" : "unavailable";
-            String source = switch (safe(weather.provider()).toUpperCase(Locale.ROOT)) {
-                case "AMAP", "GAODE" -> "高德气象服务";
-                case "OPEN_METEO" -> "Open-Meteo 气象服务";
-                default -> "气象服务";
-            };
-            Map<String, Object> snapshot = new LinkedHashMap<>();
-            snapshot.put("farmName", weather.farmName()); snapshot.put("observedAt", weather.observedAt());
-            snapshot.put("condition", weather.condition()); snapshot.put("temperature", weather.temperature());
-            snapshot.put("humidity", weather.humidity()); snapshot.put("windDirection", weather.windDirection());
-            snapshot.put("windPower", weather.windPower()); snapshot.put("source", source);
-            snapshot.put("forecast", weather.forecast() == null ? List.of() : weather.forecast().stream().limit(7).toList());
-            emitBlock(emitter, "WeatherCard", "当前天气", null,
-                    Map.of("metrics", metrics, "weather", snapshot), status, List.of(Map.of("label", source)),
-                    "WeatherCard:farm:" + weather.farmId());
-            if (!showTrend) return;
-            List<Map<String, Object>> points = new ArrayList<>();
-            List<Map<String, Object>> temperatures = new ArrayList<>();
-            List<Map<String, Object>> rainfall = new ArrayList<>();
-            if (weather.forecast() != null) for (var day : weather.forecast()) {
-                if (day.date() == null) continue;
-                if (day.precipitationProbability() != null) points.add(Map.of("label", day.date(), "value", day.precipitationProbability()));
-                var temperature = validNumber(day.temperatureMax());
-                if (temperature != null && Double.isFinite(temperature)) temperatures.add(Map.of("label", day.date(), "value", temperature));
-                if (day.precipitationMm() != null) rainfall.add(Map.of("label", day.date(), "value", day.precipitationMm()));
-            }
-            if (!temperatures.isEmpty() && !rainfall.isEmpty()) emitBlock(emitter, "EChartsAnalyticsCard", "气温与降水预报", null,
-                    Map.of("chartKind", "dual-axis", "series", List.of(Map.of("label", "最高气温 (°C)", "points", temperatures),
-                            Map.of("label", "降水量 (mm)", "points", rainfall))),
-                    "ready", List.of(Map.of("label", source)), "EChartsAnalyticsCard:weather:" + weather.farmId());
-            else if (!points.isEmpty()) emitBlock(emitter, "WeatherTrendChart", "降雨概率预报", "每日预报，单位：%",
-                    Map.of("series", List.of(Map.of("label", "降雨概率 (%)", "points", points))), "ready", List.of(Map.of("label", source)));
+        for (var card : CopilotWeatherCards.from(weather, showTrend)) emitCard(emitter, card);
+    }
+
+    private void emitCard(SseEmitter emitter, CopilotPresentationCard card) throws IOException {
+        emitBlock(emitter, card.type(), card.title(), card.summary(), card.data(), card.status(), card.sources(), card.key());
     }
 
     private void addItem(List<Map<String, Object>> items, String label, Object value) {
@@ -2719,10 +2409,13 @@ public class CopilotApplicationService {
         volatile boolean detached;
         final String runId = "chat-" + java.util.UUID.randomUUID();
         final CopilotPresentationEmitter parts = new CopilotPresentationEmitter(runId);
+        final CopilotTurnTelemetry telemetry = new CopilotTurnTelemetry();
         final List<Map<String, Object>> blocks = parts.blocks();
         final Map<String, Object> presentation = new LinkedHashMap<>();
         boolean modelAnalysis;
         String conversationId;
+        String traceId;
+        CopilotIntent intent;
         Long userId;
         Integer knowledgeCount;
         String knowledgeStatus;
@@ -2744,6 +2437,7 @@ public class CopilotApplicationService {
         UiStream ui = uiStreams.get(emitter);
         if (ui == null) return null;
         var change = ui.parts.upsertBlock(type, title, summary, data, status, provenance, blockKey);
+        ui.telemetry.block(change.block());
         send(emitter, change.created() ? "ui.block.created" : "ui.block.updated", change.block());
         return change.block();
     }
@@ -2761,7 +2455,6 @@ public class CopilotApplicationService {
         data.put("runId", runId); if (diagnosisId != null) data.put("diagnosisId", diagnosisId);
         emitBlock(emitter, diagnosisId == null ? "FarmPlanCard" : "TaskProgressCard", diagnosisId == null ? "农事计划" : "农事工作流", "正在准备草稿，确认后创建任务。", data,
                 "loading", List.of(Map.of("label", "农事工作流", "reference", runId)));
-        appendChatAnswer(request, routed, "已打开农事工作流，可核对草稿和查看进度。", userId);
     }
 
     private void projectWorkflow(CopilotChatRequest request, CopilotRouteResult routed, Long userId,
@@ -2787,6 +2480,7 @@ public class CopilotApplicationService {
             default -> "正在准备任务草案。";
         });
         block.put("updatedAt", Instant.now().toString());
+        ui.telemetry.block(block);
         if (conversations != null && request.getConversationId() != null)
             conversations.updateAssistantUiBlocks(request.getConversationId(), userId, routed.getTraceId(), List.copyOf(ui.blocks));
         send(emitter, "ui.block.updated", block);
@@ -2799,7 +2493,7 @@ public class CopilotApplicationService {
         }
     }
 
-    private Map<String, Object> responsePersistence(ReferenceImageResponse images, UiStream ui) {
+    private Map<String, Object> responsePersistence(ReferenceImageResponse images, UiStream ui, String traceId) {
         Map<String, Object> metadata = images == null ? new LinkedHashMap<>() : images.persistenceMetadata();
         if (ui != null && !ui.parts.snapshot().isEmpty()) metadata.put("messageParts", ui.parts.snapshot());
         if (ui != null && !ui.blocks.isEmpty()) metadata.put("uiBlocks", List.copyOf(ui.blocks));
@@ -2807,6 +2501,7 @@ public class CopilotApplicationService {
         if (ui != null) {
             metadata.put("knowledgeCount", ui.knowledgeCount);
             metadata.put("knowledgeStatus", ui.knowledgeStatus);
+            metadata.put("telemetry", ui.telemetry.snapshot(traceId != null ? traceId : ui.runId));
         }
         return metadata.isEmpty() ? null : metadata;
     }
@@ -2839,51 +2534,6 @@ public class CopilotApplicationService {
         return false;
     }
 
-    private record CopilotFacts(String currentDate, String crop, String cropLabel, String growthStage, String growthStageLabel,
-                                String dateDerivedGrowthStage, String dateDerivedGrowthStageLabel, String registeredGrowthStage,
-                                String registeredGrowthStageLabel, String previousGrowthStage, String previousGrowthStageLabel,
-                                String nextGrowthStage, String nextGrowthStageLabel, Long daysUntilNext,
-                                List<String> orderedStageNames, String cycleType, boolean stageMismatch, boolean cycleEnded,
-                                String status, Map<String, String> sources) {
-        private static CopilotFacts from(FieldFacts facts) {
-            return new CopilotFacts(facts.currentDate(), facts.cropCode(), facts.cropLabel(), facts.currentGrowthStage(), facts.currentGrowthStageLabel(),
-                    facts.dateDerivedGrowthStage(), facts.dateDerivedGrowthStageLabel(), facts.registeredGrowthStage(), facts.registeredGrowthStageLabel(),
-                    facts.previousGrowthStage(), facts.previousGrowthStageLabel(), facts.nextGrowthStage(), facts.nextGrowthStageLabel(), facts.daysUntilNext(),
-                    facts.orderedGrowthStages(), facts.phenologyCycleType(), facts.stageMismatch(), facts.cycleEnded(), facts.status(), facts.sources());
-        }
-
-        private static CopilotFacts from(String currentDate, CropResolver.ResolvedCrop crop, PhenologyResult result,
-                                         List<String> orderedStageNames, String cycleType, Map<String, String> sources) {
-            return from(currentDate, crop, result, orderedStageNames, cycleType, sources, "READY");
-        }
-
-        private static CopilotFacts from(String currentDate, CropResolver.ResolvedCrop crop, PhenologyResult result,
-                                         List<String> orderedStageNames, String cycleType, Map<String, String> sources,
-                                         String status) {
-            return new CopilotFacts(currentDate, crop.code(), crop.name(), result.currentCode(), result.currentName(), result.dateDerivedCode(), result.dateDerivedName(),
-                    result.registeredStage() == null ? null : result.registeredStage().code(), result.registeredStage() == null ? null : result.registeredStage().name(),
-                    result.previousCode(), result.previousName(), result.nextCode(), result.nextName(), result.daysUntilNext(),
-                    orderedStageNames == null ? List.of() : orderedStageNames, cycleType, result.mismatch(), result.cycleEnded(), status, sources);
-        }
-
-        private boolean ready() { return "READY".equals(status); }
-
-        private static CopilotFacts empty(String currentDate, String status) {
-            return new CopilotFacts(currentDate, null, null, null, null, null, null, null, null, null, null, null, null, null,
-                    List.of(), null, false, false, status, Map.of("serverDate", "SERVER_ASIA_SHANGHAI"));
-        }
-
-        private static CopilotFacts scopeOnly(String currentDate, CropResolver.ResolvedCrop crop, String stageCode) {
-            return new CopilotFacts(currentDate, crop == null ? null : crop.code(), crop == null ? null : crop.name(),
-                    stageCode, null, null, null, null, null, null, null, null, null, null,
-                    List.of(), null, false, false, "SCOPE_ONLY", Map.of("serverDate", "SERVER_ASIA_SHANGHAI"));
-        }
-    }
-
-    private record KnowledgeBundle(String status, List<Map<String, Object>> items) {
-        private static KnowledgeBundle notRequested() { return new KnowledgeBundle("NOT_REQUESTED", List.of()); }
-    }
-
     private static final class ChatDeliveryException extends RuntimeException {
         private ChatDeliveryException(IOException cause) { super(cause); }
     }
@@ -2905,8 +2555,9 @@ public class CopilotApplicationService {
             FieldFacts facts = fieldFactsService.forField(String.valueOf(context.get("fieldId")), userId);
             putFieldFacts(context, facts);
         }
-        if (!"READY".equalsIgnoreCase(String.valueOf(context.getOrDefault("fieldFactsStatus", "")))) {
-            CopilotFacts publicFacts = publicFactsFromQuery(message, LocalDate.now(COPILOT_ZONE), LocalDate.now(COPILOT_ZONE).format(COPILOT_DATE_FORMAT));
+        if (contextString(context, "fieldId") == null
+                && !"READY".equalsIgnoreCase(String.valueOf(context.getOrDefault("fieldFactsStatus", "")))) {
+            CopilotFacts publicFacts = fieldContext.publicFacts(message, LocalDate.now(COPILOT_ZONE), LocalDate.now(COPILOT_ZONE).format(COPILOT_DATE_FORMAT));
             if (publicFacts != null) putCopilotFacts(context, publicFacts);
         }
         Object evidence = request == null ? null : request.evidence;
@@ -3039,7 +2690,7 @@ public class CopilotApplicationService {
         Map<String, Object> response = new LinkedHashMap<>();
         PiTurn turn = new PiTurn();
         try {
-            String answer = streamModelAnswer(chat, routed, facts, KnowledgeBundle.notRequested(), userId, null, commandReport, turn);
+            String answer = streamModelAnswer(chat, routed, facts, CopilotKnowledgeBundle.notRequested(), userId, null, commandReport, turn);
             response.put("answer", answer);
             response.put("available", true);
             response.put("latencyMs", java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
@@ -3203,6 +2854,11 @@ public class CopilotApplicationService {
     public CopilotMemoryProposalService.ProposalView readMemoryProposal(String proposalId, Long actor) {
         if (memoryProposals == null) throw new CopilotConversationException("MEMORY_UNAVAILABLE", "果园资料提案服务不可用", 503);
         return memoryProposals.read(proposalId, actor);
+    }
+
+    public CopilotMemoryProposalService.ProposalView ignoreMemoryProposal(String proposalId, Long actor) {
+        if (memoryProposals == null) throw new CopilotConversationException("MEMORY_UNAVAILABLE", "果园资料提案服务不可用", 503);
+        return memoryProposals.ignore(proposalId, actor);
     }
 
     private void requireConversationService() { if (conversations == null) throw new CopilotConversationException("CONVERSATION_UNAVAILABLE", "conversation service unavailable", 503); }

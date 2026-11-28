@@ -3,8 +3,10 @@ import { HttpRequestError, req } from "@/utils/reqeust";
 import { readServerSentEvents, requestUrl, type ServerSentEvent } from "@/utils/sse";
 import { toCopilotContext, type AIContext } from "@/store/aiContext";
 import { useCopilotStore } from "@/store/copilot";
+import type { AgentRun } from "@/features/agent/contract";
 import type { OverviewCopilotContext } from "@/features/overview/copilot/context";
 import type { CopilotChatRequest, CopilotConversationListItem, CopilotConversationView, CopilotMemoryView, CopilotPageContext, CopilotRouteRequest, CopilotRouteResult } from "./contract";
+import type { DraftTaskPayload } from "./uiBlocks";
 
 const auth = () => ({ Authorization: `Bearer ${permanence.token.useToken()}` });
 const sessionKey = "farmap.copilot.session-id";
@@ -210,8 +212,28 @@ export async function confirmCopilotMemoryProposal(proposalId: string): Promise<
   if (result.proposal?.status !== "CONFIRMED") throw new Error("Memory proposal was not confirmed");
 }
 
-export async function isCopilotMemoryProposalConfirmed(proposalId: string): Promise<boolean> {
+export async function readCopilotMemoryProposalStatus(proposalId: string): Promise<"CONFIRMED" | "IGNORED" | "PENDING"> {
   const result = await req.get<{ status?: string }>(
     `/api/copilot/memories/proposals/${encodeURIComponent(proposalId)}`, auth());
-  return result.status === "CONFIRMED";
+  return result.status === "CONFIRMED" || result.status === "IGNORED" ? result.status : "PENDING";
+}
+
+export async function ignoreCopilotMemoryProposal(proposalId: string): Promise<void> {
+  const result = await req.post<Record<string, never>, { status?: string }>(
+    `/api/copilot/memories/proposals/${encodeURIComponent(proposalId)}/ignore`, {}, auth());
+  if (result.status !== "IGNORED") throw new Error("Memory proposal was not ignored");
+}
+
+export async function calibrateCopilotPhenology(fieldId: string, expectedRegisteredStage: string | undefined,
+                                                targetStage: string): Promise<void> {
+  await req.post<{ expectedRegisteredStage?: string; targetStage: string }, unknown>(
+    `/api/copilot/fields/${encodeURIComponent(fieldId)}/phenology/calibrate`, { expectedRegisteredStage, targetStage }, auth());
+}
+
+export async function prepareCopilotTaskBatch(tasks: DraftTaskPayload[]): Promise<AgentRun[]> {
+  const runs = await req.post<{tasks: DraftTaskPayload[]}, AgentRun[]>("/api/copilot/task-drafts/batch", { tasks }, auth());
+  if (!Array.isArray(runs) || runs.length !== tasks.length || runs.some((run) => !run.runId)) {
+    throw new Error("草稿审批记录未完整返回。");
+  }
+  return runs;
 }

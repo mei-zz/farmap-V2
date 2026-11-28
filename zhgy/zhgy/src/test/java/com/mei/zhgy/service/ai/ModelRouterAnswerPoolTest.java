@@ -24,10 +24,10 @@ class ModelRouterAnswerPoolTest {
         ModelRoutingDecision decision = router.route(AiTaskType.COPILOT, ModelRoutingContext.builder().build());
 
         assertEquals("pool-a", decision.getRequestedModel());
-        assertIterableEquals(List.of("pool-c", "pool-d", ModelCapabilityRegistry.QWEN_MAX,
+        assertIterableEquals(List.of("pool-b", "pool-c", ModelCapabilityRegistry.QWEN_MAX,
                 ModelCapabilityRegistry.QWEN_MT_FLASH, ModelCapabilityRegistry.QWEN36_PLUS_FALLBACK),
                 decision.getFallbackModels());
-        assertEquals("task_policy;answer_pool:random", decision.getRoutingReason());
+        assertEquals("task_policy;answer_pool:ordered_fallback", decision.getRoutingReason());
     }
 
     @Test

@@ -37,6 +37,7 @@ public final class CopilotPresentationEmitter {
             if (!type.equals(previous.get("componentType"))) throw new IllegalArgumentException("Cannot change a keyed block's component type");
             previous.put("title", title); previous.put("data", data); previous.put("status", status);
             if (summary != null) previous.put("summary", summary); else previous.remove("summary");
+            previous.put("actions", actions(type, data));
             previous.put("provenance", provenance); previous.put("updatedAt", time);
             return new BlockChange(previous, false);
         }
@@ -54,6 +55,10 @@ public final class CopilotPresentationEmitter {
     }
 
     private List<Map<String, Object>> actions(String type, Map<String, Object> data) {
+        if ("MemoryProposalCard".equals(type) && data.get("memoryProposal") instanceof CopilotMemoryProposalService.ProposalView proposal) {
+            return List.of(Map.of("type", "confirm-memory", "label", "确认保存", "proposalId", proposal.proposalId(), "decision", "confirm"),
+                    Map.of("type", "confirm-memory", "label", "忽略", "proposalId", proposal.proposalId(), "decision", "ignore"));
+        }
         if (!"FarmMapCard".equals(type) || !(data.get("locations") instanceof List<?> locations)) return List.of();
         List<Map<String, Object>> actions = new ArrayList<>();
         for (Object item : locations) {
@@ -69,6 +74,11 @@ public final class CopilotPresentationEmitter {
     public synchronized void afterLegacyEvent(SseEmitter stream, String event, Object payload) throws IOException {
         if (!(payload instanceof Map<?, ?> data)) return;
         switch (event) {
+            case "presentation.summary" -> {
+                textPartId = null;
+                text(stream, data.get("text"));
+                textPartId = null;
+            }
             case "content.delta" -> text(stream, data.get("delta"));
             case "presentation.analysis" -> text(stream, data.get("text"));
             case "status" -> thinking(stream, "running", data.get("message"));
@@ -165,10 +175,23 @@ public final class CopilotPresentationEmitter {
         return switch (name) {
             case "read_current_weather" -> "读取农场天气";
             case "read_field_context" -> "核对地块与物候";
+            case "read_farm_directory" -> "读取农场列表";
             case "search_agricultural_knowledge", "read_agricultural_knowledge" -> "检索农业知识";
             case "analyze_uploaded_images" -> "分析上传图片";
             case "lookup_reference_atlas" -> "查找病虫害图鉴";
             case "search_historical_cases" -> "检索历史病例";
+            case "propose_task_draft" -> "准备任务草稿";
+            case "list_farm_fields" -> "读取农场地块";
+            case "read_orchard_memory" -> "读取果园记忆";
+            case "read_user_preferences" -> "读取用户偏好";
+            case "read_previous_analysis" -> "读取历史分析";
+            case "read_previous_visual_analysis" -> "读取历史视觉分析";
+            case "read_workflow_status" -> "查询工作流状态";
+            case "read_monthly_guidance" -> "读取月度农事指导";
+            case "render_ui_block" -> "整理可交互结果";
+            case "query_operations_tasks" -> "查询农事任务";
+            case "inspect_camera_maturity" -> "巡检摄像头画面";
+            case "propose_memory_update" -> "准备果园资料提案";
             default -> name;
         };
     }

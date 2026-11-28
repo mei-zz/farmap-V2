@@ -214,7 +214,7 @@ public class CopilotConversationService {
                 Map<String, Object> metadata = turn.getResultJson() == null ? new LinkedHashMap<>()
                         : mapper.readValue(turn.getResultJson(), new TypeReference<>() {});
                 metadata.put("uiBlocks", blocks);
-                repository.updateResult(conversationId, turn.getTurnId(), userId, mapper.writeValueAsString(metadata));
+                repository.updateAssistantMetadata(conversationId, turn.getTurnId(), userId, mapper.writeValueAsString(metadata));
             } catch (Exception error) { throw new IllegalStateException("Unable to persist UI blocks", error); }
             return;
         }

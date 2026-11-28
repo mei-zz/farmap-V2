@@ -47,10 +47,13 @@ export type PestComparisonData = {
   phi?: PestPhi;
 };
 
+const emptySiteImages: PestSiteImage[] = [];
+const emptyFeatures: DifferentialFeature[] = [];
+
 function ImageFrame({ image, alt, onOpen }: { image: PestSiteImage | AtlasFigure; alt: string; onOpen?: () => void }) {
   return <div className="farmap-pest__frame">
     <img src={image.url} alt={alt} loading="lazy" referrerPolicy="no-referrer" />
-    {onOpen && <button type="button" className="farmap-pest__zoom" aria-label="放大查看图鉴图片" onClick={onOpen}>
+    {onOpen && <button type="button" className="farmap-pest__zoom" aria-label={`放大查看 ${alt}`} onClick={onOpen}>
       <Maximize2 size={15} aria-hidden="true" />放大
     </button>}
   </div>;
@@ -59,10 +62,11 @@ function ImageFrame({ image, alt, onOpen }: { image: PestSiteImage | AtlasFigure
 export function PestComparisonCard({ block }: { block: AgentUiBlock }) {
   const comparison = block.data?.pestComparison;
   const figures = block.data?.atlasFigures ?? [];
-  const siteImages = comparison?.siteImages ?? [];
-  const features = comparison?.differentialFeatures ?? [];
+  const siteImages = comparison?.siteImages ?? emptySiteImages;
+  const features = comparison?.differentialFeatures ?? emptyFeatures;
   const [selectedFigure, setSelectedFigure] = useState(0);
-  const [previewOpen, setPreviewOpen] = useState(false);
+  const [selectedSite, setSelectedSite] = useState(0);
+  const [previewType, setPreviewType] = useState<"site" | "atlas">();
   const [checked, setChecked] = useState<Set<number>>(new Set());
 
   useEffect(() => {
@@ -74,7 +78,8 @@ export function PestComparisonCard({ block }: { block: AgentUiBlock }) {
   }, [features]);
 
   const figure = figures[selectedFigure];
-  const site = siteImages[0];
+  const site = siteImages[Math.min(selectedSite, siteImages.length - 1)];
+  const preview = previewType === "site" ? site : figure;
   const phi = comparison?.phi;
 
   if (!figure && !site) return <p>没有查到现场图或匹配的图鉴记录。</p>;
@@ -95,8 +100,16 @@ export function PestComparisonCard({ block }: { block: AgentUiBlock }) {
     <div className="farmap-pest__comparison">
       <figure className="farmap-pest__side">
         <figcaption><span>现场观测</span>{site?.source && <small>{site.source}</small>}</figcaption>
-        {site ? <ImageFrame image={site} alt={site.label || "现场观测图片"} /> : <div className="farmap-pest__empty"><ImageIcon size={24} aria-hidden="true" /><span>本轮没有可展示的现场图</span></div>}
+        {site ? <ImageFrame image={site} alt={site.label || "现场观测图片"} onOpen={() => setPreviewType("site")} />
+          : <div className="farmap-pest__empty"><ImageIcon size={24} aria-hidden="true" /><span>本轮没有可展示的现场图</span></div>}
         {site && <p>{site.label}{site.capturedAt ? ` · ${site.capturedAt}` : ""}</p>}
+        {siteImages.length > 1 && <div className="farmap-pest__thumbs" aria-label="现场图缩略图">
+          {siteImages.map((entry, index) => <button key={entry.id} type="button"
+            aria-label={`查看第 ${index + 1} 张现场图`} aria-current={index === selectedSite ? "true" : undefined}
+            onClick={() => setSelectedSite(index)}>
+            <img src={entry.url} alt="" loading="lazy" referrerPolicy="no-referrer" />
+          </button>)}
+        </div>}
       </figure>
       <figure className="farmap-pest__side">
         <figcaption>
@@ -105,7 +118,7 @@ export function PestComparisonCard({ block }: { block: AgentUiBlock }) {
         </figcaption>
         {figure ? <>
           <div className="farmap-pest__atlas">
-            <ImageFrame image={figure} alt={figure.label || "标准病害图鉴"} onOpen={() => setPreviewOpen(true)} />
+            <ImageFrame image={figure} alt={figure.label || "标准病害图鉴"} onOpen={() => setPreviewType("atlas")} />
             {figures.length > 1 && <>
               <button type="button" className="farmap-pest__nav is-prev" aria-label="上一张图鉴" onClick={() => moveFigure(-1)}><ChevronLeft size={18} /></button>
               <button type="button" className="farmap-pest__nav is-next" aria-label="下一张图鉴" onClick={() => moveFigure(1)}><ChevronRight size={18} /></button>
@@ -141,20 +154,20 @@ export function PestComparisonCard({ block }: { block: AgentUiBlock }) {
       <p>{comparison.recommendation.detail}</p>
     </div>}
 
-    {phi && (phi.days !== undefined || phi.warning || phi.blocked) && <div className="farmap-pest__phi" data-blocked={phi.blocked} role="alert">
+    {phi && (phi.days !== undefined || phi.warning || phi.blocked || phi.label) && <div className="farmap-pest__phi" data-blocked={phi.blocked} role="alert">
       <ShieldAlert size={17} aria-hidden="true" />
       <div>
         <strong>{phi.blocked ? "安全间隔期拦截" : "安全间隔期提醒"}</strong>
-        <span>{phi.label ?? (phi.days !== undefined ? `距采收不足 ${phi.days} 天安全间隔期，药剂使用需重新核验。` : "药剂安全间隔期需核验。")}</span>
+        <span>{phi.label ?? (phi.days !== undefined ? `登记标签安全间隔期 ${phi.days} 天` : "药剂安全间隔期需核验。")}</span>
         {phi.warning && <small>{phi.warning}</small>}
       </div>
     </div>}
 
     <small className="farmap-pest__note">图鉴供对照，现场症状以观测、采样和专家复核记录为准。</small>
 
-    <Modal open={previewOpen} title={figure?.label ?? "图鉴预览"} onCancel={() => setPreviewOpen(false)} footer={null}
+    <Modal open={previewType !== undefined} title={preview?.label ?? "图片预览"} onCancel={() => setPreviewType(undefined)} footer={null}
       width="min(94vw, 980px)" centered>
-      {figure && <img className="farmap-pest__preview" src={figure.url} alt={figure.label} referrerPolicy="no-referrer" />}
+      {preview && <img className="farmap-pest__preview" src={preview.url} alt={preview.label} referrerPolicy="no-referrer" />}
     </Modal>
   </section>;
 }

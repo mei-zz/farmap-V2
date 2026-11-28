@@ -1,10 +1,14 @@
 package com.mei.zhgy.service.reference;
 
+import com.mei.zhgy.service.agriculture.PhenologyService;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -67,5 +71,47 @@ class ReferenceImageAttacherTest {
         assertEquals("READY", result.status());
         assertEquals("plum-pheno-fruit_development-voice-slip", result.images().get(0).refId());
         verify(store).byStageResult("plum", "fruit_development");
+    }
+
+    @Test
+    void everySharedPlumAliasSelectsItsCanonicalAtlasStage() {
+        ReferenceImageStore store = mock(ReferenceImageStore.class);
+        when(store.byStageResult(eq("plum"), anyString())).thenAnswer(invocation -> {
+            String stage = invocation.getArgument(1);
+            ReferenceImage image = new ReferenceImage(
+                    "ref-" + stage, "PHENOLOGY", stage, "", stage,
+                    "https://example.com/" + stage + ".jpg", "mid", "direct");
+            return ReferenceImageLookup.ready(List.of(image), 1, 1, "direct");
+        });
+        ReferenceImageAttacher attacher = new ReferenceImageAttacher(
+                new DiseaseCatalog(), store, new ReferenceImageProperties());
+
+        for (Map.Entry<String, String> alias : PhenologyService.plumAtlasAliases().entrySet()) {
+            ReferenceImageLookup result = attacher.forChatResult(
+                    "给我一张" + alias.getKey() + "的参考图片", "plum", null);
+            assertEquals("READY", result.status(), alias.getKey());
+            assertEquals("ref-" + alias.getValue(), result.images().get(0).refId(), alias.getKey());
+        }
+    }
+
+    @Test
+    void longestAliasWinsWhenFruitTermsOverlap() {
+        ReferenceImageStore store = mock(ReferenceImageStore.class);
+        when(store.byStageResult(eq("plum"), anyString())).thenAnswer(invocation -> {
+            String stage = invocation.getArgument(1);
+            ReferenceImage image = new ReferenceImage(
+                    "ref-" + stage, "PHENOLOGY", stage, "", stage,
+                    "https://example.com/" + stage + ".jpg", "mid", "direct");
+            return ReferenceImageLookup.ready(List.of(image), 1, 1, "direct");
+        });
+        ReferenceImageAttacher attacher = new ReferenceImageAttacher(
+                new DiseaseCatalog(), store, new ReferenceImageProperties());
+
+        assertEquals("ref-fruit_development", attacher.forChatResult(
+                "幼果膨大期图片", "plum", null).images().get(0).refId());
+        assertEquals("ref-fruiting", attacher.forChatResult(
+                "幼果期图片", "plum", null).images().get(0).refId());
+        assertEquals("ref-fruit_development", attacher.forChatResult(
+                "硬核期图片", "plum", null).images().get(0).refId());
     }
 }

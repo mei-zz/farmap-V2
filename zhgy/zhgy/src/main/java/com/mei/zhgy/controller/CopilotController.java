@@ -83,23 +83,33 @@ public class CopilotController {
         return application.revokeMemory(memoryId, actor());
     }
 
-    @PostMapping("/memories/proposals/{proposalId}/confirm")
+    @PostMapping(value = "/memories/proposals/{proposalId}/confirm", produces = "application/json")
     public CopilotMemoryProposalService.ProposalConfirmation confirmMemoryProposal(@PathVariable String proposalId) {
         return application.confirmMemoryProposal(proposalId, actor());
     }
 
-    @PostMapping("/task-drafts")
+    @PostMapping(value = "/memories/proposals/{proposalId}/ignore", produces = "application/json")
+    public CopilotMemoryProposalService.ProposalView ignoreMemoryProposal(@PathVariable String proposalId) {
+        return application.ignoreMemoryProposal(proposalId, actor());
+    }
+
+    @PostMapping(value = "/task-drafts", produces = "application/json")
     public com.mei.zhgy.service.agent.AgentRun draftTask(@RequestBody CopilotApplicationService.UiTaskDraft command) {
         return application.draftFromComponent(command, actor());
     }
 
-    @PostMapping("/fields/{fieldId}/phenology/calibrate")
+    @PostMapping(value = "/task-drafts/batch", produces = "application/json")
+    public java.util.List<com.mei.zhgy.service.agent.AgentRun> draftTasks(@RequestBody CopilotApplicationService.UiTaskBatch command) {
+        return application.draftBatchFromComponent(command, actor());
+    }
+
+    @PostMapping(value = "/fields/{fieldId}/phenology/calibrate", produces = "application/json")
     public com.mei.zhgy.service.field.FarmField calibratePhenology(@PathVariable String fieldId,
             @RequestBody CopilotApplicationService.PhenologyCalibration command) {
         return application.calibrateField(fieldId, command, actor());
     }
 
-    @GetMapping("/memories/proposals/{proposalId}")
+    @GetMapping(value = "/memories/proposals/{proposalId}", produces = "application/json")
     public CopilotMemoryProposalService.ProposalView readMemoryProposal(@PathVariable String proposalId) {
         return application.readMemoryProposal(proposalId, actor());
     }

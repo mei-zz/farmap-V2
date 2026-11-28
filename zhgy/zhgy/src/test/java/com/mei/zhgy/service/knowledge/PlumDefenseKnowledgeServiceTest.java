@@ -1,5 +1,6 @@
 package com.mei.zhgy.service.knowledge;
 
+import com.mei.zhgy.service.agriculture.CropResolver;
 import com.mei.zhgy.service.copilot.PlumAgronomyEvidenceCatalog;
 import com.mei.zhgy.service.copilot.PlumAgronomyEvidenceCatalog.SprayInputs;
 import com.mei.zhgy.service.copilot.PlumAgronomyRuleEngine.CertificationStatus;
@@ -9,6 +10,7 @@ import com.mei.zhgy.service.copilot.PlumAgronomyRuleEngine.Provenance;
 import com.mei.zhgy.service.copilot.PlumAgronomyRuleEngine.SourceKind;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -52,6 +54,31 @@ class PlumDefenseKnowledgeServiceTest {
         assertTrue(assessment.rows().stream().allMatch(row -> row.organicAllowed() == null));
         assertTrue(assessment.rows().stream().allMatch(row ->
                 row.organicPermission() == PlumDefenseKnowledgeService.OrganicPermission.GENERAL_NONCHEMICAL_PRACTICE));
+    }
+
+    @Test
+    void agriculturalStructuredKnowledgeFacadeDelegatesTheTypedAssessment() {
+        var facade = new AgriculturalStructuredKnowledgeService(null, new CropResolver(), service);
+        assertEquals(7, facade.plumDefenseTargets().size());
+
+        var assessment = facade.assessPlumDefense(new PlumDefenseKnowledgeService.AssessmentRequest(
+                "红蜘蛛", "leafing", DAY, 7, "east", null));
+        assertEquals(PlumDefenseKnowledgeService.AssessmentStatus.READY, assessment.status());
+        assertEquals("plum_spider_mite", assessment.targetCode());
+        assertEquals(PlumDefenseKnowledgeService.GateStatus.ELIGIBLE, assessment.rows().get(0).gateStatus());
+    }
+
+    @Test
+    void springWiringKeepsTheCatalogAndGuardrailIndependent() {
+        try (var context = new AnnotationConfigApplicationContext()) {
+            context.registerBean(PlumAgronomyEvidenceCatalog.class, () -> catalog);
+            context.register(PlumDefenseKnowledgeService.class, AgriculturalStructuredKnowledgeService.class,
+                    CropResolver.class);
+            context.refresh();
+
+            assertNotNull(context.getBean(PlumDefenseKnowledgeService.class));
+            assertNotNull(context.getBean(AgriculturalStructuredKnowledgeService.class));
+        }
     }
 
     @Test

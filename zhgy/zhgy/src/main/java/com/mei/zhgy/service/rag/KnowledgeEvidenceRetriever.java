@@ -245,7 +245,7 @@ public class KnowledgeEvidenceRetriever implements DiagnosisRetriever {
                     .source(DiagnosisEvidenceVO.Source.builder().type("knowledge").name(item.chunk.sourceName == null ? "Agricultural knowledge base" : item.chunk.sourceName)
                             .sourceId(item.chunk.sourceId).documentId(item.chunk.documentId).versionId(item.chunk.versionId)
                             .document(item.chunk.documentTitle == null ? "orchard_management.txt" : item.chunk.documentTitle).section(request.getGrowthStage()).fieldId(request.getFieldId()).build())
-                    .preview(DiagnosisEvidenceVO.Preview.builder().textSnippet(item.chunk.text.substring(0, Math.min(240, item.chunk.text.length()))).build())
+                    .preview(DiagnosisEvidenceVO.Preview.builder().textSnippet(item.chunk.text).build())
                     .metadata(metadata).build());
         }
         output.addAll(0, structuredEvidence);
@@ -256,7 +256,7 @@ public class KnowledgeEvidenceRetriever implements DiagnosisRetriever {
         List<DiagnosisEvidenceVO> output = new ArrayList<>();
         for (KnowledgeVectorStore.KnowledgeVectorHit hit : hits) {
             Map<String, Object> metadata = new LinkedHashMap<>(); metadata.put("sourceMode", "REAL"); metadata.put("knowledgeStatus", "READY"); metadata.put("retrievalType", "milvus-semantic"); metadata.put("chunkId", hit.chunkId); metadata.put("sourceId", hit.sourceId); metadata.put("documentId", hit.documentId); metadata.put("versionId", hit.versionId); metadata.put("contentHash", hit.contentHash); metadata.put("embeddingModel", "BAAI/bge-small-zh-v1.5"); metadata.put("embeddingProvider", "LOCAL"); metadata.put("embeddingDimension", 512); metadata.put("classification", hit.classification); putRewriteMetadata(metadata, rewritten);
-            output.add(DiagnosisEvidenceVO.builder().id("knowledge-" + hit.versionId + "-" + hit.chunkId).modality("knowledge").title("农业知识：" + hit.chunkId).summary("经 BGE 向量检索命中管理员维护的知识片段。").score(hit.score).source(DiagnosisEvidenceVO.Source.builder().type("knowledge").name(hit.sourceName).sourceId(hit.sourceId).documentId(hit.documentId).versionId(hit.versionId).document(hit.documentTitle).section(request.getGrowthStage()).fieldId(request.getFieldId()).build()).preview(DiagnosisEvidenceVO.Preview.builder().textSnippet(hit.content.substring(0, Math.min(240, hit.content.length()))).build()).metadata(metadata).build());
+            output.add(DiagnosisEvidenceVO.builder().id("knowledge-" + hit.versionId + "-" + hit.chunkId).modality("knowledge").title("农业知识：" + hit.chunkId).summary("经 BGE 向量检索命中管理员维护的知识片段。").score(hit.score).source(DiagnosisEvidenceVO.Source.builder().type("knowledge").name(hit.sourceName).sourceId(hit.sourceId).documentId(hit.documentId).versionId(hit.versionId).document(hit.documentTitle).section(request.getGrowthStage()).fieldId(request.getFieldId()).build()).preview(DiagnosisEvidenceVO.Preview.builder().textSnippet(hit.content).build()).metadata(metadata).build());
         }
         return output;
     }
@@ -308,7 +308,7 @@ public class KnowledgeEvidenceRetriever implements DiagnosisRetriever {
                             .embeddingModel(QwenKnowledgeVectorStore.MODEL).rerankerModel("gte-rerank-v2")
                             .classification(hit.classification).sourceMode("REAL").status(result.getStatus())
                             .document(hit.documentTitle).section(request.getGrowthStage()).fieldId(request.getFieldId()).build())
-                    .preview(DiagnosisEvidenceVO.Preview.builder().textSnippet(hit.content.substring(0, Math.min(240, hit.content.length()))).build())
+                    .preview(DiagnosisEvidenceVO.Preview.builder().textSnippet(hit.content).build())
                     .metadata(metadata).build());
         }
         return output;

@@ -49,6 +49,7 @@ public class AnswerModelPool {
             eligible.add(model);
         }
         if (eligible.isEmpty()) return Collections.emptyList();
+        if ("ordered_fallback".equals(properties.getSelectionStrategy())) return List.copyOf(eligible);
 
         if ("round_robin".equals(properties.getSelectionStrategy())) {
             int first = Math.floorMod(roundRobinCursor.getAndIncrement(), eligible.size());

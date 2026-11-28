@@ -23,10 +23,13 @@ public class WeatherEvidenceRetriever implements DiagnosisRetriever {
                 ? null : request.getTrustedFieldContext().getWeather();
         DiagnosisAnalyzeRequest.WeatherContext weather = request.getWeather();
         if (trusted != null) {
-            if (!"READY".equals(trusted.get("status")) || !(trusted.get("rainfall14d") instanceof Number)) {
+            if (!"READY".equals(trusted.get("status"))) {
                 return Collections.emptyList();
             }
-            return evidence(request, number(trusted.get("rainfall14d")), text(trusted.get("summary"), "可信天气数据"),
+            Double rainfall = number(trusted.get("rainfall14d"));
+            if (rainfall == null && number(trusted.get("rainfallForecast24h")) == null
+                    && number(trusted.get("rainfallProbability24h")) == null) return Collections.emptyList();
+            return evidence(request, rainfall, text(trusted.get("summary"), "可信天气数据"),
                     text(trusted.get("observedAt"), null), trusted);
         }
         if (weather == null || weather.getRainfall14d() == null) {
@@ -35,7 +38,7 @@ public class WeatherEvidenceRetriever implements DiagnosisRetriever {
         return evidence(request, weather.getRainfall14d(), weather.getSummary(), weather.getObservedAt(), Collections.emptyMap());
     }
 
-    private List<DiagnosisEvidenceVO> evidence(DiagnosisAnalyzeRequest request, double rainfall, String summary,
+    private List<DiagnosisEvidenceVO> evidence(DiagnosisAnalyzeRequest request, Double rainfall, String summary,
                                                 String observedAt, Map<String, Object> trusted) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         boolean forecast = Boolean.TRUE.equals(trusted.get("rainfallForecast"));
@@ -52,11 +55,12 @@ public class WeatherEvidenceRetriever implements DiagnosisRetriever {
             metadata.put("rainfallProbability24h", trusted.get("rainfallProbability24h"));
         }
         return Collections.singletonList(DiagnosisEvidenceVO.builder()
-                .id("weather_14d")
+                .id(rainfall == null ? "weather_24h_forecast" : "weather_14d")
                 .modality("weather")
-                .title((forecast ? "未来 14 天预计降雨 " : "近 14 天累计降雨 ") + rainfall + " mm")
+                .title(rainfall == null ? "未来 24 小时降雨预报"
+                        : (forecast ? "未来 14 天预计降雨 " : "近 14 天累计降雨 ") + rainfall + " mm")
                 .summary(text(summary, "可信天气上下文已纳入诊断。"))
-                .score(rainfall >= 40 ? 0.88 : 0.64)
+                .score(rainfall != null && rainfall >= 40 ? 0.88 : 0.64)
                 .source(DiagnosisEvidenceVO.Source.builder()
                         .type("weather")
                         .name(trusted.isEmpty() ? "Field weather context" : text(trusted.get("source"), "Field weather provider"))
@@ -68,5 +72,7 @@ public class WeatherEvidenceRetriever implements DiagnosisRetriever {
     }
 
     private String text(Object value, String fallback) { return value == null || String.valueOf(value).isBlank() ? fallback : String.valueOf(value); }
-    private double number(Object value) { return value instanceof Number ? ((Number) value).doubleValue() : 0D; }
+    private Double number(Object value) {
+        return value instanceof Number number && Double.isFinite(number.doubleValue()) ? number.doubleValue() : null;
+    }
 }

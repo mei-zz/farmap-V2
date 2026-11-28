@@ -27,6 +27,7 @@ export type WorkDayAssessment = {
   irrigation?: WorkSuitability;
   harvest?: WorkSuitability;
 };
+export type WorkTimeSlot = WorkDayAssessment & { startsAt: string };
 
 export type SprayWeatherData = {
   source?: string;
@@ -34,6 +35,7 @@ export type SprayWeatherData = {
   restrictionsVerified: boolean;
   windows: SprayWeatherWindow[];
   workDays?: WorkDayAssessment[];
+  operationWindows?: WorkTimeSlot[];
   operationDecision?: string;
   phiDays?: number;
   verifiedProductName?: string;
@@ -101,6 +103,12 @@ export function SprayWeatherWindowCard({ block }: { block: AgentUiBlock }) {
   const info = block.data?.sprayWeather;
   if (!info) return <p>暂无可用于评估的逐小时预报。</p>;
   const workDays = info.workDays?.length ? info.workDays.slice(0, 3) : inferredDays(info.windows);
+  const slotsByDay = new Map<string, WorkTimeSlot[]>();
+  for (const slot of info.operationWindows ?? []) {
+    const slots = slotsByDay.get(slot.date) ?? [];
+    slots.push(slot);
+    slotsByDay.set(slot.date, slots);
+  }
 
   return <section className="farmap-spray-weather" aria-label="未来农事作业气象窗口">
     <div className="farmap-spray-weather__notice" data-verified={info.restrictionsVerified}>
@@ -123,6 +131,22 @@ export function SprayWeatherWindowCard({ block }: { block: AgentUiBlock }) {
         </tr>)}</tbody>
       </table>
     </div> : <p>关键气象字段不足，暂无逐日农事适宜度矩阵。</p>}
+
+    {slotsByDay.size > 0 && <details className="farmap-spray-weather__windows" open>
+      <summary>查看未来 72 小时作业窗口</summary>
+      {[...slotsByDay].map(([date, slots]) => <div key={date} className="farmap-spray-weather__matrix-wrap">
+        <table className="farmap-spray-weather__matrix farmap-spray-weather__slot-matrix">
+          <caption>{shortDay(date)}</caption>
+          <thead><tr><th scope="col">作业</th>{slots.map((slot) => <th key={slot.startsAt} scope="col">
+            <time dateTime={slot.startsAt}>{slot.startsAt.slice(11, 16)}</time>
+          </th>)}</tr></thead>
+          <tbody>{operations.map(({ key, label }) => <tr key={key}>
+            <th scope="row">{label}</th>
+            {slots.map((slot) => <SuitabilityCell key={slot.startsAt} assessment={slot[key]} />)}
+          </tr>)}</tbody>
+        </table>
+      </div>)}
+    </details>}
 
     {info.windows.length > 0 ? <details className="farmap-spray-weather__windows" open>
       <summary>查看逐小时气象窗口</summary>

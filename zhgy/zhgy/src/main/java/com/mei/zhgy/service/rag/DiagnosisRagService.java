@@ -5,7 +5,9 @@ import com.mei.zhgy.service.ai.GroundedDiagnosisGenerator;
 import com.mei.zhgy.service.ai.ModelCallException;
 import com.mei.zhgy.service.ai.EvidenceReferenceValidator;
 import com.mei.zhgy.service.historical.HistoricalVectorStoreInitializer;
+import com.mei.zhgy.service.knowledge.AgriculturalStructuredKnowledgeService;
 import com.mei.zhgy.service.knowledge.KnowledgeBackendException;
+import com.mei.zhgy.service.knowledge.PlumDefenseKnowledgeService;
 import com.mei.zhgy.service.reference.ReferenceImage;
 import com.mei.zhgy.service.reference.ReferenceImageAttacher;
 import com.mei.zhgy.vo.DiagnosisAnalysisResponse;
@@ -41,6 +43,9 @@ public class DiagnosisRagService {
     private final GroundedDiagnosisGenerator groundedDiagnosisGenerator;
     private final HistoricalVectorStoreInitializer historicalVectorStore;
     private final ReferenceImageAttacher referenceImageAttacher;
+
+    @Autowired(required = false)
+    private AgriculturalStructuredKnowledgeService structuredAgronomy;
 
     @Value("${farmap.ai.generation.mode:template}")
     private String generationMode;
@@ -146,6 +151,12 @@ public class DiagnosisRagService {
                 progress.accept(new RetrievalProgress("RETRIEVAL", retriever.modality(), String.valueOf(result.get("status")),
                         result.get("count") instanceof Number count ? count.intValue() : 0));
             }
+        }
+        if (structuredAgronomy != null && "plum".equals(request.getCrop())
+                && (enabledModalities.isEmpty() || enabledModalities.contains("knowledge"))) {
+            var rows = structuredDefenseEvidence(request);
+            evidence.addAll(rows);
+            progress.accept(new RetrievalProgress("GUARDRAIL", "agronomy_guardrail", rows.isEmpty() ? "READY_EMPTY" : "READY", rows.size()));
         }
         int inputEvidenceCount = evidence.size();
         long fusionStart = System.currentTimeMillis();
@@ -261,6 +272,7 @@ public class DiagnosisRagService {
             if (generationResult.getModelCall().getUsage() != null) {
                 metadata.put("inputTokens", generationResult.getModelCall().getUsage().getInputTokens());
                 metadata.put("outputTokens", generationResult.getModelCall().getUsage().getOutputTokens());
+                metadata.put("cacheReadTokens", generationResult.getModelCall().getUsage().getCacheReadTokens());
                 metadata.put("thinkingTokens", generationResult.getModelCall().getUsage().getThinkingTokens());
                 metadata.put("totalTokens", generationResult.getModelCall().getUsage().getTotalTokens());
             }
@@ -280,6 +292,23 @@ public class DiagnosisRagService {
                 metadata.get("embeddingModel"),
                 "grounded-diagnosis-v1");
         return response;
+    }
+
+    private List<DiagnosisEvidenceVO> structuredDefenseEvidence(DiagnosisAnalyzeRequest request) {
+        boolean verifiedField = request.getTrustedFieldContext() != null;
+        var assessment = structuredAgronomy.assessPlumDefense(new PlumDefenseKnowledgeService.AssessmentRequest(
+                request.getQuery(), verifiedField ? request.getGrowthStage() : null,
+                java.time.LocalDate.now(java.time.ZoneId.of("Asia/Shanghai")),
+                verifiedField ? request.getFarmId() : null, verifiedField ? request.getFieldId() : null, null));
+        return assessment.rows().stream().limit(8).map(row -> {
+            String guardrail = row.guidance() + " " + String.join(" ", row.gateReasons());
+            return DiagnosisEvidenceVO.builder().id("plum-guardrail-" + row.ruleId()).modality("knowledge")
+                    .title(row.targetName() + " · 农事安全条件").summary(guardrail).score(0.8)
+                    .source(DiagnosisEvidenceVO.Source.builder().type("structured_agronomy").name("FarMap 脆李农事规则")
+                            .document(row.sourceRef()).build())
+                    .metadata(new LinkedHashMap<>(Map.of("structuredDefense", row, "gateStatus", row.gateStatus().name())))
+                    .build();
+        }).toList();
     }
 
     private int guardUnverifiedSpray(DiagnosisAnalysisResponse response) {

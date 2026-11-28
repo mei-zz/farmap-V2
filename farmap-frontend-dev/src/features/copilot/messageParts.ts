@@ -220,7 +220,7 @@ export function parseMessagePart(value: unknown): MessagePart | undefined {
 
   if (normalizedType === "thinking") {
     const id = key(input.id);
-    const status = thinkingStatus(input.status);
+    const status = thinkingStatus(input.status) ?? (rawType === "activity" ? "done" : undefined);
     if (!id || !status) return undefined;
     return { type: "thinking", id, status, label: text(input.label ?? (rawType === "activity" ? input.text : undefined), 300) };
   }
@@ -319,20 +319,31 @@ export function mergeMessagePart(parts: MessagePart[], value: unknown): MessageP
   if (parsed.type === "ui_block") {
     const index = parts.findIndex((part) => part.type === "ui_block"
       && (part.blockKey === parsed.blockKey || part.block.blockId === parsed.block.blockId));
-    return index < 0
-      ? appendPart(parts, parsed)
-      : parts.map((part, position) => position === index ? parsed : part);
+    if (index < 0) return appendPart(parts, parsed);
+    const current = parts[index] as MessageUiBlockPart;
+    const next: MessageUiBlockPart = {
+      ...parsed,
+      ...(parsed.citations?.length || !current.citations?.length ? {} : { citations: current.citations }),
+    };
+    return parts.map((part, position) => position === index ? next : part);
   }
 
   if (parsed.type === "follow_ups") {
-    const index = parts.findLastIndex((part) => part.type === "follow_ups");
+    let index = -1;
+    for (let position = parts.length - 1; position >= 0; position -= 1) {
+      if (parts[position].type === "follow_ups") {
+        index = position;
+        break;
+      }
+    }
     return index < 0
       ? appendPart(parts, parsed)
       : parts.map((part, position) => position === index ? parsed : part);
   }
 
-  const index = parts.findIndex((part) => part.type === parsed.type
-    && (part.type === "thinking" ? part.id === parsed.id : part.type === "tool_call" ? part.callId === parsed.callId : false));
+  const index = parsed.type === "thinking"
+    ? parts.findIndex((part) => part.type === "thinking" && part.id === parsed.id)
+    : parts.findIndex((part) => part.type === "tool_call" && part.callId === parsed.callId);
   return index < 0
     ? appendPart(parts, parsed)
     : parts.map((part, position) => position === index ? parsed : part);
@@ -352,8 +363,11 @@ export function messagePartCitations(parts: MessagePart[]): Map<string, Citation
 }
 
 export function messagePartFollowUps(parts: MessagePart[]): { label: string; prompt: string }[] {
-  const part = parts.findLast((candidate) => candidate.type === "follow_ups");
-  return part?.type === "follow_ups" ? part.items : [];
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index];
+    if (part.type === "follow_ups") return part.items;
+  }
+  return [];
 }
 
 export function hasVisibleMessageParts(parts: MessagePart[]): boolean {

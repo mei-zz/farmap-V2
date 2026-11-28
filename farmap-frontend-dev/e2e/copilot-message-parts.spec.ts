@@ -63,7 +63,7 @@ test("a dropped stream restores only the matching persisted assistant reply", as
     contentType: "text/event-stream",
     body: sse([
       ["route", { ...routeEvent[1] as Record<string, unknown>, traceId: "dropped-stream-trace" }],
-      ["message.part", { id: "partial", kind: "text", delta: "仍在查找资料…" }],
+      ["message.part", { type: "text", id: "partial", delta: "仍在查找资料…" }],
     ]),
   }));
   await ask(page, "看看这块地的天气和物候");
@@ -84,7 +84,7 @@ test("the active stream supports queueing, abort and ordered continuation", asyn
       return Promise.resolve(new Response(new ReadableStream({
         start(controller) {
           controller.enqueue(encoder.encode('event: route\ndata: {"conversationId":"message-parts-conversation","contextVersion":1,"intent":"GENERAL_QA","resolutionStatus":"RESOLVED"}\n\n'
-            + 'event: message.part\ndata: {"kind":"text","id":"first-part","delta":"正在读取现场信息。"}\n\n'));
+            + 'event: message.part\ndata: {"type":"text","id":"first-part","delta":"正在读取现场信息。"}\n\n'));
           init?.signal?.addEventListener("abort", () => controller.error(new DOMException("Aborted", "AbortError")), { once: true });
         },
       }), { headers: { "Content-Type": "text/event-stream" } }));
@@ -98,7 +98,7 @@ test("the active stream supports queueing, abort and ordered continuation", asyn
     operations.push(body.operation);
     if (body.operation === "followUp") expect(body.message).toBe("补充检查当前地块");
     const messages: Array<[string, unknown]> = body.operation === "continue"
-      ? [["message.part", { id: "continued", kind: "text", delta: "续跑后的结果已返回。" }]]
+      ? [["message.part", { type: "text", id: "continued", delta: "续跑后的结果已返回。" }]]
       : [];
     messages.push(["done", { status: "COMPLETED" }]);
     await route.fulfill({ contentType: "text/event-stream", body: sse(messages) });
@@ -115,7 +115,7 @@ test("the active stream supports queueing, abort and ordered continuation", asyn
   expect(operations).toEqual(["followUp", "abort", "continue"]);
 });
 
-test("ordered message.part protocol renders text, tools, activity, blocks and clickable evidence without private reasoning", async ({ page }) => {
+test("ordered message.part protocol keeps IDs, upserts keyed blocks, opens citations and ignores private reasoning", async ({ page }) => {
   await openWorkspace(page);
   let routeCalls = 0;
   await page.route("**/api/copilot/route", (route) => {
@@ -126,14 +126,32 @@ test("ordered message.part protocol renders text, tools, activity, blocks and cl
     contentType: "text/event-stream",
     body: sse([
       routeEvent,
-      ["message.part", { id: "text-1", kind: "text", delta: "先检查果园。" }],
-      ["message.part", { id: "tool-1", kind: "tool", toolName: "read_field_context", status: "running" }],
-      ["message.part", { id: "activity-1", kind: "activity", text: "正在读取地块记录。" }],
-      ["message.part", { id: "tool-1", kind: "tool", toolName: "read_field_context", status: "completed" }],
-      ["message.part", { id: "text-2", kind: "text", delta: "[E1] 建议立即巡园并记录病果。" }],
-      ["message.part", { id: "block-1", kind: "block", block }],
-      ["message.part", { id: "evidence-1", kind: "evidence", evidenceId: "E1", title: "脆李褐腐病防治", summary: "及时清除病果并改善通风。", source: "农业知识库" }],
-      ["message.part", { id: "private-1", kind: "reasoning", text: "PRIVATE_REASONING_MUST_NOT_RENDER" }],
+      ["message.part", { type: "text", id: "text-1", delta: "先检查果园。" }],
+      ["message.part", { type: "thinking", id: "thinking-1", status: "running", label: "正在读取地块记录。" }],
+      ["message.part", { type: "tool_call", callId: "tool-1", toolName: "read_field_context", label: "核对地块与物候", status: "running" }],
+      ["message.part", { type: "tool_call", callId: "tool-1", toolName: "read_field_context", label: "核对地块与物候", status: "done" }],
+      ["message.part", { type: "ui_block", blockKey: "FarmDirectoryCard:farm:7", block: { ...block, evidenceIds: ["E2"] }, citations: [{
+        index: 2,
+        evidenceId: "E2",
+        modality: "atlas",
+        title: "病虫害图鉴证据",
+        sourceName: "病虫害图鉴",
+        snippet: "图鉴中的标准症状描述。",
+      }] }],
+      ["ui.block.upserted", { blockKey: "FarmDirectoryCard:farm:7", block: { ...block, title: "相关农场（已更新）", evidenceIds: ["E2"] } }],
+      ["message.part", { type: "text", id: "text-2", delta: "[1] 建议立即巡园并记录病果。", citations: [{
+        index: 1,
+        evidenceId: "E1",
+        modality: "knowledge",
+        title: "脆李褐腐病防治",
+        sourceName: "农业知识库",
+        documentName: "脆李病虫害防治手册",
+        snippet: "及时清除病果并改善通风。",
+        score: 0.86,
+        expertStatus: "已审核",
+      }] }],
+      ["message.part", { type: "follow_ups", items: [{ label: "查看天气", prompt: "查看当前地块天气" }] }],
+      ["message.part", { type: "reasoning", id: "private-1", text: "PRIVATE_REASONING_MUST_NOT_RENDER" }],
       ["reasoning.delta", { delta: "PRIVATE_EVENT_MUST_NOT_RENDER" }],
       ["done", { status: "COMPLETED" }],
     ]),
@@ -143,11 +161,14 @@ test("ordered message.part protocol renders text, tools, activity, blocks and cl
 
   const answer = page.locator(".farmap-copilot__message--assistant").last();
   await expect(answer.getByText("先检查果园。", { exact: true })).toBeVisible();
-  await expect(answer.getByText("[E1] 建议立即巡园并记录病果。", { exact: true })).toBeVisible();
-  await expect(answer.locator('[data-part-kind="tool"]')).toContainText("已完成");
-  await expect(answer.locator('[data-part-kind="activity"]')).toContainText("正在读取地块记录。");
-  await expect(answer.locator('[data-block-type="FarmDirectoryCard"]')).toContainText("巫山果园");
-  await expect(answer.locator('[data-part-kind="evidence"]')).toContainText("脆李褐腐病防治");
+  await expect(answer.getByText("建议立即巡园并记录病果。")).toBeVisible();
+  await expect(answer.locator('[data-part-kind="tool_call"]')).toHaveCount(1);
+  await expect(answer.locator('[data-part-kind="tool_call"]')).toContainText("已完成");
+  await expect(answer.locator('[data-part-kind="thinking"]')).toContainText("正在读取地块记录。");
+  await expect(answer.locator('[data-block-type="FarmDirectoryCard"]')).toHaveCount(1);
+  await expect(answer.locator('[data-block-type="FarmDirectoryCard"]')).toContainText("相关农场（已更新）");
+  await expect(answer.locator('[data-part-kind="follow_ups"]')).toContainText("查看天气");
+  await expect(answer.locator(".farmap-response__followups")).toHaveCount(1);
   await expect(answer).not.toContainText("PRIVATE_REASONING_MUST_NOT_RENDER");
   await expect(answer).not.toContainText("PRIVATE_EVENT_MUST_NOT_RENDER");
   await expect(answer.locator('[data-part-kind="reasoning"]')).toHaveCount(0);
@@ -155,16 +176,24 @@ test("ordered message.part protocol renders text, tools, activity, blocks and cl
   const order = await answer.locator(".farmap-message-parts").evaluate((node) => Array.from(
     node.querySelectorAll<HTMLElement>("[data-part-kind], [data-block-type]"),
   ).map((element) => element.dataset.partKind ?? `block:${element.dataset.blockType}`));
-  expect(order).toEqual(["text", "tool", "activity", "text", "block:FarmDirectoryCard", "evidence"]);
+  expect(order).toEqual(["text", "thinking", "tool_call", "block:FarmDirectoryCard", "text", "follow_ups"]);
+
+  const evidenceDrawer = page.locator(".farmap-copilot-evidence-drawer");
+  await answer.locator('[data-block-type="FarmDirectoryCard"]').getByRole("button", { name: "查看证据 E2" }).click();
+  await expect(evidenceDrawer).toContainText("病虫害图鉴证据");
+  await evidenceDrawer.locator(".ant-drawer-close").click();
+  await expect(evidenceDrawer).toBeHidden();
 
   await answer.getByRole("button", { name: "查看证据 E1" }).click();
-  const evidence = answer.locator('[data-evidence-id="E1"]');
-  await expect(evidence).toHaveClass(/is-active/);
-  await expect(evidence).toBeFocused();
+  await expect(evidenceDrawer.getByText("证据溯源")).toBeVisible();
+  await expect(evidenceDrawer).toContainText("脆李褐腐病防治");
+  await expect(evidenceDrawer).toContainText("脆李病虫害防治手册");
+  await expect(evidenceDrawer).toContainText("86%");
+  await expect(evidenceDrawer).toContainText("及时清除病果并改善通风。");
   expect(routeCalls).toBe(0);
 });
 
-test("legacy-only SSE remains compatible when no message.part events arrive", async ({ page }) => {
+test("legacy-only SSE keeps its completed answer and cards visible", async ({ page }) => {
   await openWorkspace(page);
   let routeCalls = 0;
   await page.route("**/api/copilot/route", (route) => {
@@ -186,8 +215,108 @@ test("legacy-only SSE remains compatible when no message.part events arrive", as
   const answer = page.locator(".farmap-copilot__message--assistant").last();
   await expect(answer.getByText("旧版流式回答仍然可用。", { exact: true })).toBeVisible();
   await expect(answer.locator('[data-block-type="FarmDirectoryCard"]')).toContainText("巫山果园");
-  await expect(answer.locator(".farmap-message-parts")).toHaveCount(0);
   expect(routeCalls).toBe(0);
+});
+
+test("legacy kind-based message parts normalize into the ordered protocol", async ({ page }) => {
+  await openWorkspace(page);
+  await page.route("**/api/copilot/chat", (route) => route.fulfill({
+    contentType: "text/event-stream",
+    body: sse([
+      routeEvent,
+      ["message.part", { id: "legacy-text", kind: "text", delta: "[E1] 旧版零件仍可读取。" }],
+      ["message.part", { id: "legacy-tool", kind: "tool", toolName: "read_field_context", status: "completed" }],
+      ["message.part", { id: "legacy-activity", kind: "activity", text: "正在核对旧版地块记录。" }],
+      ["message.part", { id: "legacy-block", kind: "block", block }],
+      ["message.part", { id: "legacy-evidence", kind: "evidence", evidenceId: "E1", title: "旧版知识证据", summary: "旧版证据正文。", source: "农业知识库" }],
+      ["done", { status: "COMPLETED" }],
+    ]),
+  }));
+
+  await ask(page, "旧版协议是否兼容？");
+
+  const answer = page.locator(".farmap-copilot__message--assistant").last();
+  await expect(answer.getByText("旧版零件仍可读取。")).toBeVisible();
+  await expect(answer.locator('[data-part-kind="tool_call"]')).toContainText("已完成");
+  await expect(answer.locator('[data-part-kind="thinking"]')).toContainText("正在核对旧版地块记录。");
+  await expect(answer.locator('[data-block-type="FarmDirectoryCard"]')).toContainText("巫山果园");
+  await answer.getByRole("button", { name: "查看证据 E1" }).click();
+  await expect(page.locator(".farmap-copilot-evidence-drawer")).toContainText("旧版知识证据");
+});
+
+test("a draft-task card action posts one structured pending-approval draft", async ({ page }) => {
+  await openWorkspace(page);
+  const run = {
+    runId: "draft-run-1",
+    goal: "确认组件农事草稿",
+    mode: "real",
+    context: { farmId: "7", fieldId: "field-7", imageUrls: [], weather: {}, diagnosis: {}, sourceModes: {} },
+    status: "WAITING_FOR_APPROVAL",
+    steps: [],
+    toolCalls: [],
+    evidence: [],
+    output: {},
+    actions: [{ id: "draft-action-1", type: "CREATE_TASK", title: "巡园检查", detail: "检查褐腐病果并记录。", toolName: "create_operations_task", approvalRequired: true, approvalState: "REQUIRED" }],
+    approvalState: "REQUIRED",
+    traces: [],
+    metadata: {},
+    createdAt: "2026-11-27T00:00:00Z",
+    updatedAt: "2026-11-27T00:00:00Z",
+  };
+  let draftPayload: Record<string, unknown> | undefined;
+  let draftCalls = 0;
+  let approveCalls = 0;
+  await page.route("**/api/copilot/task-drafts", async (route) => {
+    draftCalls += 1;
+    draftPayload = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({ json: run });
+  });
+  await page.route("**/api/agent/runs/draft-run-1", (route) => route.fulfill({ json: run }));
+  await page.route("**/api/agent/runs/draft-run-1/events", (route) => route.fulfill({
+    contentType: "text/event-stream",
+    body: sse([["done", { status: "WAITING_FOR_APPROVAL" }]]),
+  }));
+  await page.route("**/api/agent/runs/**/approve", (route) => {
+    approveCalls += 1;
+    return route.fulfill({ json: run });
+  });
+  const taskBlock = {
+    ...block,
+    blockId: "draft-task-block",
+    title: "巡园建议",
+    data: { ...block.data, fieldId: "field-7" },
+    actions: [{
+      type: "draft-task",
+      label: "生成任务草稿",
+      draftTask: {
+        fieldId: "field-7",
+        title: "巡园检查",
+        detail: "检查褐腐病果并记录。",
+        scheduledFor: "2026-12-01",
+      },
+    }],
+  };
+  await page.route("**/api/copilot/chat", (route) => route.fulfill({
+    contentType: "text/event-stream",
+    body: sse([
+      routeEvent,
+      ["message.part", { type: "ui_block", blockKey: "FarmDirectoryCard:draft:7", block: taskBlock }],
+      ["done", { status: "COMPLETED" }],
+    ]),
+  }));
+
+  await ask(page, "为巡园生成任务草稿");
+  await page.getByRole("button", { name: "生成任务草稿" }).click();
+
+  await expect.poll(() => draftCalls).toBe(1);
+  expect(draftPayload).toEqual({
+    fieldId: "field-7",
+    title: "巡园检查",
+    detail: "检查褐腐病果并记录。",
+    scheduledFor: "2026-12-01",
+  });
+  await expect(page.getByText("多模态农业 Agent", { exact: true })).toBeVisible();
+  expect(approveCalls).toBe(0);
 });
 
 test("a zero-event transport failure recovers through the route path without leaving a stale error bubble", async ({ page }) => {
@@ -228,7 +357,7 @@ test("a server stream error stays visible after partial ordered text", async ({ 
     contentType: "text/event-stream",
     body: sse([
       routeEvent,
-      ["message.part", { id: "partial-text", kind: "text", delta: "已读取部分真实结果。" }],
+      ["message.part", { type: "text", id: "partial-text", delta: "已读取部分真实结果。" }],
       ["error", { message: "模型中断，部分结果已保留。" }],
     ]),
   }));

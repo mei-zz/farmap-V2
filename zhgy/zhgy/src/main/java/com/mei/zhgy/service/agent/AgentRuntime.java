@@ -37,7 +37,12 @@ import java.util.concurrent.TimeUnit;
 public class AgentRuntime {
     private static final String PI_DRAFT = "pi-tool-draft";
 
-    public record TaskDraft(String title, String detail, String scheduledFor) {
+    public record TaskDraft(String fieldId, String title, String detail, String scheduledFor,
+                            @com.fasterxml.jackson.annotation.JsonIgnore List<DiagnosisEvidenceVO> supportingEvidence) {
+        public TaskDraft(String title, String detail, String scheduledFor) {
+            this(null, title, detail, scheduledFor, List.of());
+        }
+
         public TaskDraft {
             if (title == null || title.isBlank() || title.length() > 120
                     || detail == null || detail.isBlank() || detail.length() > 1200) {
@@ -45,6 +50,10 @@ public class AgentRuntime {
             }
             title = title.trim();
             detail = detail.trim();
+            if (fieldId != null && (fieldId.isBlank() || fieldId.length() > 128)) {
+                throw new IllegalArgumentException("Invalid task draft field");
+            }
+            supportingEvidence = supportingEvidence == null ? List.of() : List.copyOf(supportingEvidence);
             if (scheduledFor != null) {
                 if (!scheduledFor.matches("\\d{4}-\\d{2}-\\d{2}")) throw new IllegalArgumentException("ISO task date required");
                 try { scheduledFor = LocalDate.parse(scheduledFor).toString(); }
@@ -212,6 +221,9 @@ public class AgentRuntime {
         if (draft == null || scope == null || scope.getFieldId() == null || scope.getFieldId().isBlank()) {
             throw new IllegalArgumentException("A field and a task draft are required");
         }
+        if (draft.fieldId() != null && !draft.fieldId().equals(scope.getFieldId())) {
+            throw new IllegalArgumentException("Task draft field must match the authorized scope");
+        }
         if (draft.scheduledFor() != null && LocalDate.parse(draft.scheduledFor()).isBefore(LocalDate.now(ZoneId.of("Asia/Shanghai")))) {
             throw new IllegalArgumentException("Task draft date is in the past");
         }
@@ -228,6 +240,11 @@ public class AgentRuntime {
         addDirectTaskContextEvidence(run, Map.of("field-context", Map.of(
                 "fieldFactsStatus", facts.status(), "fieldName", text(canonical.getFieldName(), facts.fieldId()),
                 "cropLabel", text(facts.cropLabel(), "当前作物"), "phenologyStageLabel", text(facts.currentGrowthStageLabel(), "未登记"))));
+        if (draft.supportingEvidence().stream().anyMatch(item -> item.getSource() == null
+                || item.getSource().getFieldId() != null && !canonical.getFieldId().equals(item.getSource().getFieldId()))) {
+            throw new IllegalArgumentException("Evidence must match the authorized field");
+        }
+        mergeEvidence(run, draft.supportingEvidence());
         return run;
     }
 

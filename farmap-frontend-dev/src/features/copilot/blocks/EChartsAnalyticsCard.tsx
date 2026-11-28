@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Maximize2 } from "lucide-react";
 import { Modal } from "antd";
-import { init, use, type ECharts } from "echarts/core";
+import * as echarts from "echarts/core";
+import type { ECharts } from "echarts/core";
 import { BarChart, LineChart } from "echarts/charts";
 import { AriaComponent, GridComponent, LegendComponent, MarkLineComponent, TooltipComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import type { EChartsOption } from "echarts";
 import type { AgentUiBlock, ChartSeries, ChartThreshold } from "../uiBlocks";
 
-use([BarChart, LineChart, AriaComponent, GridComponent, LegendComponent, MarkLineComponent, TooltipComponent, CanvasRenderer]);
+echarts.use([BarChart, LineChart, AriaComponent, GridComponent, LegendComponent, MarkLineComponent, TooltipComponent, CanvasRenderer]);
 
 const palette = ["#176b4d", "#b0792b", "#397a97", "#8b4c60"];
 
@@ -26,7 +27,7 @@ function AnalyticsCanvas({ series, thresholds, title, height }: { series: ChartS
     if (!target || !series.length) return;
     let chart: ECharts | undefined;
     try {
-      chart = init(target, undefined, { renderer: "canvas" });
+      chart = echarts.init(target, undefined, { renderer: "canvas" });
       const names = series.map(seriesName);
       const option: EChartsOption = {
         animationDuration: 320,
@@ -37,7 +38,6 @@ function AnalyticsCanvas({ series, thresholds, title, height }: { series: ChartS
         tooltip: { trigger: "axis", renderMode: "richText", axisPointer: { type: "cross" } },
         xAxis: {
           type: "category",
-          name: series[0]?.axisLabel,
           data: labels,
           axisLabel: { color: "#68766c", hideOverlap: true },
           axisLine: { lineStyle: { color: "#dce6de" } },
@@ -53,12 +53,10 @@ function AnalyticsCanvas({ series, thresholds, title, height }: { series: ChartS
           const markLines: Array<{ name: string; yAxis: number }> = [];
           if (line.threshold !== undefined) markLines.push({ name: `${line.label} ${line.threshold}${line.unit ?? ""}`, yAxis: line.threshold });
           const firstOnAxis = series.findIndex((candidate) => (candidate.axis === "right" ? 1 : 0) === axis) === index;
-          if (firstOnAxis) {
-            for (const threshold of thresholds) {
-              if (threshold.seriesLabel && threshold.seriesLabel !== line.label) continue;
-              if (!threshold.seriesLabel && (threshold.axis === "right" ? 1 : 0) !== axis) continue;
-              markLines.push({ name: `${threshold.label} ${threshold.value}${threshold.unit ?? ""}`, yAxis: threshold.value });
-            }
+          for (const threshold of thresholds) {
+            const thresholdAxis = threshold.axis === "right" ? 1 : 0;
+            if (threshold.seriesLabel ? threshold.seriesLabel !== line.label : !firstOnAxis || thresholdAxis !== axis) continue;
+            markLines.push({ name: `${threshold.label} ${threshold.value}${threshold.unit ?? ""}`, yAxis: threshold.value });
           }
           const color = line.color ?? palette[index % palette.length];
           return {

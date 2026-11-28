@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { AlertTriangle, ArrowUpRight, BookOpen, CalendarDays, ChartNoAxesCombined, ChevronDown, CloudSun, Leaf, ListChecks, Map, Maximize2, Sprout } from "lucide-react";
 import { Modal } from "antd";
 import type { AgentRun } from "@/features/agent/contract";
@@ -7,14 +7,16 @@ import { getMaturityRun } from "@/features/maturity/service";
 import { OperationTaskFeedback, PlanFromAnalysis } from "./OperationsChatArtifacts";
 import { WeatherPresentationCard } from "./WeatherPresentationCard";
 import { OperationsTaskView } from "./OperationsTaskViews";
+import { prepareCopilotTaskBatch } from "./service";
 import { PlumPhenologyTimeline } from "./blocks/PlumPhenologyTimeline";
 import { SprayWeatherWindowCard } from "./blocks/SprayWeatherWindowCard";
 import { PestComparisonCard } from "./blocks/PestComparisonCard";
+import { ComparisonMatrixCard } from "./blocks/ComparisonMatrixCard";
+import { ActionChecklistCard } from "./blocks/ActionChecklistCard";
 import { MemoryProposalCard } from "./blocks/MemoryProposalCard";
-import { EvidenceTrendChart } from "./blocks/EvidenceTrendChart";
 import { operationsViews } from "@/routes/navigation";
 import PlanningRecommendations from "@/features/pro-workspaces/PlanningRecommendations";
-import { detailRoute, parseUiBlock, uiId, type AgentUiAction, type AgentUiBlock, type BlockComponentType, type BlockData, type BlockItem, type MaturityStage } from "./uiBlocks";
+import { detailRoute, parseUiBlock, uiId, type AgentUiAction, type AgentUiBlock, type BlockComponentType, type BlockData, type BlockItem, type DraftTaskPayload, type MaturityStage } from "./uiBlocks";
 import "./agent-ui-blocks.css";
 
 type BlockActions = {
@@ -22,9 +24,16 @@ type BlockActions = {
   onSelectField?: (id: string) => void;
   onOpenDetail?: (route: string) => void;
   onOpenAnalysis?: (runId: string, farmId?: number, fieldId?: string) => void;
+  onDraftTask?: (payload: DraftTaskPayload) => void;
+  onOpenEvidence?: (evidenceId: string) => void;
   busy?: boolean;
 };
-type ContentProps = BlockActions & { block: AgentUiBlock };
+type ContentProps = BlockActions & { block: AgentUiBlock; onDraftBatch?: (tasks: DraftTaskPayload[]) => void };
+
+const LazyEChartsAnalyticsCard = lazy(() => import("./blocks/EChartsAnalyticsCard")
+  .then((module) => ({ default: module.EChartsAnalyticsCard })));
+const LazyEvidenceTrendChart = lazy(() => import("./blocks/EvidenceTrendChart")
+  .then((module) => ({ default: module.EvidenceTrendChart })));
 
 const blockStatus = { ready: "已获取", loading: "读取中", unavailable: "暂无数据", "needs-input": "待补充", completed: "已完成", failed: "暂不可用" };
 const runStatus: Record<AgentRun["status"], string> = {
@@ -53,29 +62,42 @@ function DataRows({ block }: ContentProps) {
   </>;
 }
 
-function Plot({ block, ...actions }: ContentProps) {
+function hasNumericSeries(block: AgentUiBlock) {
   const series = block.data?.series ?? [];
+  return series.length > 0 && series.every((line) => line.points.length > 0
+    && line.points.every((point) => Number.isFinite(point.value)));
+}
+
+function ChartLoading({ block }: { block: AgentUiBlock }) {
+  const series = block.data?.series ?? [];
+  const points = series.reduce((total, line) => total + line.points.length, 0);
+  return <div className="farmap-chart-loading" role="status" aria-live="polite">
+    <ChartNoAxesCombined size={18} aria-hidden="true" />
+    <span>图表加载中…</span>
+    {series.length > 0 && <small>{series.length} 组数据 · {points} 个时点</small>}
+  </div>;
+}
+
+function ChartDataFallback({ block, ...actions }: ContentProps) {
+  const hasRows = Boolean(block.data?.metrics?.length || block.data?.items?.length);
   return <>
     <DataRows block={block} {...actions} />
-    {series.map(({ label, points }, index) => {
-      const values = points.map(({ value }) => value);
-      const low = Math.min(...values);
-      const high = Math.max(...values);
-      const coordinates = values.map((value, i) => `${18 + 604 * i / Math.max(1, values.length - 1)},${high === low ? 70 : 120 - 100 * (value - low) / (high - low)}`);
-      return <figure className="farmap-block__plot" key={index}>
-        <figcaption>{label}</figcaption>
-        <svg viewBox="0 0 640 146" role="img" aria-label={`${label}，${points[0].label}至${points.at(-1)?.label}`}>
-          {[20, 70, 120].map((y) => <line key={y} x1="18" x2="622" y1={y} y2={y} stroke="#e3e9e3" />)}
-          <polyline points={coordinates.join(" ")} fill="none" stroke="#176b4d" strokeWidth="2.5" strokeLinejoin="round" />
-          {coordinates.map((pair, pointIndex) => { const [x, y] = pair.split(","); return <circle key={pointIndex} cx={x} cy={y} r="3" fill="#176b4d"><title>{points[pointIndex].label}：{values[pointIndex]}</title></circle>; })}
-        </svg>
-        <div className="farmap-block__axis"><span>{points[0].label}</span><span>{points.at(-1)?.label}</span></div>
-        <details className="farmap-block__sources"><summary>查看数据</summary><dl className="farmap-block__rows">
-          {points.map((point, i) => <div key={i}><dt>{point.label}</dt><dd>{point.value}</dd></div>)}
-        </dl></details>
-      </figure>;
-    })}
+    {!hasRows && !block.summary && block.status !== "unavailable" && <p>暂无可绘制的核验数据。</p>}
   </>;
+}
+
+function AnalyticsFrontCard({ block, ...actions }: ContentProps) {
+  if (!hasNumericSeries(block)) return <ChartDataFallback block={block} {...actions} />;
+  return <Suspense fallback={<ChartLoading block={block} />}>
+    <LazyEChartsAnalyticsCard block={block} />
+  </Suspense>;
+}
+
+function EvidenceTrendFrontCard({ block, ...actions }: ContentProps) {
+  if (!block.data?.series?.length) return <ChartDataFallback block={block} {...actions} />;
+  return <Suspense fallback={<ChartLoading block={block} />}>
+    <LazyEvidenceTrendChart block={block} />
+  </Suspense>;
 }
 
 function MapOverview({ block, onSelectField, ...actions }: ContentProps) {
@@ -245,9 +267,10 @@ function ParcelOverview({ block, ...actions }: ContentProps) {
 }
 
 const actionCards = new Set<BlockComponentType>(["FarmPlanCard", "FertilizerPlanCard", "IrrigationPlanCard", "FarmCalendarCard",
-  "FarmTaskList", "ClarificationForm", "ConfirmationCard", "ApprovalCard", "TaskProgressCard", "FeedbackCard", "FarmRecommendationCard", "OperationTaskCard", "OperationsQueryCard"]);
+  "FarmTaskList", "ClarificationForm", "ConfirmationCard", "ApprovalCard", "TaskProgressCard", "FeedbackCard", "FarmRecommendationCard", "OperationTaskCard", "OperationsQueryCard", "ActionChecklistCard"]);
 const analysisCards = new Set<BlockComponentType>(["CropGrowthChart", "WeatherTrendChart", "SoilTrendChart", "ParcelCompareChart", "FarmAnalyticsCard",
-  "DiagnosisCard", "PestDiagnosisCard", "RiskAlertCard", "DiagnosisEvidenceCard", "EvidenceCard", "ExpertReviewCard", "FarmMapCard", "FarmMaturityCard", "FarmAdviceCard"]);
+  "DiagnosisCard", "PestDiagnosisCard", "RiskAlertCard", "DiagnosisEvidenceCard", "EvidenceCard", "ExpertReviewCard", "FarmMapCard", "FarmMaturityCard", "FarmAdviceCard",
+  "SprayWeatherWindowCard", "PestComparisonCard", "EChartsAnalyticsCard", "ComparisonMatrixCard"]);
 
 function TaskQuery({ block, onOpenDetail }: ContentProps) {
   const scope = block.data;
@@ -363,9 +386,9 @@ const registry: Record<BlockComponentType, { content: (props: ContentProps) => R
   FarmDirectoryCard: { content: FarmDirectory, icon: Map },
   ParcelOverviewCard: { content: ParcelOverview, icon: Map }, WeatherCard: { content: WeatherPresentationCard, icon: CloudSun },
   EnvironmentCard: { content: DataRows, icon: Leaf }, CropInfoCard: { content: DataRows, icon: Sprout },
-  FarmHistoryCard: { content: DataRows, icon: CalendarDays }, CropGrowthChart: { content: Plot, icon: ChartNoAxesCombined },
-  WeatherTrendChart: { content: EvidenceTrendChart, icon: CloudSun }, SoilTrendChart: { content: Plot, icon: ChartNoAxesCombined },
-  ParcelCompareChart: { content: EvidenceTrendChart, icon: ChartNoAxesCombined }, FarmAnalyticsCard: { content: Plot, icon: ChartNoAxesCombined },
+  FarmHistoryCard: { content: DataRows, icon: CalendarDays }, CropGrowthChart: { content: AnalyticsFrontCard, icon: ChartNoAxesCombined },
+  WeatherTrendChart: { content: EvidenceTrendFrontCard, icon: CloudSun }, SoilTrendChart: { content: AnalyticsFrontCard, icon: ChartNoAxesCombined },
+  ParcelCompareChart: { content: EvidenceTrendFrontCard, icon: ChartNoAxesCombined }, FarmAnalyticsCard: { content: AnalyticsFrontCard, icon: ChartNoAxesCombined },
   DiagnosisCard: { content: DataRows, icon: Leaf }, PestDiagnosisCard: { content: DataRows, icon: Leaf },
   RiskAlertCard: { content: DataRows, icon: AlertTriangle }, DiagnosisEvidenceCard: { content: DataRows, icon: BookOpen },
   FarmPlanCard: { content: Workflow, icon: CalendarDays }, FertilizerPlanCard: { content: Workflow, icon: Sprout },
@@ -383,6 +406,9 @@ const registry: Record<BlockComponentType, { content: (props: ContentProps) => R
   PlumPhenologyTimeline: { content: PlumPhenologyTimeline, icon: Sprout },
   SprayWeatherWindowCard: { content: SprayWeatherWindowCard, icon: CloudSun },
   PestComparisonCard: { content: PestComparisonCard, icon: BookOpen },
+  EChartsAnalyticsCard: { content: AnalyticsFrontCard, icon: ChartNoAxesCombined },
+  ComparisonMatrixCard: { content: ComparisonMatrixCard, icon: ChartNoAxesCombined },
+  ActionChecklistCard: { content: ActionChecklistCard, icon: ListChecks },
   MemoryProposalCard: { content: MemoryProposalCard, icon: BookOpen },
   FarmOperationChecklist: { content: DataRows, icon: ListChecks },
 };
@@ -390,6 +416,9 @@ const registry: Record<BlockComponentType, { content: (props: ContentProps) => R
 function AgentUiCard({ block, ...actions }: ContentProps) {
   const [expanded, setExpanded] = useState(true);
   const [large, setLarge] = useState(false);
+  const [batchPending, setBatchPending] = useState(false);
+  const [batchError, setBatchError] = useState("");
+  const [batchRuns, setBatchRuns] = useState<AgentRun[]>([]);
   const { content: Content, icon: Icon } = registry[block.componentType];
   if (block.componentType === "FarmInspectionProgress") {
     return <article className="farmap-block farmap-block--progress" data-block-type={block.componentType} aria-label={block.title}>
@@ -398,6 +427,20 @@ function AgentUiCard({ block, ...actions }: ContentProps) {
     </article>;
   }
   const level = actionCards.has(block.componentType) ? "action" : analysisCards.has(block.componentType) ? "analysis" : "info";
+  const simpleActions = block.actions.filter((action) => action.type !== "confirm-memory" && (action.type !== "expand" || !large));
+  async function draftBatch(tasks: DraftTaskPayload[]) {
+    if (batchPending) return;
+    setBatchPending(true);
+    setBatchError("");
+    try {
+      const runs = await prepareCopilotTaskBatch(tasks);
+      setBatchRuns((previous) => [...previous, ...runs]);
+    } catch (error) {
+      setBatchError(error instanceof Error ? error.message : "农事任务草稿暂未创建，请重试。");
+    } finally {
+      setBatchPending(false);
+    }
+  }
   function dispatch(action: AgentUiAction) {
     if (action.type === "expand") setLarge(true);
     if (action.type === "prompt" && action.value) actions.onPrompt(action.value);
@@ -406,16 +449,32 @@ function AgentUiCard({ block, ...actions }: ContentProps) {
       const route = detailRoute(action.value);
       if (route) actions.onOpenDetail?.(route);
     }
+    if (action.type === "draft-task" && action.draftTask) actions.onDraftTask?.(action.draftTask);
+    if (action.type === "open-evidence-drawer" && action.evidenceId) actions.onOpenEvidence?.(action.evidenceId);
   }
   const content = <div className="farmap-block__body">
     {block.summary && <p className="farmap-block__summary">{block.summary}</p>}
-    <Content block={block} {...actions} />
+    <Content block={block} {...actions} onDraftBatch={actions.onDraftTask && !batchPending ? (tasks) => void draftBatch(tasks) : undefined} />
+    {batchPending && <p role="status">正在准备待审批任务草稿…</p>}
+    {batchError && <p role="alert">{batchError}</p>}
+    {batchRuns.length > 0 && <section aria-label="待审批农事任务草稿">
+      {batchRuns.map((run) => <Workflow key={run.runId} block={{ ...block, data: { runId: run.runId } }} {...actions} />)}
+    </section>}
+    {block.evidenceIds.length > 0 && <div className="farmap-block__evidence" aria-label="证据来源">
+      <span>证据</span>
+      {block.evidenceIds.map((evidenceId) => <button key={evidenceId} type="button" disabled={!actions.onOpenEvidence}
+        onClick={() => actions.onOpenEvidence?.(evidenceId)}>查看证据 {evidenceId}</button>)}
+    </div>}
     {block.componentType !== "WeatherCard" && block.provenance.length > 0 && <details className="farmap-block__sources"><summary>查看来源</summary>
       <ul>{block.provenance.map((source, index) => <li key={index}>{source.label}</li>)}</ul>
     </details>}
-    {block.actions.length > 0 && <div className="farmap-block__actions">
-      {block.actions.filter((action) => action.type !== "expand" || !large).map((action, index) => (
-        <button key={index} type="button" onClick={() => dispatch(action)}>{action.label}{action.type === "open-detail" && <ArrowUpRight size={13} />}</button>
+    {simpleActions.length > 0 && <div className="farmap-block__actions">
+      {simpleActions.map((action, index) => (
+        <button key={index} type="button" onClick={() => dispatch(action)}
+          disabled={action.type === "draft-task" ? !actions.onDraftTask
+            : action.type === "open-evidence-drawer" && !actions.onOpenEvidence}>
+          {action.label}{action.type === "open-detail" && <ArrowUpRight size={13} />}
+        </button>
       ))}
     </div>}
   </div>;
@@ -423,7 +482,7 @@ function AgentUiCard({ block, ...actions }: ContentProps) {
     <header className="farmap-block__heading">
       <span className="farmap-block__icon"><Icon size={17} /></span><h3>{block.title}</h3>
       {block.status !== "ready" && <span className="farmap-block__tag">{blockStatus[block.status]}</span>}
-      {((block.componentType === "FarmMaturityCard" && !block.data?.runId) || !!block.data?.series?.length || !!block.data?.locations?.length || block.actions.some((action) => action.type === "expand")) && <button type="button" className="farmap-block__icon-button" aria-label="展开分析视图" onClick={() => setLarge(true)}><Maximize2 size={15} /></button>}
+      {((block.componentType === "FarmMaturityCard" && !block.data?.runId) || block.componentType === "ComparisonMatrixCard" || !!block.data?.series?.length || !!block.data?.locations?.length || block.actions.some((action) => action.type === "expand")) && <button type="button" className="farmap-block__icon-button" aria-label="展开分析视图" onClick={() => setLarge(true)}><Maximize2 size={15} /></button>}
       <button type="button" className="farmap-block__icon-button" aria-expanded={expanded} aria-label={expanded ? "收起组件" : "展开组件"} onClick={() => setExpanded(!expanded)}><ChevronDown size={16} /></button>
     </header>
     {expanded && !large && content}

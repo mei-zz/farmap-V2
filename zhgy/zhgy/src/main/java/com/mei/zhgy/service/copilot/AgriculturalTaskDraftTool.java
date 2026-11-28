@@ -82,7 +82,8 @@ public final class AgriculturalTaskDraftTool {
             }
             if (!unique.add(List.of(scope.fieldId(), title, date == null ? "" : date))) return ToolReply.error("DUPLICATE_DRAFT_TASK");
             var target = AgentContext.builder().farmId(scope.farmId().toString()).fieldId(scope.fieldId()).build();
-            var draft = new AgentRuntime.TaskDraft(title, precaution == null ? detail : detail + "\n注意事项：" + precaution, date);
+            var draft = new AgentRuntime.TaskDraft(scope.fieldId(), title,
+                    precaution == null ? detail : detail + "\n注意事项：" + precaution, date, evidence);
             tasks.add(new AgentRuntime.ScopedTaskDraft(target, draft, evidence));
         }
         return ToolReply.result(new Batch(tasks));

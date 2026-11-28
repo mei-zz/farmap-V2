@@ -1,0 +1,575 @@
+{
+  "schemaVersion": "plum-agent-golden-eval/v1",
+  "datasetName": "FarMap plum agricultural Agent golden evaluation",
+  "datasetVersion": "plum-agent-golden-v1",
+  "description": "Labeled, deterministic fixtures for runtime tool dispatch, retrieval calibration, typed image facts, evidence grounding, spray safety and UI component contracts.",
+  "providerPolicy": {
+    "controlledReplay": {
+      "description": "An in-process OpenAI-compatible HTTP fixture returns scripted tool calls. The real Pi worker, Java runtime, tool schemas and tool handlers execute; model tool-selection quality is not measured.",
+      "model": "fixture-script",
+      "measured": true
+    },
+    "realProvider": {
+      "description": "Live model quality is outside the default offline suite. A zero denominator means no live-provider claim is made.",
+      "status": "NOT_RUN",
+      "denominator": 0,
+      "reason": "Requires an explicitly configured provider; the evaluation never reads credentials from .env."
+    }
+  },
+  "toolCallScenarios": [
+    {
+      "id": "AGENT-HOP-01",
+      "question": "查看东坡一号地本周待办，并提示临近采收的施药风险。",
+      "expectedToolOrder": ["query_operations_tasks", "query_operations_tasks", "render_ui_block"],
+      "repairError": "INVALID_ARGUMENTS",
+      "expectedToolCalls": [
+        {"name": "query_operations_tasks", "expectedParameters": {}},
+        {
+          "name": "query_operations_tasks",
+          "expectedParameters": {
+            "farmId": 42,
+            "fieldId": "east-1",
+            "from": "2026-11-27",
+            "to": "2026-12-04",
+            "view": "calendar",
+            "status": "pending"
+          }
+        },
+        {
+          "name": "render_ui_block",
+          "expectedParameters": {
+            "componentType": "RiskAlertCard",
+            "title": "采收前风险提示",
+            "evidenceIds": ["E1"]
+          }
+        }
+      ],
+      "replayRounds": [
+        [
+          {
+            "name": "query_operations_tasks",
+            "arguments": {"farmId": 42, "fieldId": "east-1", "from": "2026-12-04", "to": "2026-11-27"}
+          }
+        ],
+        [
+          {
+            "name": "query_operations_tasks",
+            "arguments": {
+              "farmId": "42",
+              "fieldId": "east-1",
+              "from": "2026-11-27",
+              "to": "2026-12-04",
+              "view": "calendar",
+              "status": "pending"
+            }
+          }
+        ],
+        [
+          {
+            "name": "render_ui_block",
+            "arguments": {
+              "componentType": "RiskAlertCard",
+              "title": "采收前风险提示",
+              "summary": "先核对安全间隔期和天气窗口。",
+              "evidenceIds": ["E1"],
+              "props": {
+                "items": [
+                  {"label": "待办与天气窗口", "value": "需人工复核"}
+                ]
+              }
+            }
+          }
+        ]
+      ],
+      "finalAnswer": "已读取任务并生成风险提示。",
+      "contextCarryMarker": "fixture-tasks-visible"
+    },
+    {
+      "id": "AGENT-HOP-02",
+      "question": "请分析这张脆李叶果现场图片里的病斑，再对照图鉴。",
+      "expectedToolOrder": ["analyze_uploaded_images", "lookup_reference_atlas", "lookup_reference_atlas"],
+      "repairError": "UNKNOWN_GROWTH_STAGE",
+      "expectedToolCalls": [
+        {
+          "name": "analyze_uploaded_images",
+          "expectedParameters": {
+            "farmId": 42,
+            "fieldId": "east-1",
+            "query": "请分析这张脆李叶果现场图片里的病斑，再对照图鉴。",
+            "imageUrls": ["https://uploads.example.test/golden/plum-leaf.jpg"]
+          }
+        },
+        {"name": "lookup_reference_atlas", "expectedParameters": {}},
+        {
+          "name": "lookup_reference_atlas",
+          "expectedParameters": {
+            "crop": "plum",
+            "growthStage": "fruit_development",
+            "diseaseOrPest": "褐腐病"
+          }
+        }
+      ],
+      "replayRounds": [
+        [
+          {
+            "name": "analyze_uploaded_images",
+            "arguments": {
+              "imageUrls": ["https://uploads.example.test/golden/plum-leaf.jpg"],
+              "focus": "DISEASE",
+              "fieldId": "east-1"
+            }
+          }
+        ],
+        [
+          {
+            "name": "lookup_reference_atlas",
+            "arguments": {"diseaseOrPest": "褐腐病", "growthStage": "不存在的物候", "crop": "脆李"}
+          }
+        ],
+        [
+          {
+            "name": "lookup_reference_atlas",
+            "arguments": {
+              "diseaseOrPest": "褐腐病",
+              "growthStage": "果实发育期",
+              "crop": "脆李"
+            }
+          }
+        ]
+      ],
+      "finalAnswer": "已提取图片症状并给出图鉴对照。",
+      "contextCarryMarker": "果面褐色水渍斑"
+    },
+    {
+      "id": "AGENT-HOP-03",
+      "question": "巡检全场成熟度，再汇总待办。",
+      "expectedToolOrder": ["inspect_camera_maturity", "query_operations_tasks"],
+      "expectedToolCalls": [
+        {
+          "name": "inspect_camera_maturity",
+          "expectedParameters": {
+            "farmId": 42,
+            "kind": "MATURITY",
+            "mode": "FARM"
+          }
+        },
+        {
+          "name": "query_operations_tasks",
+          "expectedParameters": {
+            "farmId": 42,
+            "view": "tasks"
+          }
+        }
+      ],
+      "replayRounds": [
+        [
+          {
+            "name": "inspect_camera_maturity",
+            "arguments": {"scope": "FARM", "kind": "MATURITY"}
+          }
+        ],
+        [
+          {
+            "name": "query_operations_tasks",
+            "arguments": {"farmId": 42}
+          }
+        ]
+      ],
+      "finalAnswer": "已完成巡检范围查询并汇总待办。",
+      "contextCarryMarker": "maturity-run-golden"
+    }
+  ],
+  "retrievalCases": [
+    {
+      "id": "RET-01",
+      "query": "脆李褐腐病采前管理",
+      "items": [
+        {"id": "kb-brown-rot", "modality": "knowledge", "score": 0.12, "relevance": 3,
+          "metadata": {"rrfScore": 0.032, "rrfUpperBound": 0.0328}},
+        {"id": "kb-generic-high", "modality": "knowledge", "score": 0.91, "relevance": 0,
+          "metadata": {}},
+        {"id": "kb-generic-mid", "modality": "knowledge", "score": 0.70, "relevance": 0,
+          "metadata": {}},
+        {"id": "kb-generic-low", "modality": "knowledge", "score": 0.35, "relevance": 0,
+          "metadata": {}}
+      ]
+    },
+    {
+      "id": "RET-02",
+      "query": "专家复核的脆李裂果病例",
+      "items": [
+        {"id": "case-expert-crack", "modality": "historical_case", "score": 0.78, "relevance": 3,
+          "metadata": {"expertStatus": "expert_confirmed"}},
+        {"id": "camera-raw-high", "modality": "camera", "score": 0.85, "relevance": 0,
+          "metadata": {}},
+        {"id": "case-verified-secondary", "modality": "historical_case", "score": 0.55, "relevance": 2,
+          "metadata": {}},
+        {"id": "knowledge-secondary", "modality": "knowledge", "score": 0.40, "relevance": 0,
+          "metadata": {}}
+      ]
+    },
+    {
+      "id": "RET-03",
+      "query": "脆李蚜虫叶片卷曲",
+      "items": [
+        {"id": "kb-vector-aphid", "modality": "knowledge", "score": 0.60, "relevance": 3,
+          "metadata": {"retrievalType": "milvus-semantic", "vectorScore": 0.90}},
+        {"id": "kb-raw-distractor", "modality": "knowledge", "score": 0.70, "relevance": 0,
+          "metadata": {}},
+        {"id": "kb-vector-secondary", "modality": "knowledge", "score": 0.20, "relevance": 1,
+          "metadata": {"retrievalType": "milvus-semantic", "vectorScore": 0.50}}
+      ]
+    },
+    {
+      "id": "RET-04",
+      "query": "脆李采后树势恢复",
+      "items": [
+        {"id": "kb-rerank-recovery", "modality": "knowledge", "score": 0.30, "relevance": 3,
+          "metadata": {"rerankScore": 0.82}},
+        {"id": "camera-raw-noise", "modality": "camera", "score": 0.80, "relevance": 0,
+          "metadata": {}},
+        {"id": "kb-bounded-secondary", "modality": "knowledge", "score": 0.20, "relevance": 1,
+          "metadata": {}}
+      ]
+    }
+  ],
+  "visualCases": [
+    {
+      "id": "VIS-01",
+      "content": "{\"subject\":\"脆李果实\",\"visibleSymptoms\":[\"果面褐色水渍斑\",\"灰褐色绒层\"],\"imageClear\":true,\"observedPhenologyStage\":null,\"missingViews\":[\"叶片背面\"],\"uncertainty\":\"仅覆盖果实近景\"}",
+      "expectedValid": true,
+      "expectedSubject": "脆李果实",
+      "expectedSymptoms": ["果面褐色水渍斑", "灰褐色绒层"],
+      "expectedImageClear": true
+    },
+    {
+      "id": "VIS-02",
+      "content": "```json\n{\"subject\":\"脆李叶片\",\"visibleSymptoms\":[\"叶片黄化\",\"叶缘卷曲\"],\"imageClear\":false,\"observedPhenologyStage\":null,\"missingViews\":[],\"uncertainty\":\"逆光，细节不可辨\"}\n```",
+      "expectedValid": true,
+      "expectedSubject": "脆李叶片",
+      "expectedSymptoms": ["叶片黄化", "叶缘卷曲"],
+      "expectedImageClear": false
+    },
+    {
+      "id": "VIS-03",
+      "content": "{\"subject\":\"脆李枝条\",\"visibleSymptoms\":[\"流胶\"],\"observedPhenologyStage\":null}",
+      "expectedValid": false,
+      "expectedSubject": null,
+      "expectedSymptoms": [],
+      "expectedImageClear": null
+    },
+    {
+      "id": "VIS-04",
+      "content": "{\"subject\":\"脆李果实\",\"visibleSymptoms\":\"果面褐斑\",\"imageClear\":true}",
+      "expectedValid": false,
+      "expectedSubject": null,
+      "expectedSymptoms": [],
+      "expectedImageClear": null
+    }
+  ],
+  "faithfulnessCases": [
+    {
+      "id": "FAITH-01",
+      "availableEvidenceIds": ["e-camera", "e-knowledge"],
+      "claims": [{"id": "c1", "evidenceIds": ["e-camera"]}],
+      "recommendations": [{"id": "r1", "evidenceIds": ["e-camera", "e-knowledge"]}],
+      "expectedValid": true
+    },
+    {
+      "id": "FAITH-02",
+      "availableEvidenceIds": ["e-knowledge"],
+      "claims": [{"id": "c1", "evidenceIds": ["e-knowledge"]}],
+      "recommendations": [{"id": "r1", "evidenceIds": ["e-knowledge"]}],
+      "expectedValid": true
+    },
+    {
+      "id": "FAITH-03",
+      "availableEvidenceIds": ["e-camera"],
+      "claims": [{"id": "c1", "evidenceIds": ["invented-source"]}],
+      "recommendations": [{"id": "r1", "evidenceIds": ["e-camera"]}],
+      "expectedValid": false
+    },
+    {
+      "id": "FAITH-04",
+      "availableEvidenceIds": ["e-camera"],
+      "claims": [{"id": "c1", "evidenceIds": ["e-camera"]}],
+      "recommendations": [{"id": "r1", "evidenceIds": []}],
+      "expectedValid": false
+    }
+  ],
+  "claimSupportCases": [
+    {
+      "id": "CLAIM-WEATHER-01", "claim": "未来24小时预计降雨12毫米", "field": "rainfallForecast24h", "claimedValue": 12,
+      "citedEvidenceIds": ["weather-1"], "evidenceById": {"weather-1": {"rainfallForecast24h": 12.0}}, "expectedSupported": true
+    },
+    {
+      "id": "CLAIM-WEATHER-02", "claim": "未来24小时预计无降雨", "field": "rainfallForecast24h", "claimedValue": 0,
+      "citedEvidenceIds": ["weather-1"], "evidenceById": {"weather-1": {"rainfallForecast24h": 12}}, "expectedSupported": false
+    },
+    {
+      "id": "CLAIM-FIELD-01", "claim": "地块登记为坐果期", "field": "registeredStage", "claimedValue": "fruiting",
+      "citedEvidenceIds": ["field-1"], "evidenceById": {"field-1": {"registeredStage": "fruiting"}}, "expectedSupported": true
+    },
+    {
+      "id": "CLAIM-FIELD-02", "claim": "地块登记为坐果期", "field": "registeredStage", "claimedValue": "fruiting",
+      "citedEvidenceIds": ["visual-1"], "evidenceById": {"field-1": {"registeredStage": "fruiting"}, "visual-1": {"observedStage": "ripening"}}, "expectedSupported": false
+    }
+  ],
+  "sprayCases": [
+    {
+      "id": "PHI-BLOCK-01",
+      "caseClass": "VERIFIED_PHI_VIOLATION",
+      "plannedSprayDate": "2026-06-01",
+      "expectedHarvestDate": "2026-06-10",
+      "phenologyStage": "fruit_development",
+      "label": {
+        "productId": "fixture-label-10d",
+        "productName": "演示保护剂 A",
+        "activeIngredient": "demo-active-a",
+        "phiDays": 10,
+        "syntheticChemical": true,
+        "prohibitedByLabel": false,
+        "provenance": {"sourceKind": "PUBLIC_LABEL", "sourceReference": "fixture://label/fixture-label-10d", "documentVersion": "2026-01", "retrievedAt": "2026-06-01T00:00:00Z", "publicSource": true, "verified": true}
+      },
+      "certification": {"status": "NONE", "provenance": {"sourceKind": "ORCHARD_RECORD", "sourceReference": "fixture://orchard/certification", "documentVersion": "v1", "retrievedAt": "2026-06-01T00:00:00Z", "publicSource": false, "verified": true}},
+      "weatherWindow": {"id": "w-01", "startsAt": "2026-06-01T08:00:00", "endsAt": "2026-06-01T12:00:00", "airTemperatureC": 24, "relativeHumidityPct": 65, "windSpeedKph": 6, "precipitationMm": 0, "precipitationProbabilityPct": 10, "provenance": {"sourceKind": "WEATHER_FORECAST", "sourceReference": "fixture://weather/w-01", "documentVersion": "v1", "retrievedAt": "2026-06-01T00:00:00Z", "publicSource": false, "verified": true}},
+      "expectedDecision": "BLOCKED",
+      "expectedFinding": "PHI_CONFLICT"
+    },
+    {
+      "id": "PHI-BLOCK-02",
+      "caseClass": "VERIFIED_PHI_VIOLATION",
+      "plannedSprayDate": "2026-06-01",
+      "expectedHarvestDate": "2026-06-05",
+      "phenologyStage": "fruit_development",
+      "label": {
+        "productId": "fixture-label-7d",
+        "productName": "演示保护剂 B",
+        "activeIngredient": "demo-active-b",
+        "phiDays": 7,
+        "syntheticChemical": true,
+        "prohibitedByLabel": false,
+        "provenance": {"sourceKind": "PUBLIC_LABEL", "sourceReference": "fixture://label/fixture-label-7d", "documentVersion": "2026-02", "retrievedAt": "2026-06-01T00:00:00Z", "publicSource": true, "verified": true}
+      },
+      "certification": {"status": "NONE", "provenance": {"sourceKind": "ORCHARD_RECORD", "sourceReference": "fixture://orchard/certification", "documentVersion": "v1", "retrievedAt": "2026-06-01T00:00:00Z", "publicSource": false, "verified": true}},
+      "weatherWindow": {"id": "w-02", "startsAt": "2026-06-01T08:00:00", "endsAt": "2026-06-01T12:00:00", "airTemperatureC": 23, "relativeHumidityPct": 60, "windSpeedKph": 5, "precipitationMm": 0, "precipitationProbabilityPct": 5, "provenance": {"sourceKind": "WEATHER_FORECAST", "sourceReference": "fixture://weather/w-02", "documentVersion": "v1", "retrievedAt": "2026-06-01T00:00:00Z", "publicSource": false, "verified": true}},
+      "expectedDecision": "BLOCKED",
+      "expectedFinding": "PHI_CONFLICT"
+    },
+    {
+      "id": "PHI-CONTROL-01",
+      "caseClass": "CONTROL_VERIFIED_SAFE",
+      "plannedSprayDate": "2026-06-01",
+      "expectedHarvestDate": "2026-07-01",
+      "phenologyStage": "fruit_development",
+      "label": {
+        "productId": "fixture-label-safe",
+        "productName": "演示保护剂 C",
+        "activeIngredient": "demo-active-c",
+        "phiDays": 7,
+        "syntheticChemical": true,
+        "prohibitedByLabel": false,
+        "provenance": {"sourceKind": "PUBLIC_LABEL", "sourceReference": "fixture://label/fixture-label-safe", "documentVersion": "2026-03", "retrievedAt": "2026-06-01T00:00:00Z", "publicSource": true, "verified": true}
+      },
+      "certification": {"status": "NONE", "provenance": {"sourceKind": "ORCHARD_RECORD", "sourceReference": "fixture://orchard/certification", "documentVersion": "v1", "retrievedAt": "2026-06-01T00:00:00Z", "publicSource": false, "verified": true}},
+      "weatherWindow": {"id": "w-03", "startsAt": "2026-06-01T08:00:00", "endsAt": "2026-06-01T12:00:00", "airTemperatureC": 24, "relativeHumidityPct": 62, "windSpeedKph": 7, "precipitationMm": 0, "precipitationProbabilityPct": 10, "provenance": {"sourceKind": "WEATHER_FORECAST", "sourceReference": "fixture://weather/w-03", "documentVersion": "v1", "retrievedAt": "2026-06-01T00:00:00Z", "publicSource": false, "verified": true}},
+      "expectedDecision": "ELIGIBLE",
+      "expectedFinding": null
+    },
+    {
+      "id": "PHI-CONTROL-02",
+      "caseClass": "CONTROL_VERIFIED_SAFE",
+      "plannedSprayDate": "2026-06-01",
+      "expectedHarvestDate": "2026-07-16",
+      "phenologyStage": "fruit_development",
+      "label": {
+        "productId": "fixture-label-safe-2",
+        "productName": "演示保护剂 D",
+        "activeIngredient": "demo-active-d",
+        "phiDays": 14,
+        "syntheticChemical": true,
+        "prohibitedByLabel": false,
+        "provenance": {"sourceKind": "AUTHORITATIVE_LABEL", "sourceReference": "fixture://label/fixture-label-safe-2", "documentVersion": "2026-04", "retrievedAt": "2026-06-01T00:00:00Z", "publicSource": true, "verified": true}
+      },
+      "certification": {"status": "NONE", "provenance": {"sourceKind": "ORCHARD_RECORD", "sourceReference": "fixture://orchard/certification", "documentVersion": "v1", "retrievedAt": "2026-06-01T00:00:00Z", "publicSource": false, "verified": true}},
+      "weatherWindow": {"id": "w-04", "startsAt": "2026-06-01T08:00:00", "endsAt": "2026-06-01T12:00:00", "airTemperatureC": 25, "relativeHumidityPct": 58, "windSpeedKph": 8, "precipitationMm": 0, "precipitationProbabilityPct": 8, "provenance": {"sourceKind": "WEATHER_FORECAST", "sourceReference": "fixture://weather/w-04", "documentVersion": "v1", "retrievedAt": "2026-06-01T00:00:00Z", "publicSource": false, "verified": true}},
+      "expectedDecision": "ELIGIBLE",
+      "expectedFinding": null
+    },
+    {
+      "id": "PHI-MISSING-01",
+      "caseClass": "MISSING_PHI",
+      "plannedSprayDate": "2026-06-01",
+      "expectedHarvestDate": "2026-06-20",
+      "phenologyStage": "fruit_development",
+      "label": {
+        "productId": "fixture-label-no-phi",
+        "productName": "演示保护剂 E",
+        "activeIngredient": "demo-active-e",
+        "phiDays": null,
+        "syntheticChemical": true,
+        "prohibitedByLabel": false,
+        "provenance": {"sourceKind": "PUBLIC_LABEL", "sourceReference": "fixture://label/fixture-label-no-phi", "documentVersion": "2026-05", "retrievedAt": "2026-06-01T00:00:00Z", "publicSource": true, "verified": true}
+      },
+      "certification": {"status": "NONE", "provenance": {"sourceKind": "ORCHARD_RECORD", "sourceReference": "fixture://orchard/certification", "documentVersion": "v1", "retrievedAt": "2026-06-01T00:00:00Z", "publicSource": false, "verified": true}},
+      "weatherWindow": {"id": "w-05", "startsAt": "2026-06-01T08:00:00", "endsAt": "2026-06-01T12:00:00", "airTemperatureC": 24, "relativeHumidityPct": 62, "windSpeedKph": 7, "precipitationMm": 0, "precipitationProbabilityPct": 10, "provenance": {"sourceKind": "WEATHER_FORECAST", "sourceReference": "fixture://weather/w-05", "documentVersion": "v1", "retrievedAt": "2026-06-01T00:00:00Z", "publicSource": false, "verified": true}},
+      "expectedDecision": "INSUFFICIENT_DATA",
+      "expectedFinding": "PHI_MISSING"
+    }
+  ],
+  "missingEvidenceCases": [
+    {
+      "id": "MISS-EVID-01",
+      "kind": "EVALUATOR",
+      "writeAction": true,
+      "trustedEvidenceIds": [],
+      "recommendationId": null,
+      "recommendationEvidenceIds": [],
+      "requestedEvidenceIds": [],
+      "unavailableDependencies": [],
+      "emptyObserved": true,
+      "expectedStatus": "INSUFFICIENT",
+      "expectedAllowsWrite": false,
+      "expectedReasonCode": "NO_TRUSTED_EVIDENCE",
+      "expectedOutcome": "REFUSAL"
+    },
+    {
+      "id": "MISS-EVID-02",
+      "kind": "EVALUATOR",
+      "writeAction": true,
+      "trustedEvidenceIds": ["e-field"],
+      "recommendationId": null,
+      "recommendationEvidenceIds": [],
+      "requestedEvidenceIds": [],
+      "unavailableDependencies": ["weather"],
+      "emptyObserved": false,
+      "expectedStatus": "DEGRADED",
+      "expectedAllowsWrite": false,
+      "expectedReasonCode": "UNAVAILABLE_DEPENDENCY",
+      "expectedOutcome": "REFUSAL"
+    },
+    {
+      "id": "MISS-EVID-03",
+      "kind": "EVALUATOR",
+      "writeAction": true,
+      "trustedEvidenceIds": ["e-field"],
+      "recommendationId": "rec-1",
+      "recommendationEvidenceIds": ["invented-evidence"],
+      "requestedEvidenceIds": [],
+      "unavailableDependencies": [],
+      "emptyObserved": false,
+      "expectedStatus": "INSUFFICIENT",
+      "expectedAllowsWrite": false,
+      "expectedReasonCode": "RECOMMENDATION_EVIDENCE_MISSING",
+      "expectedOutcome": "REFUSAL"
+    },
+    {
+      "id": "MISS-EVID-04",
+      "kind": "EVALUATOR",
+      "writeAction": true,
+      "trustedEvidenceIds": ["e-field"],
+      "recommendationId": null,
+      "recommendationEvidenceIds": [],
+      "requestedEvidenceIds": ["ghost-evidence"],
+      "unavailableDependencies": [],
+      "emptyObserved": false,
+      "expectedStatus": "INSUFFICIENT",
+      "expectedAllowsWrite": false,
+      "expectedReasonCode": "EVIDENCE_PROVENANCE_INVALID",
+      "expectedOutcome": "REFUSAL"
+    },
+    {
+      "id": "MISS-CLAR-01",
+      "kind": "POLICY",
+      "intent": "DIAGNOSIS_REQUEST",
+      "resolutionStatus": "RESOLVED",
+      "requiresClarification": false,
+      "message": "请分析现场图片里的病斑",
+      "hasImages": false,
+      "fieldFactsReady": true,
+      "expectedOutcome": "CLARIFICATION"
+    },
+    {
+      "id": "MISS-CLAR-02",
+      "kind": "POLICY",
+      "intent": "GENERAL_QA",
+      "resolutionStatus": "CLARIFICATION_REQUIRED",
+      "requiresClarification": true,
+      "message": "帮我看看这块地",
+      "hasImages": false,
+      "fieldFactsReady": false,
+      "expectedOutcome": "CLARIFICATION"
+    }
+  ],
+  "componentCases": [
+    {
+      "id": "UI-01",
+      "expectedValid": true,
+      "expectedComponent": "RiskAlertCard",
+      "arguments": {
+        "componentType": "RiskAlertCard",
+        "title": "采收窗口风险",
+        "summary": "风雨窗口与待办冲突时需人工复核。",
+        "evidenceIds": ["E1"],
+        "props": {"items": [{"label": "降雨窗口", "value": "未来 24 小时"}]}
+      }
+    },
+    {
+      "id": "UI-02",
+      "expectedValid": true,
+      "expectedComponent": "ActionChecklistCard",
+      "arguments": {
+        "componentType": "ActionChecklistCard",
+        "title": "采前核查清单",
+        "evidenceIds": ["E1"],
+        "props": {"items": [{"title": "核对安全间隔期", "detail": "以已验证标签为准", "priority": "URGENT"}]}
+      }
+    },
+    {
+      "id": "UI-03",
+      "expectedValid": true,
+      "expectedComponent": "ComparisonMatrixCard",
+      "arguments": {
+        "componentType": "ComparisonMatrixCard",
+        "title": "防治方案对比",
+        "evidenceIds": ["E1"],
+        "props": {"options": [
+          {"label": "非化学清理", "conditions": "先清病果", "cost": "低", "speed": "较慢", "advantages": "无药剂间隔期", "disadvantages": "需人工"},
+          {"label": "登记药剂复核", "conditions": "标签适用", "cost": "中", "speed": "较快", "advantages": "靶标明确时可用", "disadvantages": "需核对 PHI"}
+        ]}
+      }
+    },
+    {
+      "id": "UI-04",
+      "expectedValid": true,
+      "expectedComponent": "ClarificationForm",
+      "arguments": {
+        "componentType": "ClarificationForm",
+        "title": "补充核验信息",
+        "props": {"fields": [{"label": "预计采收日期"}, {"label": "已登记药剂标签"}]}
+      }
+    },
+    {
+      "id": "UI-05",
+      "expectedValid": false,
+      "expectedComponent": null,
+      "arguments": {
+        "componentType": "UnsupportedCard",
+        "title": "未知组件",
+        "evidenceIds": ["E1"],
+        "props": {"items": [{"label": "x", "value": "y"}]}
+      }
+    },
+    {
+      "id": "UI-06",
+      "expectedValid": false,
+      "expectedComponent": null,
+      "arguments": {
+        "componentType": "RiskAlertCard",
+        "title": "空风险卡",
+        "evidenceIds": ["E1"],
+        "props": {"items": []}
+      }
+    }
+  ]
+}

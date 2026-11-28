@@ -36,14 +36,16 @@ public final class CopilotUiBlockValidator {
             Map<String, Object> verified = switch (component) {
                 case "ComparisonMatrixCard" -> comparison(props, aliases);
                 case "ActionChecklistCard" -> checklist(props);
-                case "EChartsAnalyticsCard", "WeatherTrendChart", "ParcelCompareChart" -> chart(props, aliases);
+                case "EChartsAnalyticsCard" -> chart(props, aliases);
                 case "ClarificationForm" -> rows(props, true);
-                case "RiskAlertCard", "FarmAnalyticsCard", "FarmOperationChecklist" -> rows(props, false);
+                case "RiskAlertCard" -> rows(props, false);
                 default -> throw new Invalid("componentType");
             };
             var card = new LinkedHashMap<String, Object>();
             card.put("componentType", component);
             card.put("title", title);
+            card.put("blockKey", "declared:" + component + ":" + java.util.UUID.nameUUIDFromBytes(
+                    title.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
             if (summary != null) card.put("summary", summary);
             card.put("status", clarification ? "needs-input" : "ready");
             card.put("data", verified);
@@ -69,10 +71,19 @@ public final class CopilotUiBlockValidator {
                 }
                 entry.put("phiDays", days.intValue());
             }
-            if (option.hasNonNull("draft")) entry.put("draft", draft(option.get("draft")));
+            if (option.hasNonNull("draft")) entry.put("draftTask", draft(option.get("draft")));
+            Map<String, Object> values = new LinkedHashMap<>();
+            for (String field : List.of("conditions", "cost", "speed", "advantages", "disadvantages")) {
+                if (entry.containsKey(field)) values.put(field, entry.remove(field));
+            }
+            if (entry.remove("phiDays") instanceof Integer interval) values.put("phi", interval + " 天");
+            entry.put("values", values);
             rows.add(entry);
         }
-        return Map.of("options", rows);
+        var attributes = List.of(Map.of("id", "conditions", "label", "适用条件"), Map.of("id", "cost", "label", "成本"),
+                Map.of("id", "speed", "label", "见效速度"), Map.of("id", "phi", "label", "采收安全间隔期"),
+                Map.of("id", "advantages", "label", "优点"), Map.of("id", "disadvantages", "label", "注意事项"));
+        return Map.of("comparisonMatrix", Map.of("options", rows, "rows", attributes));
     }
 
     private Map<String, Object> checklist(JsonNode props) {
@@ -83,11 +94,11 @@ public final class CopilotUiBlockValidator {
                     Set.of("title", "detail", "priority"), "items");
             if (!Set.of("URGENT", "ROUTINE", "PREVENTIVE").contains(entry.get("priority"))) throw new Invalid("items.priority");
             entry.put("id", "step-" + (rows.size() + 1));
-            if (item.hasNonNull("draft")) entry.put("draft", draft(item.get("draft")));
-            else if (item.hasNonNull("fieldId")) entry.put("draft", draft(item));
+            if (item.hasNonNull("draft")) entry.put("draftTask", draft(item.get("draft")));
+            else if (item.hasNonNull("fieldId")) entry.put("draftTask", draft(item));
             rows.add(entry);
         }
-        return Map.of("items", rows);
+        return Map.of("actionChecklist", Map.of("items", rows));
     }
 
     private Map<String, Object> draft(JsonNode input) {
@@ -121,9 +132,29 @@ public final class CopilotUiBlockValidator {
                         || !evidence.provesMeasurement(aliases, label, key, number.doubleValue())) throw new Invalid("series.points");
                 values.add(Map.of("label", key, "value", number.doubleValue()));
             }
-            verified.add(Map.of("label", label, "points", values));
+            verified.add(chartSeries(chartKind, label, values));
         }
         return Map.of("series", verified, "chartKind", chartKind);
+    }
+
+    static Map<String, Object> chartSeries(String kind, String label, List<Map<String, Object>> values) {
+        var series = new LinkedHashMap<String, Object>();
+        series.put("label", label);
+        series.put("points", values);
+        if ("dual-axis".equals(kind)) {
+            boolean rain = label.contains("降水") || label.contains("降雨");
+            series.put("type", rain ? "bar" : "line");
+            series.put("axis", rain ? "right" : "left");
+            series.put("unit", rain ? "mm" : "°C");
+        } else if ("stacked-bar".equals(kind)) {
+            series.put("type", "bar");
+            series.put("stack", "成熟度");
+            series.put("unit", "%");
+        } else {
+            series.put("type", "line");
+            if ("thermal".equals(kind)) series.put("unit", "℃·d");
+        }
+        return series;
     }
 
     private Map<String, Object> rows(JsonNode props, boolean clarification) {

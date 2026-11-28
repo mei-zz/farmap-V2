@@ -14,6 +14,7 @@ public class ModelUsageMetadata {
     private String model;
     private Long inputTokens;
     private Long outputTokens;
+    private Long cacheReadTokens;
     private Long thinkingTokens;
     private Long totalTokens;
     private String finishReason;

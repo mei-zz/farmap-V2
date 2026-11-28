@@ -21,8 +21,15 @@ public final class AgriculturalEvidenceLedger {
         public DiagnosisEvidenceVO persistedEvidence() {
             Map<String, Object> metadata = new LinkedHashMap<>();
             metadata.put("citation", alias);
+            metadata.put("retrievalTool", modality);
             if (farmId != null) metadata.put("farmId", farmId);
-            return DiagnosisEvidenceVO.builder().id(durableId).modality(modality).title(title).summary(summary)
+            String domain = switch (modality) {
+                case "read_current_weather" -> "weather";
+                case "read_field_context" -> "field";
+                case "agricultural_knowledge" -> "knowledge";
+                default -> modality;
+            };
+            return DiagnosisEvidenceVO.builder().id(durableId).modality(domain).title(title).summary(summary)
                     .source(DiagnosisEvidenceVO.Source.builder().type(modality).name(source)
                             .document(reference).fieldId(fieldId).status("READY").build())
                     .metadata(metadata).build();
@@ -59,6 +66,14 @@ public final class AgriculturalEvidenceLedger {
     }
 
     public synchronized Entry lookup(String alias) { return byAlias.get(alias); }
+
+    public synchronized List<DiagnosisEvidenceVO> taskEvidence(Integer farmId, String fieldId) {
+        return byAlias.values().stream()
+                .filter(entry -> entry.farmId() == null || entry.farmId().equals(farmId))
+                .filter(entry -> entry.fieldId() == null || entry.fieldId().equals(fieldId))
+                .filter(entry -> List.of("read_current_weather", "read_field_context", "agricultural_knowledge").contains(entry.modality()))
+                .limit(24).map(Entry::persistedEvidence).toList();
+    }
 
     public synchronized void addMeasurement(Entry evidence, String series, String label, Number value) {
         if (evidence == null || label == null || label.isBlank() || value == null || !Double.isFinite(value.doubleValue())) return;

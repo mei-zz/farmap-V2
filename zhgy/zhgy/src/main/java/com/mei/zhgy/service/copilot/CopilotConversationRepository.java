@@ -15,4 +15,7 @@ public interface CopilotConversationRepository {
     boolean commit(CopilotConversationSnapshot next, long expectedVersion, List<CopilotConversationTurn> turns);
     void appendTurn(CopilotConversationTurn turn);
     void updateResult(String conversationId, String turnId, Long userId, String resultJson);
+    default void updateAssistantMetadata(String conversationId, String turnId, Long userId, String metadata) {
+        updateResult(conversationId, turnId, userId, metadata);
+    }
 }

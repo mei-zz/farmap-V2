@@ -1,5 +1,7 @@
 import { AlertTriangle, Check, Gauge, MapPinned } from "lucide-react";
-import type { AgentUiBlock, DraftTaskPayload } from "../uiBlocks";
+import { useState } from "react";
+import { calibrateCopilotPhenology } from "../service";
+import type { AgentUiBlock } from "../uiBlocks";
 
 export type PhenologyStage = {
   code?: string;
@@ -30,6 +32,9 @@ export type PhenologyTimelineData = {
   registered?: string;
   seasonal?: string;
   review?: boolean;
+  expectedRegisteredStage?: string;
+  calibrationTarget?: string;
+  basis?: string;
   accumulation?: PhenologyAccumulation;
 };
 
@@ -41,7 +46,7 @@ const plumStages: PhenologyStage[] = [
   { code: "leafing", label: "展叶期" },
   { code: "fruiting", label: "坐果期" },
   { code: "fruit_development", label: "果实发育期" },
-  { code: "ripening", label: "成熟期" },
+  { code: "ripening", label: "转色成熟期" },
   { code: "harvest", label: "采收期" },
   { code: "post_harvest", label: "采后恢复期" },
 ];
@@ -53,8 +58,8 @@ const stageAliases: Record<string, string[]> = {
   flowering: ["初花", "盛花", "末花", "开花"],
   leafing: ["展叶", "春梢"],
   fruiting: ["幼果", "谢花坐果", "坐果"],
-  fruit_development: ["幼果膨大", "硬核期", "膨大", "果实发育"],
-  ripening: ["转色", "软化", "成熟"],
+  fruit_development: ["果实膨大期", "膨果", "膨果期", "幼果膨大", "硬核期", "硬核", "膨大期", "膨大", "果实发育"],
+  ripening: ["转色", "转色期", "软化", "成熟", "成熟期", "果实成熟期", "变色期"],
   harvest: ["采摘", "上市", "采收"],
   post_harvest: ["采后", "恢复期"],
 };
@@ -111,11 +116,13 @@ function progressValue(accumulation: PhenologyAccumulation) {
 
 type Props = {
   block: AgentUiBlock;
-  onDraftTask?: (payload: DraftTaskPayload) => void;
 };
 
-export function PlumPhenologyTimeline({ block, onDraftTask }: Props) {
+export function PlumPhenologyTimeline({ block }: Props) {
   const phase = block.data?.phenologyTimeline;
+  const [submitting, setSubmitting] = useState(false);
+  const [applied, setApplied] = useState<string>();
+  const [error, setError] = useState("");
   if (!phase) return <p>当前地块没有可核验的物候记录。</p>;
 
   const stages = phase.stages?.length ? phase.stages : plumStages;
@@ -131,20 +138,30 @@ export function PlumPhenologyTimeline({ block, onDraftTask }: Props) {
   const accumulationProgress = accumulation ? progressValue(accumulation) : undefined;
   const registeredIndex = findStageIndex(stages, phase.registered);
   const seasonalIndex = findStageIndex(stages, phase.seasonal);
-  const mismatch = phase.review === true
-    || Boolean(phase.registered && phase.seasonal && normalized(phase.registered) !== normalized(phase.seasonal));
   const fieldId = block.data?.fieldId ?? phase.fieldId;
-  const calibration = mismatch && fieldId ? {
-    fieldId,
-    title: "校准地块物候",
-    detail: `登记物候：${phase.registered ?? "未登记"}；系统推算：${phase.seasonal ?? phase.current ?? "待复核"}。请现场复核后更新地块物候。`,
-  } satisfies DraftTaskPayload : undefined;
+  const target = phase.calibrationTarget;
+  const saved = applied !== undefined && applied === target;
+  const mismatch = !saved && (phase.review === true
+    || Boolean(phase.registered && phase.seasonal && normalized(phase.registered) !== normalized(phase.seasonal)));
+  async function calibrate(id: string, expectedStage: string | undefined, nextStage: string) {
+    setSubmitting(true);
+    setError("");
+    try {
+      await calibrateCopilotPhenology(id, expectedStage, nextStage);
+      setApplied(nextStage);
+    } catch {
+      setError("校准未保存，请重新读取本地块的物候依据。");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return <section className="farmap-phenology" aria-label="脆李十期物候时间线">
     <div className="farmap-phenology__meta">
       <span><MapPinned size={14} aria-hidden="true" />{[phase.fieldName, phase.crop].filter(Boolean).join(" · ") || "当前地块"}</span>
       {phase.date && <time>{phase.date}</time>}
     </div>
+    {phase.basis && <p className="farmap-phenology__basis">{phase.basis}</p>}
 
     {mismatch && <div className="farmap-phenology__conflict" role="status">
       <AlertTriangle size={16} aria-hidden="true" />
@@ -152,8 +169,13 @@ export function PlumPhenologyTimeline({ block, onDraftTask }: Props) {
         <strong>物候记录存在冲突</strong>
         <span>地块登记 {phase.registered ?? "缺失"}，历法/积温推算 {phase.seasonal ?? "缺失"}。请现场复核。</span>
       </div>
-      {calibration && <button type="button" disabled={!onDraftTask} onClick={() => onDraftTask?.(calibration)}>一键校准地块物候</button>}
+      {fieldId && target && <button type="button" disabled={submitting}
+        onClick={() => void calibrate(fieldId, phase.expectedRegisteredStage, target)}>
+        {submitting ? "正在校准…" : "一键校准地块物候"}
+      </button>}
     </div>}
+    {saved && <p role="status">地块登记物候已更新。</p>}
+    {error && <p role="alert">{error}</p>}
 
     <div className="farmap-phenology__scroller">
       <ol className="farmap-phenology__track" aria-label="脆李全年物候阶段">

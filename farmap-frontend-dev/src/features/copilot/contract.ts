@@ -132,7 +132,7 @@ export type CopilotRouteResult = {
   contextVersion?: number;
   memoryId?: string;
   memoryScope?: "USER" | "FARM" | "FIELD";
-  memoryType?: "USER_PREFERENCE" | "FARM_PREFERENCE" | "FIELD_PREFERENCE" | "OPERATING_CONSTRAINT" | "COMMUNICATION_PREFERENCE";
+  memoryType?: "USER_PREFERENCE" | "FARM_PREFERENCE" | "FIELD_PREFERENCE" | "OPERATING_CONSTRAINT" | "COMMUNICATION_PREFERENCE" | "ORCHARD_PROFILE";
   relevantLongTermMemories?: CopilotMemoryView[];
   originalQuery?: string;
   normalizedQuery?: string;

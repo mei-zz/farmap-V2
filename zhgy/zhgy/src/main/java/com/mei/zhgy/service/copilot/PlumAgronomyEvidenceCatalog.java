@@ -54,6 +54,12 @@ public class PlumAgronomyEvidenceCatalog {
 
     public record CorrectionInputs(List<PhenologyObservation> observations, List<PhenologyCalibrationWindow> windows) {}
     public record SprayInputs(LabelInput label, OrchardCertification certification, LocalDate expectedHarvestDate) {}
+    public record CalendarProfile(String cultivar, Double elevationMeters) {}
+
+    public CalendarProfile calendarProfile(Integer farmId, String fieldId, String cropCode, LocalDate date) {
+        Orchard orchard = orchard(farmId, fieldId, cropCode, date);
+        return orchard == null ? new CalendarProfile(null, null) : new CalendarProfile(orchard.cultivar(), orchard.elevationM());
+    }
 
     public SprayInputs spray(Integer farmId, String fieldId, String cropCode, String productId, LocalDate date) {
         Orchard orchard = orchard(farmId, fieldId, cropCode, date);

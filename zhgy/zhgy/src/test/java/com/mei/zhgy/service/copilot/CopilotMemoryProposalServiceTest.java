@@ -82,6 +82,17 @@ class CopilotMemoryProposalServiceTest {
     }
 
     @Test
+    void ignoredProposalStaysInactiveAndCannotBeConfirmed() {
+        var proposal = proposals.propose(42L, "7", "field-1", "variety", "巫山脆李");
+        assertThrows(CopilotConversationException.class, () -> proposals.ignore(proposal.proposalId(), 43L));
+        assertEquals(CopilotMemoryProposalService.ProposalStatus.IGNORED, proposals.ignore(proposal.proposalId(), 42L).status());
+        assertEquals(CopilotMemoryProposalService.ProposalStatus.IGNORED, proposals.read(proposal.proposalId(), 42L).status());
+        assertEquals(CopilotMemoryProposalService.ProposalStatus.IGNORED, proposals.ignore(proposal.proposalId(), 42L).status());
+        assertThrows(CopilotConversationException.class, () -> proposals.confirm(proposal.proposalId(), 42L));
+        assertTrue(activeMemories().isEmpty());
+    }
+
+    @Test
     void rejectsUnknownKeysUnauthenticatedCallersAndForeignConfirmations() {
         CopilotConversationException keyError = assertThrows(CopilotConversationException.class,
                 () -> proposals.propose(42L, "7", "field-1", "spray_dose", "2%", null, null));
@@ -179,6 +190,247 @@ class CopilotMemoryProposalServiceTest {
         assertEquals("海拔约 1200 米", profile.get("elevation"));
     }
 
+    @Test
+    void exactSchemaSlotsRequireConfirmationAndPersistCanonicalMemoryKeys() {
+        Map<String, String> values = new LinkedHashMap<>();
+        values.put("plum_variety", "巫山脆李");
+        values.put("tree_age_years", "8年");
+        values.put("elevation_band", "1000-1200m");
+        values.put("irrigation_facility", "滴灌设施");
+        values.put("quality_certification", "绿色食品认证（用户自述）");
+        values.put("historical_high_risk_pests", "褐腐病、红蜘蛛");
+
+        Map<String, CopilotMemoryProposalService.ProposalView> pending = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : values.entrySet()) {
+            CopilotMemoryProposalService.ProposalView proposal = proposals.propose(42L, "7", "field-1",
+                    entry.getKey(), entry.getValue(), null, null);
+            assertEquals(entry.getKey(), proposal.key());
+            assertEquals(CopilotMemoryProposalService.ProposalStatus.PENDING, proposal.status());
+            assertFalse(proposal.verified());
+            pending.put(entry.getKey(), proposal);
+        }
+        assertTrue(activeMemories().isEmpty(), "new-slot proposals must remain inactive before confirmation");
+
+        for (String key : values.keySet()) {
+            CopilotMemoryProposalService.ProposalConfirmation confirmed = proposals.confirm(pending.get(key).proposalId(), 42L);
+            assertEquals("orchard_profile_" + key, confirmed.memory().getKey());
+            assertEquals(CopilotMemoryType.ORCHARD_PROFILE, confirmed.memory().getType());
+            assertTrue(confirmed.memory().getDisplayText().contains("用户自述"));
+        }
+
+        CopilotMemoryProposalService.OrchardProfileProjection projection = proposals.projectProfile(42L, "7", "field-1");
+        assertEquals(values.keySet(), projection.values().keySet());
+        assertEquals("巫山脆李", projection.values().get("plum_variety").value());
+        assertEquals("8年", projection.values().get("tree_age_years").value());
+        assertEquals("1000-1200m", projection.elevationBand());
+        assertFalse(projection.hasExactElevation());
+        assertEquals("褐腐病、红蜘蛛", projection.values().get("historical_high_risk_pests").value());
+    }
+
+    @Test
+    void legacyStoredOrchardKeysProjectIntoCanonicalSlotsWithoutBecomingVerified() {
+        writeProfile(CopilotMemoryScope.FARM, "7", "orchard_profile_variety", "巫山脆李");
+        writeProfile(CopilotMemoryScope.FARM, "7", "orchard_profile_tree_age", "8年");
+        writeProfile(CopilotMemoryScope.FARM, "7", "orchard_profile_elevation", "海拔约 1200 米");
+        writeProfile(CopilotMemoryScope.FARM, "7", "orchard_profile_certification", "用户称已获有机认证");
+        writeProfile(CopilotMemoryScope.FARM, "7", "orchard_profile_irrigation", "滴灌");
+
+        CopilotMemoryProposalService.OrchardProfileProjection projection = proposals.projectProfile(42L, "7", "field-1");
+        assertEquals("巫山脆李", projection.values().get("plum_variety").value());
+        assertEquals("8年", projection.values().get("tree_age_years").value());
+        assertEquals("滴灌", projection.values().get("irrigation_facility").value());
+        assertEquals("用户称已获有机认证", projection.values().get("quality_certification").value());
+        assertTrue(projection.hasExactElevation());
+        assertEquals(1200d, projection.exactElevationMeters());
+        assertEquals("高山", projection.elevationBand());
+        assertEquals("高山", projection.values().get("elevation_band").value());
+
+        Map<String, CopilotMemoryProposalService.ProfileValue> compatible = projection.compatibleValues();
+        assertEquals("巫山脆李", compatible.get("variety").value());
+        assertEquals("8年", compatible.get("tree_age").value());
+        assertEquals("滴灌", compatible.get("irrigation").value());
+        assertFalse(compatible.get("quality_certification").verified());
+        assertFalse(compatible.get("quality_certification").authoritative());
+
+        Map<String, Object> prompt = projection.promptProfile();
+        assertEquals("巫山脆李", prompt.get("plum_variety"));
+        assertEquals("巫山脆李", prompt.get("variety"));
+        assertEquals("海拔约 1200 米", prompt.get("elevation"));
+        assertEquals(1200d, prompt.get("elevationMeters"));
+        assertEquals("SELF_REPORTED", prompt.get("source"));
+        assertEquals(Boolean.FALSE, prompt.get("verified"));
+        assertEquals(Boolean.FALSE, prompt.get("authoritative"));
+    }
+
+    @Test
+    void fieldProfileWinsOverFarmAcrossLegacyAndCanonicalSlotNames() {
+        writeProfile(CopilotMemoryScope.FARM, "7", "orchard_profile_plum_variety", "farm variety");
+        writeProfile(CopilotMemoryScope.FIELD, "field-1", "orchard_profile_variety", "field variety");
+        writeProfile(CopilotMemoryScope.FARM, "7", "orchard_profile_irrigation_facility", "farm drip");
+        writeProfile(CopilotMemoryScope.FIELD, "field-1", "orchard_profile_irrigation", "field drip");
+
+        CopilotMemoryProposalService.OrchardProfileProjection projection = proposals.projectProfile(42L, "7", "field-1");
+        assertEquals("field variety", projection.values().get("plum_variety").value());
+        assertEquals("field variety", projection.compatibleValues().get("variety").value());
+        assertEquals("field drip", projection.values().get("irrigation_facility").value());
+        assertEquals("field drip", projection.compatibleValues().get("irrigation").value());
+    }
+
+    @Test
+    void exactElevationWinsWithinScopeButFieldBandSuppressesFarmExactElevation() {
+        writeProfile(CopilotMemoryScope.FARM, "7", "orchard_profile_elevation", "1320m");
+        writeProfile(CopilotMemoryScope.FARM, "7", "orchard_profile_elevation_band", "1200-1400m");
+        writeProfile(CopilotMemoryScope.FIELD, "field-1", "orchard_profile_elevation_band", "1000-1100m");
+
+        CopilotMemoryProposalService.OrchardProfileProjection fieldBand = proposals.projectProfile(42L, "7", "field-1");
+        assertFalse(fieldBand.hasExactElevation());
+        assertEquals("1000-1100m", fieldBand.elevationBand());
+        assertNull(fieldBand.promptProfile().get("elevationMeters"));
+
+        writeProfile(CopilotMemoryScope.FIELD, "field-1", "orchard_profile_elevation", "1050m");
+        CopilotMemoryProposalService.OrchardProfileProjection fieldExact = proposals.projectProfile(42L, "7", "field-1");
+        assertTrue(fieldExact.hasExactElevation());
+        assertEquals(1050d, fieldExact.exactElevationMeters());
+        assertEquals(1050d, fieldExact.promptProfile().get("elevationMeters"));
+        assertEquals("1000-1100m", fieldExact.elevationBand());
+    }
+
+    @Test
+    void selfReportedQualityCertificationIsAlwaysNonAuthoritative() {
+        CopilotMemoryProposalService.ProposalView proposal = proposals.propose(42L, "7", "field-1",
+                "quality_certification", "有机认证", null, null);
+        proposals.confirm(proposal.proposalId(), 42L);
+
+        CopilotMemoryProposalService.OrchardProfileProjection projection = proposals.projectProfile(42L, "7", "field-1");
+        CopilotMemoryProposalService.ProfileValue certification = projection.values().get("quality_certification");
+        assertEquals("有机认证", certification.value());
+        assertEquals("SELF_REPORTED", certification.source());
+        assertFalse(certification.verified());
+        assertFalse(certification.authoritative());
+        assertEquals(Boolean.FALSE, projection.promptProfile().get("verified"));
+        assertEquals(Boolean.FALSE, projection.promptProfile().get("authoritative"));
+    }
+
+    @Test
+    void validationRejectsBadNewSlotsDosageAndWrongScopes() {
+        CopilotConversationException unknown = assertThrows(CopilotConversationException.class,
+                () -> proposals.propose(42L, "7", "field-1", "pesticide_dosage", "2L/亩", null, null));
+        assertEquals("PROFILE_KEY_NOT_ALLOWED", unknown.getCode());
+
+        CopilotConversationException badAge = assertThrows(CopilotConversationException.class,
+                () -> proposals.propose(42L, "7", "field-1", "tree_age_years", "老树", null, null));
+        assertEquals("PROFILE_VALUE_INVALID", badAge.getCode());
+
+        CopilotConversationException blank = assertThrows(CopilotConversationException.class,
+                () -> proposals.propose(42L, "7", "field-1", "plum_variety", "  ", null, null));
+        assertEquals("PROFILE_VALUE_REQUIRED", blank.getCode());
+
+        CopilotConversationException userProfile = assertThrows(CopilotConversationException.class,
+                () -> memories.write(CopilotMemoryCandidate.builder().scope(CopilotMemoryScope.USER)
+                        .type(CopilotMemoryType.ORCHARD_PROFILE).key("orchard_profile_plum_variety").value("巫山脆李")
+                        .build(), 42L, null, null));
+        assertEquals("MEMORY_SCOPE_REQUIRED", userProfile.getCode());
+
+        CopilotConversationException dosage = assertThrows(CopilotConversationException.class,
+                () -> memories.write(CopilotMemoryCandidate.builder().scope(CopilotMemoryScope.USER)
+                        .type(CopilotMemoryType.OPERATING_CONSTRAINT).key("pesticide_dosage").value("2L/亩")
+                        .build(), 42L, null, null));
+        assertEquals("PESTICIDE_DOSAGE_NOT_MEMORY", dosage.getCode());
+
+        CopilotConversationException farmLabor = assertThrows(CopilotConversationException.class,
+                () -> memories.write(CopilotMemoryCandidate.builder().scope(CopilotMemoryScope.FARM).scopeId("7")
+                        .type(CopilotMemoryType.OPERATING_CONSTRAINT)
+                        .key(CopilotLongTermMemoryService.KEY_LABOR_CAPACITY).value("2")
+                        .build(), 42L, null, null));
+        assertEquals("USER_MEMORY_SCOPE_REQUIRED", farmLabor.getCode());
+
+        CopilotConversationException negativeLabor = assertThrows(CopilotConversationException.class,
+                () -> memories.write(CopilotMemoryCandidate.builder().scope(CopilotMemoryScope.USER)
+                        .type(CopilotMemoryType.OPERATING_CONSTRAINT)
+                        .key(CopilotLongTermMemoryService.KEY_LABOR_CAPACITY).value("-2")
+                        .build(), 42L, null, null));
+        assertEquals("LABOR_CAPACITY_INVALID", negativeLabor.getCode());
+
+        CopilotConversationException directBadAge = assertThrows(CopilotConversationException.class,
+                () -> writeProfile(CopilotMemoryScope.FIELD, "field-1", "orchard_profile_tree_age_years", "老树"));
+        assertEquals("PROFILE_VALUE_INVALID", directBadAge.getCode());
+    }
+
+    @Test
+    void ageClassAndLaborAvailabilityRemainUsefulWithoutInventingCounts() {
+        var age = proposals.propose(42L, "7", "field-1", "tree_age_years", "老龄园");
+        proposals.confirm(age.proposalId(), 42L);
+        Map<String, Object> profile = proposals.profileMap(42L, "7", "field-1");
+        assertEquals("老龄园", profile.get("treeAgeClass"));
+        assertFalse(profile.containsKey("treeAgeYears"));
+
+        var labor = memories.decideWrite("请记住果园长期人工紧张", null, null, 42L);
+        assertTrue(labor.accepted());
+        assertEquals("LIMITED", memories.write(labor.candidate(), 42L, "conversation-1", "turn-1").getValue());
+        var spray = memories.decideWrite("请记住我偏好无人机飞防", null, null, 42L);
+        assertTrue(spray.accepted());
+        assertEquals("DRONE", memories.write(spray.candidate(), 42L, "conversation-1", "turn-2").getValue());
+    }
+
+    @Test
+    void laborAndSprayEquipmentExtractAsTypedUserMemoryWhileExistingKeysStayUnchanged() {
+        CopilotMemoryDecision labor = memories.decideWrite("请记住我只有两个工人", null, null, 42L);
+        assertTrue(labor.accepted());
+        assertEquals(CopilotMemoryScope.USER, labor.candidate().getScope());
+        assertEquals(CopilotMemoryType.OPERATING_CONSTRAINT, labor.candidate().getType());
+        assertEquals(CopilotLongTermMemoryService.KEY_LABOR_CAPACITY, labor.candidate().getKey());
+        assertEquals("2", labor.candidate().getValue());
+
+        CopilotMemoryDecision spray = memories.decideWrite("以后都用无人机打药", null, null, 42L);
+        assertTrue(spray.accepted());
+        assertEquals(CopilotMemoryScope.USER, spray.candidate().getScope());
+        assertEquals(CopilotMemoryType.USER_PREFERENCE, spray.candidate().getType());
+        assertEquals(CopilotLongTermMemoryService.KEY_PREFERRED_SPRAY_EQUIPMENT, spray.candidate().getKey());
+        assertEquals("DRONE", spray.candidate().getValue());
+
+        CopilotMemoryDecision existing = memories.decideWrite("请记住我偏好低成本", null, null, 42L);
+        assertTrue(existing.accepted());
+        assertEquals("preferred_treatment_style", existing.candidate().getKey());
+        assertEquals("LOW_COST", existing.candidate().getValue());
+
+        memories.write(labor.candidate(), 42L, "conversation-1", "turn-1");
+        memories.write(spray.candidate(), 42L, "conversation-1", "turn-2");
+        List<CopilotLongTermMemory> userMemories = memoryRepository.findActive(42L,
+                List.of(new CopilotLongTermMemoryRepository.ScopeRef(CopilotMemoryScope.USER, null)), 20);
+        CopilotLongTermMemory storedLabor = userMemories.stream()
+                .filter(memory -> CopilotLongTermMemoryService.KEY_LABOR_CAPACITY.equals(memory.getKey())).findFirst().orElseThrow();
+        CopilotLongTermMemory storedSpray = userMemories.stream()
+                .filter(memory -> CopilotLongTermMemoryService.KEY_PREFERRED_SPRAY_EQUIPMENT.equals(memory.getKey())).findFirst().orElseThrow();
+        assertEquals(CopilotMemoryType.OPERATING_CONSTRAINT, storedLabor.getType());
+        assertEquals("2", storedLabor.getValue());
+        assertEquals(CopilotMemoryType.USER_PREFERENCE, storedSpray.getType());
+        assertEquals("DRONE", storedSpray.getValue());
+    }
+
+    @Test
+    void typedUserMemoryValidationNormalizesReadableValuesAndRejectsDosageAliases() {
+        CopilotLongTermMemory labor = memories.write(CopilotMemoryCandidate.builder().scope(CopilotMemoryScope.USER)
+                .type(CopilotMemoryType.OPERATING_CONSTRAINT).key(CopilotLongTermMemoryService.KEY_LABOR_CAPACITY)
+                .value("2名工人").build(), 42L, "conversation-1", "turn-1");
+        assertEquals("2", labor.getValue());
+
+        CopilotLongTermMemory spray = memories.write(CopilotMemoryCandidate.builder().scope(CopilotMemoryScope.USER)
+                .type(CopilotMemoryType.USER_PREFERENCE).key(CopilotLongTermMemoryService.KEY_PREFERRED_SPRAY_EQUIPMENT)
+                .value("mist blower").build(), 42L, "conversation-1", "turn-2");
+        assertEquals("MIST_BLOWER", spray.getValue());
+
+        CopilotConversationException concentration = assertThrows(CopilotConversationException.class,
+                () -> memories.write(CopilotMemoryCandidate.builder().scope(CopilotMemoryScope.USER)
+                        .type(CopilotMemoryType.OPERATING_CONSTRAINT).key("pesticide_concentration").value("1000x")
+                        .build(), 42L, null, null));
+        assertEquals("PESTICIDE_DOSAGE_NOT_MEMORY", concentration.getCode());
+    }
+
+    private CopilotLongTermMemory writeProfile(CopilotMemoryScope scope, String scopeId, String key, String value) {
+        return memories.write(CopilotMemoryCandidate.builder().scope(scope).scopeId(scopeId)
+                .type(CopilotMemoryType.ORCHARD_PROFILE).key(key).value(value).build(), 42L, "seed-conversation", "seed-turn");
+    }
+
     private List<CopilotLongTermMemory> activeMemories() {
         return memoryRepository.findActive(42L, List.of(
                 new CopilotLongTermMemoryRepository.ScopeRef(CopilotMemoryScope.FIELD, "field-1"),
@@ -217,6 +469,15 @@ class CopilotMemoryProposalServiceTest {
             if (proposal == null || !Objects.equals(proposal.ownerUserId(), ownerUserId)
                     || proposal.status() != CopilotMemoryProposalService.ProposalStatus.PENDING || proposal.memoryId() != null) return false;
             rows.put(proposalId, proposal.confirmed(memoryId, confirmedAt));
+            return true;
+        }
+
+        @Override
+        public synchronized boolean markIgnored(String proposalId, Long ownerUserId) {
+            var proposal = rows.get(proposalId);
+            if (proposal == null || !Objects.equals(proposal.ownerUserId(), ownerUserId)
+                    || proposal.status() != CopilotMemoryProposalService.ProposalStatus.PENDING) return false;
+            rows.put(proposalId, proposal.ignored());
             return true;
         }
 

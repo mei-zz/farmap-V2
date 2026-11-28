@@ -1,6 +1,9 @@
 package com.mei.zhgy.controller;
 
 import com.mei.zhgy.context.BaseContext;
+import com.mei.zhgy.service.agent.AgentRun;
+import com.mei.zhgy.service.agent.AgentRuntime;
+import com.mei.zhgy.service.agent.RunStatus;
 import com.mei.zhgy.service.copilot.*;
 import com.mei.zhgy.service.field.FarmField;
 import com.mei.zhgy.service.field.FarmFieldService;
@@ -30,6 +33,38 @@ class CopilotOperationArtifactsTest {
     private final String conversationId = conversations.create(7L).getConversationId();
     private final FarmFieldService fields = mock(FarmFieldService.class);
     private final CopilotRouteService routes = mock(CopilotRouteService.class);
+
+    @Test
+    void checklistDraftsKeepEachAuthorizedFieldAndAwaitApproval() throws Exception {
+        var runtime = mock(AgentRuntime.class);
+        when(fields.get("field-east", 7L)).thenReturn(FarmField.builder().fieldId("field-east").farmId(42).name("东区").build());
+        when(fields.get("field-west", 7L)).thenReturn(FarmField.builder().fieldId("field-west").farmId(42).name("西区").build());
+        when(runtime.prepareTaskDraftBatch(anyString(), eq(7L), anyList())).thenAnswer(invocation -> {
+            List<AgentRuntime.ScopedTaskDraft> drafts = invocation.getArgument(2);
+            assertEquals(List.of("field-east", "field-west"), drafts.stream().map(row -> row.scope().getFieldId()).toList());
+            assertEquals(List.of("检查落果", "复核病斑"), drafts.stream().map(row -> row.draft().title()).toList());
+            return drafts.stream().map(row -> AgentRun.builder().runId("run-" + row.scope().getFieldId())
+                    .status(RunStatus.WAITING_FOR_APPROVAL).build()).toList();
+        });
+        var service = new CopilotApplicationService(routes, conversations, null, null, null, null, fields, runtime, null, null, null);
+        var mvc = MockMvcBuilders.standaloneSetup(new CopilotController(service)).build();
+        BaseContext.setCurrentId(7L);
+        try {
+            mvc.perform(post("/api/copilot/task-drafts/batch").contentType(MediaType.APPLICATION_JSON).content("""
+                    {"tasks":[{"fieldId":"field-east","title":"检查落果","detail":"记录落果情况"},
+                              {"fieldId":"field-west","title":"复核病斑","detail":"检查果实病斑"}]}
+                    """)).andExpect(status().isOk())
+                    .andExpect(jsonPath("$[0].status").value("WAITING_FOR_APPROVAL"))
+                    .andExpect(jsonPath("$[1].status").value("WAITING_FOR_APPROVAL"));
+            mvc.perform(post("/api/copilot/task-drafts/batch").contentType(MediaType.APPLICATION_JSON).content("""
+                    {"tasks":[{"fieldId":"field-east","title":"检查落果","detail":"记录落果情况"},
+                              {"fieldId":"field-west","title":"立即喷药","detail":"药剂未经核验"}]}
+                    """)).andExpect(status().isUnprocessableEntity());
+            verify(runtime, times(1)).prepareTaskDraftBatch(anyString(), eq(7L), anyList());
+        } finally {
+            BaseContext.removeCurrentId();
+        }
+    }
 
     @Test
     void weeklyFarmQueryProducesRestorableBusinessScopeDespiteSingleTaskClarification() throws Exception {

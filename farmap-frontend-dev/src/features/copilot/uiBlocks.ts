@@ -1,5 +1,5 @@
 import type { PhenologyAccumulation, PhenologyStage, PhenologyTimelineData } from "./blocks/PlumPhenologyTimeline";
-import type { SprayWeatherData, WorkDayAssessment, WorkSuitability, WorkSuitabilityLevel } from "./blocks/SprayWeatherWindowCard";
+import type { SprayWeatherData, WorkDayAssessment, WorkSuitability, WorkSuitabilityLevel, WorkTimeSlot } from "./blocks/SprayWeatherWindowCard";
 import type { AtlasFigure, PestComparisonData } from "./blocks/PestComparisonCard";
 import type { MemoryProposalData } from "./blocks/MemoryProposalCard";
 import type { ComparisonMatrixData } from "./blocks/ComparisonMatrixCard";
@@ -46,7 +46,6 @@ export type ChartSeries = {
   stack?: string;
   threshold?: number;
   color?: string;
-  axisLabel?: string;
 };
 export type ChartThreshold = { label: string; value: number; unit?: string; axis?: "left" | "right"; seriesLabel?: string };
 export type ClarificationField = { id: string; label: string; required?: boolean; options?: { label: string; value: string }[] };
@@ -177,7 +176,8 @@ function parseDraftTask(value: unknown, fallbackFieldId?: string): DraftTaskPayl
   const title = string(source.title, 120);
   const detail = string(source.detail ?? source.description, 880);
   if (!fieldId || !title || !detail) return undefined;
-  return { fieldId, title, detail, scheduledFor: scheduledFor(source.scheduledFor ?? source.date) };
+  const date = scheduledFor(source.scheduledFor ?? source.date);
+  return date ? { fieldId, title, detail, scheduledFor: date } : { fieldId, title, detail };
 }
 
 function parseChartSeries(value: unknown): ChartSeries[] {
@@ -191,7 +191,7 @@ function parseChartSeries(value: unknown): ChartSeries[] {
       return pointLabel && pointValue !== undefined ? { label: pointLabel, value: pointValue } : undefined;
     });
     if (!label || !points.length) return undefined;
-    const type = (["line", "bar"] as const).find((candidate) => candidate === series?.type ?? candidate === series?.chartType);
+    const type = (["line", "bar"] as const).find((candidate) => candidate === series?.type || candidate === series?.chartType);
     const axis = series?.axis === "right" || series?.yAxisIndex === 1 || series?.yAxisIndex === "right"
       ? "right" : series?.axis === "left" || series?.yAxisIndex === 0 || series?.yAxisIndex === "left" ? "left" : undefined;
     const color = string(series?.color, 20);
@@ -202,7 +202,6 @@ function parseChartSeries(value: unknown): ChartSeries[] {
       stack,
       threshold: numberInRange(series?.threshold ?? series?.markLine, -1_000_000_000, 1_000_000_000),
       color: color && /^#[0-9a-f]{3,8}$/iu.test(color) ? color : undefined,
-      axisLabel: string(series?.axisLabel, 60),
     };
   });
 }
@@ -267,8 +266,9 @@ function parseComparisonMatrix(value: unknown, fallbackFieldId?: string): Compar
     if (!option || !label) return [];
     const id = uiId(option.id ?? option.optionId) ?? `option-${index + 1}`;
     const cells = cellValues(option.values ?? option.attributes ?? option.metrics);
-    if (Array.isArray(option.values ?? option.cells)) {
-      for (const [cellIndex, cell] of (option.values ?? option.cells as unknown[]).entries()) {
+    const optionCells = option.values ?? option.cells;
+    if (Array.isArray(optionCells)) {
+      for (const [cellIndex, cell] of optionCells.entries()) {
         const text = textCell(cell);
         if (text) cells[`row-${cellIndex + 1}`] = text;
       }
@@ -306,10 +306,11 @@ function parseComparisonMatrix(value: unknown, fallbackFieldId?: string): Compar
   if (!rows.length) return undefined;
 
   for (const option of options) {
-    for (const row of rows) {
-      const value = option.values[row.id] ?? option.values[row.label] ?? row.values[option.id] ?? row.values[option.label];
+    rows.forEach((row, rowIndex) => {
+      const value = option.values[row.id] ?? option.values[row.label] ?? option.values[`row-${rowIndex + 1}`]
+        ?? row.values[option.id] ?? row.values[option.label];
       if (value) option.values[row.id] = value;
-    }
+    });
   }
   return { options, rows, note: string(matrix.note ?? matrix.summary, 400) };
 }
@@ -351,9 +352,10 @@ function parseActionChecklist(value: unknown, fallbackFieldId?: string): ActionC
 function parseAtlasFigures(value: unknown): AtlasFigure[] {
   return list(value, 8, (entry) => {
     const figure = record(entry);
+    if (!figure) return undefined;
     const id = uiId(figure?.refId ?? figure?.id);
-    const label = string(figure?.label ?? figure?.name, 120);
-    const url = imageReference(figure?.imageUrl ?? figure?.url);
+    const label = string(figure.label ?? figure.name, 120);
+    const url = imageReference(figure.imageUrl ?? figure.url);
     if (!id || !label || !url) return undefined;
     return {
       id, label, url,
@@ -365,10 +367,10 @@ function parseAtlasFigures(value: unknown): AtlasFigure[] {
   });
 }
 
-function parsePestComparison(value: unknown, fallbackFieldId?: string): PestComparisonData | undefined {
+function parsePestComparison(value: unknown): PestComparisonData | undefined {
   const input = record(value);
   if (!input) return undefined;
-  const siteImages = list(input.siteImages ?? input.observedImages ?? input.fieldImages ?? input.uploadedImages, 6, (entry, index) => {
+  const siteImages: NonNullable<PestComparisonData["siteImages"]> = list(input.siteImages ?? input.observedImages ?? input.fieldImages ?? input.uploadedImages, 6, (entry, index) => {
     const image = record(entry);
     const url = imageReference(image?.url ?? image?.imageUrl);
     if (!url) return undefined;
@@ -385,6 +387,8 @@ function parsePestComparison(value: unknown, fallbackFieldId?: string): PestComp
       id: "site-1",
       label: string(input.siteImageLabel, 120) ?? "现场观测",
       url: imageReference(input.siteImageUrl)!,
+      capturedAt: date(input.siteImageCapturedAt),
+      source: string(input.siteImageSource, 80),
     });
   }
   const differentialFeatures = list(input.differentialFeatures ?? input.features ?? input.identificationFeatures, 12, (entry) => {
@@ -499,7 +503,7 @@ function parseData(raw: unknown): BlockData | undefined {
     question: string(input.question, 600), originalRequest: string(input.originalRequest, 1200),
     phenologyTimeline: parsePhenologyTimeline(input.phenologyTimeline),
     sprayWeather: parseSprayWeather(input),
-    pestComparison: parsePestComparison(input.pestComparison),
+    pestComparison: parsePestComparison(input.pestComparison ?? input),
     comparisonMatrix: parseComparisonMatrix(input.comparisonMatrix ?? input.matrix, fieldId),
     actionChecklist: parseActionChecklist(input.actionChecklist ?? input.checklist, fieldId),
     memoryProposal: parseMemoryProposal(input.memoryProposal),
@@ -545,7 +549,7 @@ function parsePhenologyTimeline(value: unknown): PhenologyTimelineData | undefin
     -1_000_000, 1_000_000,
   );
   const targetAccumulation = numberInRange(
-    rawAccumulation?.target ?? rawAccumulation?.required ?? rawAccumulation?.total,
+    rawAccumulation?.target ?? rawAccumulation?.required ?? rawAccumulation?.total ?? phase.thermalTarget,
     0, 1_000_000,
   );
   const accumulation = currentAccumulation !== undefined ? {
@@ -562,6 +566,9 @@ function parsePhenologyTimeline(value: unknown): PhenologyTimelineData | undefin
     stages: stages.length ? stages : undefined,
     daysToNext: integerInRange(phase.daysToNext ?? phase.daysUntilNext ?? phase.countdownDays ?? phase.nextInDays, 0, 366),
     registered: string(phase.registered, 80), seasonal: string(phase.seasonal, 80),
+    expectedRegisteredStage: string(phase.expectedRegisteredStage, 80),
+    calibrationTarget: uiId(phase.calibrationTarget),
+    basis: string(phase.basis, 460),
     review: phase.review === true || phase.mismatch === true || phase.stageMismatch === true,
     accumulation,
   };
@@ -610,7 +617,7 @@ function parseWorkDay(value: unknown): WorkDayAssessment | undefined {
   const operations = record(day.operations);
   const pick = (...keys: string[]) => parseWorkSuitability(keys.map((key) => operations?.[key] ?? day[key]).find((candidate) => candidate !== undefined));
   const spray = pick("spray", "spraying", "pesticide");
-  const irrigation = pick("irrigation", "fertilization", "fertilize", "watering", "water");
+  const irrigation = pick("irrigation", "fertigation", "fertilization", "fertilize", "watering", "water");
   const harvest = pick("harvest", "harvesting");
   return spray || irrigation || harvest ? { date, spray, irrigation, harvest } : undefined;
 }
@@ -619,7 +626,7 @@ function operationKey(value: unknown): "spray" | "irrigation" | "harvest" | unde
   if (typeof value !== "string") return undefined;
   const key = value.trim().toLowerCase();
   if (["spray", "pesticide", "打药", "施药"].includes(key)) return "spray";
-  if (["irrigation", "fertilization", "fertilize", "watering", "water", "施肥", "灌水", "施肥灌水"].includes(key)) return "irrigation";
+  if (["irrigation", "fertigation", "fertilization", "fertilize", "watering", "water", "施肥", "灌水", "施肥灌水"].includes(key)) return "irrigation";
   if (["harvest", "harvesting", "采收", "采摘"].includes(key)) return "harvest";
   return undefined;
 }
@@ -679,17 +686,34 @@ function parseSprayWeather(input: Record<string, unknown>): SprayWeatherData | u
       humidity: weatherNumber(window?.humidityPct ?? window?.humidity, 0, 100),
     };
   });
+  const operationWindows = list(input.operationWindows, 24, (value): WorkTimeSlot | undefined => {
+    const startsAt = date(record(value)?.startsAt);
+    const operations = parseWorkDay(value);
+    return startsAt && operations ? { ...operations, startsAt } : undefined;
+  });
   const workDays = parseWorkDays(input);
+  const rank = { unknown: 0, unsuitable: 1, caution: 2, suitable: 3 };
+  const summaries = new Map(workDays.map((day) => [day.date, day]));
+  for (const window of operationWindows) {
+    const summary = summaries.get(window.date) ?? { date: window.date };
+    for (const key of ["spray", "irrigation", "harvest"] as const) {
+      const assessment = window[key];
+      const previous = summary[key];
+      if (assessment && (!previous || rank[assessment.level] > rank[previous.level])) summary[key] = assessment;
+    }
+    summaries.set(window.date, summary);
+  }
   const operationDecision = string(input.operationDecision, 80);
   const phiDays = integerInRange(input.phiDays, 0, 3650);
   const verifiedProductName = string(input.verifiedProductName, 120);
-  if (!windows.length && !workDays.length && !operationDecision && phiDays === undefined) return undefined;
+  if (!windows.length && !summaries.size && !operationDecision && phiDays === undefined) return undefined;
   return {
     source: string(input.source, 80),
     rainHorizonHours: weatherNumber(input.rainHorizonHours, 1, 72),
     restrictionsVerified: input.useRestrictionsVerified === true || input.restrictionsVerified === true,
     windows,
-    workDays: workDays.length ? workDays : undefined,
+    workDays: [...summaries.values()].sort((left, right) => left.date.localeCompare(right.date)).slice(0, 3),
+    operationWindows,
     operationDecision,
     phiDays,
     verifiedProductName,
@@ -764,14 +788,14 @@ function parseAction(input: unknown, fallbackFieldId?: string): AgentUiAction | 
   }
   if (type === "open-evidence-drawer") {
     const payload = record(action.payload);
-    const evidenceId = evidenceRef(action.evidenceId ?? action.value ?? payload?.evidenceId);
+    const evidenceId = evidenceRef(action.evidenceId ?? action.value ?? payload?.evidenceId ?? action.payload);
     return evidenceId ? { type, label, evidenceId } : undefined;
   }
   const payload = record(action.payload);
   const proposalId = uiId(action.proposalId ?? action.value ?? payload?.proposalId);
   if (!proposalId || !/^proposal-[A-Za-z0-9-]{8,84}$/u.test(proposalId)) return undefined;
   const rawDecision = action.decision ?? payload?.decision;
-  const decision: MemoryActionDecision = rawDecision === "ignore" ? "ignore" : "confirm";
+  const decision: MemoryActionDecision = typeof rawDecision === "string" && rawDecision.toLowerCase() === "ignore" ? "ignore" : "confirm";
   return { type, label, proposalId, decision };
 }
 

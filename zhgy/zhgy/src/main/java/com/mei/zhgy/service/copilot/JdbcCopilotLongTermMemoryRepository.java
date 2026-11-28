@@ -53,7 +53,7 @@ public class JdbcCopilotLongTermMemoryRepository implements CopilotLongTermMemor
         sql.append(") ORDER BY updated_at DESC LIMIT ").append(Math.max(1, Math.min(limit * 4, 80)));
         List<CopilotLongTermMemory> loaded = jdbc.query(sql.toString(), (rs, row) -> map(rs), args.toArray());
         List<CopilotLongTermMemory> result = new ArrayList<>();
-        for (ScopeRef scope : scopes) for (CopilotLongTermMemory memory : loaded) if (memory.getScope() == scope.scope() && java.util.Objects.equals(memory.getScopeId(), scope.scopeId()) && result.stream().noneMatch(existing -> existing.getKey().equals(memory.getKey()))) { result.add(memory); break; }
+        for (ScopeRef scope : scopes) for (CopilotLongTermMemory memory : loaded) if (memory.getScope() == scope.scope() && java.util.Objects.equals(memory.getScopeId(), scope.scopeId()) && result.stream().noneMatch(existing -> existing.getKey().equals(memory.getKey()))) result.add(memory);
         return result.stream().limit(limit).toList();
     }
 

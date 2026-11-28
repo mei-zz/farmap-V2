@@ -46,20 +46,22 @@ const blockFrame: [string, unknown] = ["ui.block.created", block];
 const doneFrame: [string, unknown] = ["done", { status: "COMPLETED" }];
 const advance = (page: Page) => page.evaluate(() => window.dispatchEvent(new Event("presentation-next")));
 
-test("structured replies reveal a stable conclusion before cards and stream analysis beneath them", async ({ page }) => {
+test("legacy cards appear immediately while the stable conclusion keeps canonical summary order", async ({ page }) => {
   await openWithStages(page, [
     [routeFrame, ["tool.started", { toolName: "read_farm_directory" }], blockFrame],
-    [["presentation.summary", { text: "当前账号可访问一个农场。" }], ["content.delta", { delta: "兼容客户端的重复文本" }]],
+    [["presentation.summary", { text: "当前账号可访问一个农场。" }], ["message.part", { type: "ui_block", blockKey: block.blockId, block }], ["content.delta", { delta: "兼容客户端的重复文本" }]],
     [["presentation.analysis.delta", { delta: "农场权限来自当前登录账号。" }]],
     [["presentation.analysis.delta", { delta: "可以继续查看所选农场的地块。" }], ["presentation.followups", { items: [{ label: "查看地块", prompt: "当前农场有哪些地块？" }] }], doneFrame],
   ]);
   const turn = page.locator(".farmap-copilot__message--assistant");
   const card = turn.locator('[data-block-type="FarmDirectoryCard"]');
   await expect(turn.getByText("正在读取农场列表")).toBeVisible();
-  await expect(card).toHaveCount(0);
+  await expect(card.getByText("巫山果园")).toBeVisible();
+  await expect(card).toHaveCount(1);
   await advance(page);
   await expect(turn.getByText("当前账号可访问一个农场。")).toBeVisible();
   await expect(card.getByText("巫山果园")).toBeVisible();
+  await expect(card).toHaveCount(1);
   await advance(page);
   const analysis = turn.getByRole("region", { name: "补充分析" });
   await expect(analysis).toContainText("农场权限来自当前登录账号。");
@@ -76,17 +78,19 @@ test("structured replies reveal a stable conclusion before cards and stream anal
   await expect(page.getByPlaceholder("描述你的农事需求，或上传作物图片……")).toHaveValue("当前农场有哪些地块？");
 });
 
-test("legacy early cards stay queued until the ordinary text stream ends", async ({ page }) => {
+test("legacy early cards appear immediately while the ordinary text stream continues", async ({ page }) => {
   await openWithStages(page, [[routeFrame, blockFrame, ["content.delta", { delta: "先读取你的农场。" }]],
     [["content.delta", { delta: " 结果已经整理。" }]], [doneFrame]]);
   const card = page.locator('[data-block-type="FarmDirectoryCard"]');
   await expect(page.getByText("先读取你的农场。", { exact: true })).toBeVisible();
-  await expect(card).toHaveCount(0);
+  await expect(card.getByText("巫山果园")).toBeVisible();
+  await expect(card).toHaveCount(1);
   await advance(page);
   await expect(page.getByText(/结果已经整理/)).toBeVisible();
-  await expect(card).toHaveCount(0);
+  await expect(card).toHaveCount(1);
   await advance(page);
   await expect(card).toBeVisible();
+  await expect(card).toHaveCount(1);
 });
 
 test("weather uses the specialty layout with real units and keeps measured zero distinct from absent data", async ({ page }) => {

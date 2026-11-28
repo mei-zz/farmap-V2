@@ -11,6 +11,11 @@ import com.mei.zhgy.service.copilot.*;
 import com.mei.zhgy.service.field.FarmField;
 import com.mei.zhgy.service.field.FarmFieldService;
 import com.mei.zhgy.service.rag.KnowledgeEvidenceRetriever;
+import com.mei.zhgy.service.rag.VisualEvidenceRetriever;
+import com.mei.zhgy.service.rag.VisualObservation;
+import com.mei.zhgy.service.reference.ReferenceImage;
+import com.mei.zhgy.service.reference.ReferenceImageAttacher;
+import com.mei.zhgy.service.reference.ReferenceImageLookup;
 import com.mei.zhgy.vo.DiagnosisEvidenceVO;
 import com.mei.zhgy.vo.WeatherForecastDay;
 import com.sun.net.httpserver.HttpExchange;
@@ -192,7 +197,7 @@ class CopilotPiRuntimeIntegrationTest {
             MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
             BaseContext.setCurrentId(1L);
             MvcResult pending = mvc.perform(post("/api/copilot/chat").contentType(MediaType.APPLICATION_JSON)
-                    .content("{\"message\":\"请结合农场天气预报和知识证据给出建议\"}")).andExpect(request().asyncStarted()).andReturn();
+                    .content("{\"message\":\"明天风大不大？请结合资料给出建议\"}")).andExpect(request().asyncStarted()).andReturn();
             String output = mvc.perform(asyncDispatch(pending)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
             assertTrue(output.contains("已查询指定日期和地块的资料。"), output);
             assertTrue(output.contains("WeatherCard"), output);
@@ -229,6 +234,104 @@ class CopilotPiRuntimeIntegrationTest {
 
     private Map<String, Object> call(int index, String id, String name, String args) {
         return Map.of("index", index, "id", id, "type", "function", "function", Map.of("name", name, "arguments", args));
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "farmap.pi.integration", matches = "true")
+    void imageConversationUsesVisualObservationsBeforeParallelGrounding() throws Exception {
+        var mapper = new ObjectMapper();
+        var requests = new CopyOnWriteArrayList<String>();
+        String image = "https://assets.example.test/uploads/plum.jpg";
+        String symptom = "果面褐色水渍斑";
+        var knowledge = mock(KnowledgeEvidenceRetriever.class);
+        var atlas = mock(ReferenceImageAttacher.class);
+        var weather = mock(com.mei.zhgy.service.CurrentWeatherService.class);
+        var visual = mock(VisualEvidenceRetriever.class);
+        var visualFact = new VisualObservation("脆李果实", List.of(symptom), true, null, List.of(), null);
+        when(visual.retrieve(any())).thenReturn(List.of(
+                DiagnosisEvidenceVO.builder().id("observed-image").title("现场图片").summary(symptom)
+                        .metadata(Map.of("visualObservation", visualFact)).build(),
+                DiagnosisEvidenceVO.builder().id("matched-image").title("相似图片")
+                        .metadata(Map.of("retrievalType", "VISUAL_SIMILARITY", "assetId", "matched-asset", "similarity", 0.86)).build()));
+        CountDownLatch lookups = new CountDownLatch(3);
+        when(knowledge.retrieveWithStatus(any(), eq(1L))).thenAnswer(invocation -> {
+            com.mei.zhgy.dto.DiagnosisAnalyzeRequest query = invocation.getArgument(0);
+            assertEquals(symptom, query.getQuery());
+            lookups.countDown();
+            assertTrue(lookups.await(4, TimeUnit.SECONDS));
+            return new KnowledgeEvidenceRetriever.RetrievalResult("READY", List.of(
+                    DiagnosisEvidenceVO.builder().id("plum-doc").title("脆李病害资料").summary("关联病害资料").build()));
+        });
+        when(atlas.forChatResult("褐腐病", "plum", null)).thenAnswer(invocation -> {
+            lookups.countDown();
+            assertTrue(lookups.await(4, TimeUnit.SECONDS));
+            var item = new ReferenceImage("atlas-rot", "disease", null, "brown_rot", "脆李褐腐病",
+                    "https://assets.example.test/atlas/plum.jpg", null, null);
+            return ReferenceImageLookup.ready(List.of(item), 1, 1, null);
+        });
+        when(weather.get(42, 1L)).thenAnswer(invocation -> {
+            lookups.countDown();
+            assertTrue(lookups.await(4, TimeUnit.SECONDS));
+            return new com.mei.zhgy.vo.CurrentWeatherResponse(42, "测试农场", "READY", "23", "多云", "62",
+                    null, null, null, null, "OPEN_METEO", "PROVIDER", "CURRENT",
+                    null, null, null, null, null, null, List.of());
+        });
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            requests.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            if (requests.size() == 1) {
+                sendCompletion(exchange, mapper.writeValueAsString(Map.of("tool_calls",
+                        List.of(call(0, "visual", "analyze_uploaded_images", "{\"focus\":\"DISEASE\"}")))), "tool_calls");
+            } else if (requests.size() == 2) {
+                var calls = List.of(call(0, "kb", "search_agricultural_knowledge", mapper.writeValueAsString(Map.of("query", symptom))),
+                        call(1, "atlas", "lookup_reference_atlas", "{\"crop\":\"plum\",\"diseaseOrPest\":\"褐腐病\"}"),
+                        call(2, "weather", "read_current_weather", "{}"));
+                sendCompletion(exchange, mapper.writeValueAsString(Map.of("tool_calls", calls)), "tool_calls");
+            } else {
+                sendCompletion(exchange, mapper.writeValueAsString(Map.of("content", "建议先复核现场病斑。")), "stop");
+            }
+        });
+        server.start();
+        var runtime = new PiAgentRuntime();
+        try {
+            ReflectionTestUtils.setField(runtime, "apiKey", "test-key");
+            ReflectionTestUtils.setField(runtime, "baseUrl", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1/chat/completions");
+            ReflectionTestUtils.setField(runtime, "model", "mock");
+            var routes = mock(CopilotRouteService.class);
+            when(routes.routeHarness(any(), eq(1L), anyBoolean())).thenReturn(CopilotRouteResult.builder()
+                    .intent(CopilotIntent.GENERAL_QA).traceId("visual-harness").resolutionStatus(CopilotResolutionStatus.RESOLVED)
+                    .resolvedContext(CopilotStableContext.builder().farmId("42").build()).build());
+            var fields = mock(FarmFieldService.class);
+            var crops = new com.mei.zhgy.service.agriculture.CropResolver();
+            var application = new CopilotApplicationService(routes, null, null, null, knowledge, null, fields, null, null, crops, null);
+            application.setPiRuntime(runtime);
+            application.setCurrentWeatherService(weather);
+            ReflectionTestUtils.setField(application, "uploadBaseUrl", "https://assets.example.test/uploads");
+            ReflectionTestUtils.setField(application, "agriculturalTools", new AgriculturalToolRegistry(fields, null, atlas,
+                    null, visual, null, crops, new com.mei.zhgy.service.agriculture.PhenologyService(crops)));
+            MockMvc mvc = MockMvcBuilders.standaloneSetup(new CopilotController(application)).build();
+            BaseContext.setCurrentId(1L);
+            var pending = mvc.perform(post("/api/copilot/chat").contentType(MediaType.APPLICATION_JSON)
+                    .content(mapper.writeValueAsString(Map.of("message", "帮我看看这张脆李图片", "imageUrls", List.of(image)))))
+                    .andExpect(request().asyncStarted()).andReturn();
+            String output = mvc.perform(asyncDispatch(pending)).andExpect(status().isOk()).andReturn()
+                    .getResponse().getContentAsString(StandardCharsets.UTF_8);
+            assertEquals(3, requests.size(), output);
+            assertFalse(requests.get(0).contains("matched-asset"));
+            assertTrue(requests.get(1).contains("visibleSymptoms"), requests.get(1));
+            assertTrue(requests.get(1).contains("matched-asset"), requests.get(1));
+            assertEquals(0L, lookups.getCount());
+            assertTrue(requests.get(2).contains("plum-doc"));
+            assertTrue(requests.get(2).contains("atlas-rot"));
+            assertTrue(requests.get(2).contains("OPEN_METEO"));
+            assertTrue(output.contains("PestComparisonCard"), output);
+            assertTrue(output.contains("建议先复核现场病斑。"), output);
+            assertFalse(output.contains("event:diagnosis.job"), output);
+        } finally {
+            BaseContext.removeCurrentId();
+            runtime.close();
+            server.stop(0);
+        }
     }
 
     @Test
@@ -390,7 +493,8 @@ class CopilotPiRuntimeIntegrationTest {
             if (count.incrementAndGet() == 1) {
                 String args = mapper.writeValueAsString(Map.of("title", "地块灌溉复核", "detail", "先检查土壤湿度再灌溉。", "scheduledFor", date));
                 sendCompletion(exchange, mapper.writeValueAsString(Map.of("tool_calls", List.of(call(0, "draft", "propose_task_draft", args)))), "tool_calls");
-            } else sendCompletion(exchange, "{\"content\":\"草稿参数已准备。\"}", "stop");
+            } else sendCompletion(exchange, "{\"content\":\"草稿参数已准备。\"}", "stop",
+                    "{\"prompt_tokens\":13,\"completion_tokens\":5,\"total_tokens\":18,\"prompt_tokens_details\":{\"cached_tokens\":2}}");
         });
         server.start();
         PiAgentRuntime runtime = new PiAgentRuntime();
@@ -399,16 +503,19 @@ class CopilotPiRuntimeIntegrationTest {
         ReflectionTestUtils.setField(runtime, "model", "mock");
         try {
             CopilotRouteService routes = mock(CopilotRouteService.class);
+            var turnRepository = new InMemoryCopilotConversationRepository();
+            var conversations = new CopilotConversationService(turnRepository);
+            String conversationId = conversations.create(1L).getConversationId();
             when(routes.route(any(), eq(1L), anyBoolean(), eq(false))).thenReturn(CopilotRouteResult.builder()
                     .intent(CopilotIntent.ACTION_REQUEST).resolutionStatus(CopilotResolutionStatus.RESOLVED)
+                    .traceId("trace-pi-draft").conversationId(conversationId)
                     .requestedAction("创建浇水任务").resolvedContext(CopilotStableContext.builder().farmId("42").fieldId("west-field").build()).build());
             AgentRuntime workflows = mock(AgentRuntime.class);
             var run = AgentRun.builder().runId("pi-draft-run").status(RunStatus.WAITING_FOR_APPROVAL)
                     .actions(List.of(ProposedAction.builder().id("draft-action").title("地块灌溉复核").build())).build();
-            var draft = new AgentRuntime.TaskDraft("地块灌溉复核", "先检查土壤湿度再灌溉。", date);
-            when(workflows.prepareTaskDraft(eq("创建浇水任务"), any(), eq(1L), eq(draft))).thenReturn(run);
+            when(workflows.prepareTaskDraft(eq("创建浇水任务"), any(), eq(1L), any())).thenReturn(run);
             when(workflows.require("pi-draft-run", 1L)).thenReturn(run);
-            CopilotController controller = new CopilotController(new CopilotApplicationService(routes, null, null, null, null, null, null, workflows, null, null, null));
+            CopilotController controller = new CopilotController(new CopilotApplicationService(routes, conversations, null, null, null, null, null, workflows, null, null, null));
             controller.application.setPiRuntime(runtime);
             MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
             BaseContext.setCurrentId(1L);
@@ -417,8 +524,28 @@ class CopilotPiRuntimeIntegrationTest {
             String output = mvc.perform(asyncDispatch(pending)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
             assertTrue(output.contains("ui.confirmation.required"), output);
             assertTrue(output.contains("地块灌溉复核"), output);
+            assertTrue(output.contains("草稿参数已准备。"), output);
+            var draft = org.mockito.ArgumentCaptor.forClass(AgentRuntime.TaskDraft.class);
             verify(workflows).prepareTaskDraft(eq("创建浇水任务"), argThat(context ->
-                    "42".equals(context.getFarmId()) && "west-field".equals(context.getFieldId())), eq(1L), eq(draft));
+                    "42".equals(context.getFarmId()) && "west-field".equals(context.getFieldId())), eq(1L), draft.capture());
+            assertEquals("west-field", draft.getValue().fieldId());
+            assertEquals(date, draft.getValue().scheduledFor());
+            assertEquals("草稿参数已准备。", draft.getValue().supportingEvidence().stream()
+                    .filter(item -> "proposal_explanation".equals(item.getModality())).findFirst().orElseThrow().getSummary());
+            var transcript = turnRepository.allTurns(conversationId, 1L);
+            assertEquals(1, transcript.size());
+            assertEquals("草稿参数已准备。", transcript.get(0).getMessage());
+            var trace = mapper.readTree(transcript.get(0).getResultJson()).path("telemetry");
+            assertEquals("trace-pi-draft", trace.path("traceId").asText());
+            assertEquals("PI_DRAFT", trace.path("executionMode").asText());
+            assertEquals("mock", trace.path("selectedModel").asText());
+            assertTrue(trace.path("ttftMs").isNumber());
+            assertEquals(11, trace.path("inputTokens").asLong());
+            assertEquals(5, trace.path("outputTokens").asLong());
+            assertEquals(2, trace.path("cacheReadTokens").asLong());
+            assertEquals("propose_task_draft", trace.path("toolCalls").get(0).path("name").asText());
+            assertEquals("completed", trace.path("toolCalls").get(0).path("status").asText());
+            assertTrue(trace.path("emittedBlocks").toString().contains("ConfirmationCard"));
             verify(workflows, never()).createRun(anyString(), any(), anyString(), anyLong());
             verify(workflows, never()).start(anyString());
             assertEquals(2, count.get());
@@ -430,12 +557,74 @@ class CopilotPiRuntimeIntegrationTest {
     }
 
     private void sendCompletion(HttpExchange exchange, String delta, String finish) throws java.io.IOException {
+        sendCompletion(exchange, delta, finish, null);
+    }
+
+    private void sendCompletion(HttpExchange exchange, String delta, String finish, String usage) throws java.io.IOException {
         String body = "data: {\"id\":\"mock\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"mock\",\"choices\":[{\"index\":0,\"delta\":" + delta + ",\"finish_reason\":null}]}\n\n"
-                + "data: {\"id\":\"mock\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"mock\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"" + finish + "\"}]}\n\ndata: [DONE]\n\n";
+                + "data: {\"id\":\"mock\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"mock\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"" + finish + "\"}]}\n\n";
+        if (usage != null) body += "data: {\"id\":\"mock\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"mock\",\"choices\":[],\"usage\":" + usage + "}\n\n";
+        body += "data: [DONE]\n\n";
         exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.sendResponseHeaders(200, bytes.length);
         try (var stream = exchange.getResponseBody()) { stream.write(bytes); }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"timeout", "provider", "clarification"})
+    @EnabledIfSystemProperty(named = "farmap.pi.integration", matches = "true")
+    void taskDraftDistinguishesServiceErrorsFromMissingSlots(String scenario) throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            try {
+                exchange.getRequestBody().readAllBytes();
+                if ("timeout".equals(scenario)) {
+                    try { Thread.sleep(900); }
+                    catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                    return;
+                }
+                if ("provider".equals(scenario)) {
+                    exchange.sendResponseHeaders(400, -1);
+                    return;
+                }
+                sendCompletion(exchange, "{\"content\":\"请补充执行日期。\"}", "stop");
+            } finally { exchange.close(); }
+        });
+        server.start();
+        var runtime = new PiAgentRuntime();
+        ReflectionTestUtils.setField(runtime, "apiKey", "test-key");
+        ReflectionTestUtils.setField(runtime, "baseUrl", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1/chat/completions");
+        ReflectionTestUtils.setField(runtime, "model", "mock");
+        if ("timeout".equals(scenario)) ReflectionTestUtils.setField(runtime, "timeoutMs", 250L);
+        try {
+            var routes = mock(CopilotRouteService.class);
+            when(routes.route(any(), eq(1L), anyBoolean(), eq(false))).thenReturn(CopilotRouteResult.builder()
+                    .intent(CopilotIntent.ACTION_REQUEST).resolutionStatus(CopilotResolutionStatus.RESOLVED)
+                    .requestedAction("创建浇水任务").resolvedContext(CopilotStableContext.builder().farmId("42").fieldId("west-field").build()).build());
+            var workflows = mock(AgentRuntime.class);
+            var application = new CopilotApplicationService(routes, null, null, null, null, null, null, workflows, null, null, null);
+            application.setPiRuntime(runtime);
+            var mvc = MockMvcBuilders.standaloneSetup(new CopilotController(application)).build();
+            BaseContext.setCurrentId(1L);
+            var pending = mvc.perform(post("/api/copilot/chat").contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"message\":\"创建浇水任务\"}")).andExpect(request().asyncStarted()).andReturn();
+            String output = mvc.perform(asyncDispatch(pending)).andExpect(status().isOk()).andReturn()
+                    .getResponse().getContentAsString(StandardCharsets.UTF_8);
+            switch (scenario) {
+                case "timeout" -> assertTrue(output.contains("PI_TIMEOUT"), output);
+                case "provider" -> assertTrue(output.contains("PI_PROVIDER_ERROR"), output);
+                default -> {
+                    assertTrue(output.contains("请补充执行日期。"), output);
+                    assertFalse(output.contains("event:error"), output);
+                }
+            }
+            verifyNoInteractions(workflows);
+        } finally {
+            BaseContext.removeCurrentId();
+            runtime.close();
+            server.stop(0);
+        }
     }
 
     @Test

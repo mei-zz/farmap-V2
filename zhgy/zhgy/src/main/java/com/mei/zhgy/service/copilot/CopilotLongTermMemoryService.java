@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -25,7 +26,23 @@ import java.util.regex.Pattern;
 @Service
 public class CopilotLongTermMemoryService {
     public static final int MAX_ACTIVE_MEMORIES = 20;
+    public static final String KEY_LABOR_CAPACITY = "labor_capacity";
+    public static final String KEY_PREFERRED_SPRAY_EQUIPMENT = "preferred_spray_equipment";
     private static final Pattern MEMORY_ID = Pattern.compile("\\bmemory-[A-Za-z0-9-]+\\b");
+    private static final Pattern LABOR_ARABIC = Pattern.compile("(\\d{1,5})\\s*(?:个|名|人|位|workers?|people|persons?|laborers?|employees?)");
+    private static final Pattern LABOR_CHINESE = Pattern.compile("([一二两三四五六七八九十]{1,3})\\s*(?:个|名|人|位)");
+    private static final Pattern LABOR_ENGLISH = Pattern.compile("\\b(one|two|three|four|five|six|seven|eight|nine|ten)\\s+(?:workers?|people|persons?|laborers?|employees?)\\b");
+    private static final Pattern LABOR_VALUE_ARABIC = Pattern.compile(
+            "^(\\d{1,5})\\s*(?:个|名|人|位|workers?|people|persons?|laborers?|employees?)?"
+                    + "\\s*(?:工人|人手|劳动力|staff|farm workers?)?$");
+    private static final Pattern LABOR_VALUE_CHINESE = Pattern.compile("^([一二两三四五六七八九十]{1,3})\\s*(?:个|名|人|位)?\\s*(?:工人|人手|劳动力|人)?$");
+    private static final Map<String, Integer> ENGLISH_NUMBERS = Map.ofEntries(
+            Map.entry("one", 1), Map.entry("two", 2), Map.entry("three", 3), Map.entry("four", 4),
+            Map.entry("five", 5), Map.entry("six", 6), Map.entry("seven", 7), Map.entry("eight", 8),
+            Map.entry("nine", 9), Map.entry("ten", 10));
+    private static final Set<String> TYPED_USER_KEYS = Set.of(KEY_LABOR_CAPACITY, KEY_PREFERRED_SPRAY_EQUIPMENT);
+    private static final Set<String> EQUIPMENT = Set.of("DRONE", "BACKPACK_SPRAYER", "MIST_BLOWER",
+            "SELF_PROPELLED_SPRAYER", "SPRAY_GUN", "ORCHARD_SPRAYER", "MANUAL_SPRAYER");
     private final CopilotLongTermMemoryRepository repository;
     private final FarmFieldService fields;
     private final FarmMapper farms;
@@ -125,6 +142,16 @@ public class CopilotLongTermMemoryService {
         CopilotMemoryScope scope = scope(normalized);
         String scopeId = scope == CopilotMemoryScope.FIELD ? first(page == null ? null : page.getFieldId(), active == null ? null : active.getFieldId()) : scope == CopilotMemoryScope.FARM ? first(page == null ? null : page.getFarmId(), active == null ? null : active.getFarmId()) : null;
         String key; String value; CopilotMemoryType type;
+        String laborCapacity = laborCapacity(normalized);
+        if (laborCapacity != null) {
+            return CopilotMemoryCandidate.builder().scope(CopilotMemoryScope.USER).type(CopilotMemoryType.OPERATING_CONSTRAINT)
+                    .key(KEY_LABOR_CAPACITY).value(laborCapacity).displayText(display(original, laborCapacity)).build();
+        }
+        String sprayEquipment = sprayEquipment(normalized);
+        if (sprayEquipment != null) {
+            return CopilotMemoryCandidate.builder().scope(CopilotMemoryScope.USER).type(CopilotMemoryType.USER_PREFERENCE)
+                    .key(KEY_PREFERRED_SPRAY_EQUIPMENT).value(sprayEquipment).displayText(display(original, sprayEquipment)).build();
+        }
         if (contains(normalized, "低残留", "low residue")) { key = "preferred_treatment_style"; value = "LOW_RESIDUE"; }
         else if (contains(normalized, "成本", "低成本", "low cost")) { key = "preferred_treatment_style"; value = "LOW_COST"; }
         else if (contains(normalized, "尽量简短", "简短", "brief", "short")) { key = "preferred_response_detail"; value = "SHORT"; }
@@ -141,8 +168,89 @@ public class CopilotLongTermMemoryService {
         else if (scope == CopilotMemoryScope.FARM) type = CopilotMemoryType.FARM_PREFERENCE;
         else type = CopilotMemoryType.USER_PREFERENCE;
         if (scope != CopilotMemoryScope.USER && blank(scopeId)) return null;
-        String display = original == null ? value : original.trim();
-        return CopilotMemoryCandidate.builder().scope(scope).scopeId(scopeId).type(type).key(key).value(value).displayText(display).build();
+        return CopilotMemoryCandidate.builder().scope(scope).scopeId(scopeId).type(type).key(key).value(value)
+                .displayText(display(original, value)).build();
+    }
+
+    private String laborCapacity(String message) {
+        if (!contains(message, "人工", "人力", "用工", "劳动力", "工人", "人手", "labor capacity", "labour capacity", "workers", "worker")) return null;
+        Integer count = null;
+        Matcher arabic = LABOR_ARABIC.matcher(message);
+        if (arabic.find()) count = Integer.valueOf(arabic.group(1));
+        if (count == null) {
+            Matcher chinese = LABOR_CHINESE.matcher(message);
+            if (chinese.find()) count = chineseNumber(chinese.group(1));
+        }
+        if (count == null) {
+            Matcher english = LABOR_ENGLISH.matcher(message);
+            if (english.find()) count = ENGLISH_NUMBERS.get(english.group(1));
+        }
+        return count == null || count <= 0 || count > 100000 ? laborAvailability(message) : String.valueOf(count);
+    }
+
+    private String laborAvailability(String message) {
+        if (contains(message, "紧张", "人手不足", "缺人", "有限", "不充裕", "不充足", "limited")) return "LIMITED";
+        if (contains(message, "适中", "基本够", "adequate")) return "ADEQUATE";
+        if (contains(message, "充裕", "充足", "ample")) return "AMPLE";
+        return null;
+    }
+
+    private Integer laborCapacityValue(String value) {
+        if (blank(value)) return null;
+        Matcher arabic = LABOR_VALUE_ARABIC.matcher(value.trim().toLowerCase(Locale.ROOT));
+        if (arabic.find()) {
+            int count = Integer.parseInt(arabic.group(1));
+            return count > 0 && count <= 100000 ? count : null;
+        }
+        Matcher chinese = LABOR_VALUE_CHINESE.matcher(value.trim());
+        if (chinese.find()) return chineseNumber(chinese.group(1));
+        Matcher englishPhrase = LABOR_ENGLISH.matcher(lower(value));
+        if (englishPhrase.find()) return ENGLISH_NUMBERS.get(englishPhrase.group(1));
+        Integer english = ENGLISH_NUMBERS.get(lower(value));
+        return english == null || english <= 0 ? null : english;
+    }
+
+    private Integer chineseNumber(String token) {
+        if (blank(token)) return null;
+        if ("十".equals(token)) return 10;
+        int ten = token.indexOf('十');
+        if (ten < 0) return token.length() == 1 ? chineseDigit(token.charAt(0)) : null;
+        int tens = ten == 0 ? 1 : chineseDigit(token.charAt(0));
+        int ones = ten == token.length() - 1 ? 0 : chineseDigit(token.charAt(ten + 1));
+        if (tens < 0 || ones < 0) return null;
+        return tens * 10 + ones;
+    }
+
+    private int chineseDigit(char digit) {
+        return switch (digit) {
+            case '一' -> 1;
+            case '二', '两' -> 2;
+            case '三' -> 3;
+            case '四' -> 4;
+            case '五' -> 5;
+            case '六' -> 6;
+            case '七' -> 7;
+            case '八' -> 8;
+            case '九' -> 9;
+            default -> -1;
+        };
+    }
+
+    private String sprayEquipment(String message) {
+        if (!contains(message, "喷雾", "弥雾", "打药", "施药", "无人机", "飞防", "spray", "drone", "uav",
+                "mist blower", "mist-blower", "knapsack", "backpack", "self-propelled", "self propelled")) return null;
+        if (contains(message, "无人机", "drone", "uav")) return "DRONE";
+        if (contains(message, "自走式", "self-propelled", "self propelled")) return "SELF_PROPELLED_SPRAYER";
+        if (contains(message, "背负式", "背式", "knapsack", "backpack")) return "BACKPACK_SPRAYER";
+        if (contains(message, "弥雾机", "mist blower", "mist-blower")) return "MIST_BLOWER";
+        if (contains(message, "高压喷枪", "spray gun", "spray-gun")) return "SPRAY_GUN";
+        if (contains(message, "拖拉机", "牵引式", "boom sprayer", "orchard sprayer", "trailed sprayer")) return "ORCHARD_SPRAYER";
+        if (contains(message, "手动", "manual")) return "MANUAL_SPRAYER";
+        return null;
+    }
+
+    private String display(String original, String fallback) {
+        return original == null || original.isBlank() ? fallback : original.trim();
     }
 
     private CopilotMemoryScope scope(String message) {
@@ -165,15 +273,31 @@ public class CopilotLongTermMemoryService {
     private void validateWrite(CopilotMemoryCandidate candidate, Long userId) {
         if (userId == null) throw new CopilotConversationException("AUTHENTICATION_REQUIRED", "请先登录。", 401);
         if (candidate == null || candidate.getType() == null) throw new CopilotConversationException("MEMORY_CANDIDATE_REQUIRED", "长期记忆内容不能为空。", 400);
+        if (blank(candidate.getKey())) throw new CopilotConversationException("MEMORY_KEY_REQUIRED", "长期记忆缺少字段。", 400);
+        if (isDosageKey(candidate.getKey())) {
+            throw new CopilotConversationException("PESTICIDE_DOSAGE_NOT_MEMORY", "农药用量或浓度不得写入长期记忆。", 400);
+        }
+        if (TYPED_USER_KEYS.contains(lower(candidate.getKey()))) {
+            candidate.setKey(lower(candidate.getKey()));
+            validateTypedUserMemory(candidate);
+            validateScope(candidate, userId);
+            return;
+        }
         if (candidate.getType().isProfileFact()) {
             if (candidate.getScope() == null || candidate.getScope() == CopilotMemoryScope.USER || blank(candidate.getScopeId())) {
                 throw new CopilotConversationException("MEMORY_SCOPE_REQUIRED", "果园资料必须绑定农场或地块。", 400);
             }
-            if (!CopilotMemoryProposalService.isAllowedMemoryKey(candidate.getKey())) {
+            CopilotMemoryProposalService.OrchardProfileKey profileKey = CopilotMemoryProposalService.OrchardProfileKey.fromMemoryKeyOrAlias(candidate.getKey());
+            if (profileKey == null) {
                 throw new CopilotConversationException("PROFILE_KEY_NOT_ALLOWED", "不支持的果园资料类型。", 400);
             }
+            candidate.setKey(profileKey.memoryKey());
             if (blank(candidate.getValue()) || candidate.getValue().length() > CopilotMemoryProposalService.MAX_PROFILE_VALUE_LENGTH) {
                 throw new CopilotConversationException("PROFILE_VALUE_INVALID", "果园资料值不能为空或过长。", 400);
+            }
+            if (profileKey.canonical() == CopilotMemoryProposalService.OrchardProfileKey.TREE_AGE_YEARS
+                    && !CopilotMemoryProposalService.isValidTreeAgeValue(candidate.getValue())) {
+                throw new CopilotConversationException("PROFILE_VALUE_INVALID", "树龄请填写明确年数或果园年龄阶段。", 400);
             }
             String normalizedValue = lower(candidate.getValue());
             if (containsSensitive(normalizedValue) || containsSafetyOverride(normalizedValue)) {
@@ -182,6 +306,47 @@ public class CopilotLongTermMemoryService {
             candidate.setDisplayText(CopilotMemoryProposalService.selfReportedDisplayText(candidate.getKey(), candidate.getValue()));
         }
         validateScope(candidate, userId);
+    }
+
+    private void validateTypedUserMemory(CopilotMemoryCandidate candidate) {
+        if (candidate.getScope() != CopilotMemoryScope.USER) {
+            throw new CopilotConversationException("USER_MEMORY_SCOPE_REQUIRED", "劳动力与施药设备属于用户级长期记忆。", 400);
+        }
+        if (!candidate.getType().isUserScopedPreference()) {
+            throw new CopilotConversationException("USER_MEMORY_TYPE_REQUIRED", "劳动力与施药设备必须保存为用户偏好或作业约束。", 400);
+        }
+        if (blank(candidate.getValue()) || candidate.getValue().length() > CopilotMemoryProposalService.MAX_PROFILE_VALUE_LENGTH) {
+            throw new CopilotConversationException("MEMORY_VALUE_INVALID", "长期记忆值不能为空或过长。", 400);
+        }
+        String value = lower(candidate.getValue());
+        if (containsSensitive(value) || containsSafetyOverride(value)) {
+            throw new CopilotConversationException("MEMORY_VALUE_REJECTED", "该长期记忆值包含不安全内容。", 400);
+        }
+        if (KEY_LABOR_CAPACITY.equals(candidate.getKey())) {
+            Integer count = laborCapacityValue(candidate.getValue());
+            String availability = laborAvailability(value);
+            if (count == null && availability == null) {
+                throw new CopilotConversationException("LABOR_CAPACITY_INVALID", "请填写可用人数，或说明人手紧张、适中还是充裕。", 400);
+            }
+            candidate.setValue(count == null ? availability : count.toString());
+        } else {
+            String equipment = candidate.getValue().trim().toUpperCase(Locale.ROOT);
+            if (!EQUIPMENT.contains(equipment)) equipment = sprayEquipment(value);
+            if (equipment == null) throw new CopilotConversationException("SPRAY_EQUIPMENT_INVALID", "请选择已知的喷雾设备类型。", 400);
+            candidate.setValue(equipment);
+        }
+        if (blank(candidate.getDisplayText())) candidate.setDisplayText(candidate.getValue());
+    }
+
+    private boolean isDosageKey(String key) {
+        String normalized = lower(key);
+        return contains(normalized, "dosage", "spray_dose", "pesticide_dose", "pesticide_amount", "concentration",
+                "dilution", "spray_rate", "application_rate", "pesticide_rate",
+                "用量", "剂量", "浓度", "稀释倍数", "配药浓度");
+    }
+
+    public static boolean isTypedUserMemoryKey(String key) {
+        return key != null && TYPED_USER_KEYS.contains(key.trim().toLowerCase(Locale.ROOT));
     }
 
     private void authorizeFarm(String farmId, Long userId) {

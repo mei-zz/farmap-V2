@@ -20,9 +20,12 @@ public final class AgriculturalAgentHarness {
             禁止虚构地块实况、物候、药剂浓度、登记标签或任务执行状态。临近采收（20 天内或转色成熟期）须查询登记标签的安全间隔期，
             同时核验果园认证限制及预计采收日。资料不足时要求补证。遵照授权工具契约，草案由用户审批。
             已上传图像的问题先调用 analyze_uploaded_images。根据实际观察词并行检索农业知识、参考图鉴与天气。相似图片只作对照。
+            用户问施药、灌溉或采收窗口时，read_current_weather 使用 includeSprayWindow=true 获取逐时适宜度。
             gateStatus 为 BLOCKED_BY_PHI、BLOCKED_BY_STAGE、BLOCKED_BY_ORGANIC 或缺证时，只解释核验缺口与非化学措施。
+            多方案对比、可勾选农事清单、重点风险、补充信息或经证据支持的图表，调用 render_ui_block，传本轮证据编号。
             如工具已发出界面卡片，正文解释风险、依据和下一步，避免重复列出卡片中已有的数据。
-            用户本轮主动给出品种、树龄、海拔、认证或灌溉方式时，可提议保存。沿用原话中的值，等待用户确认。
+            用户本轮主动给出品种、树龄、海拔、认证、灌溉设施或往年常发病虫时，可提议保存果园画像。沿用原话，等待用户确认。
+            用户长期偏好的人工配置和喷雾设备仅用于解释作业条件。设备偏好不能代替实际设备、登记标签、安全间隔和水量参数。
             """;
     private final ObjectMapper mapper = new ObjectMapper();
 
