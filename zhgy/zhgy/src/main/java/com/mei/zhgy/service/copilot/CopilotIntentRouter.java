@@ -10,12 +10,19 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.Locale;
+import java.util.Set;
 
 /** Deterministic-first intent router with a safe conversational fallback. */
 @Component
 public class CopilotIntentRouter {
     private static final double DETERMINISTIC_CONFIDENCE = 0.99D;
     private static final double CONFLICT_CONFIDENCE = 0.40D;
+    private static final Set<String> NAVIGATION_ROUTES = Set.of(
+            "/overview", "/farm/map", "/operations", "/diagnosis", "/analysis", "/knowledge");
+    private static final String[] UNSAFE_COMMAND_TERMS = {
+            "删除数据库", "删除服务器", "转账", "修改系统密码",
+            "delete database", "delete server", "transfer money", "change system password"
+    };
     private final double minConfidence;
     private final CropResolver cropResolver;
     private final PhenologyService phenologyService;
@@ -39,31 +46,37 @@ public class CopilotIntentRouter {
         String message = rawMessage == null ? "" : rawMessage.trim();
         if (message.isBlank()) return new Classification(CopilotIntent.CLARIFICATION_REQUIRED, 0D, null);
         String normalized = CopilotQueryNormalizer.forMatching(message);
-        if (CopilotSecurityGuard.isPromptOverride(normalized)) {
+        if (isHardSecurityBoundary(normalized)) {
             return new Classification(CopilotIntent.UNSUPPORTED, DETERMINISTIC_CONFIDENCE, null);
         }
-        if (contains(normalized, "删除数据库", "删除服务器", "转账", "修改系统密码", "delete database", "delete server", "transfer money", "change system password")) {
-            return new Classification(CopilotIntent.UNSUPPORTED, DETERMINISTIC_CONFIDENCE, null);
-        }
-        if (contains(normalized, "你记得我", "你还记得", "记得我对", "我有什么要求", "what do you remember", "remember my preferences")) {
+        if (contains(normalized, "你记得我", "你还记得", "你记得", "记不记得", "记得我对", "我有什么要求",
+                "我的偏好是什么", "我的偏好有哪些", "我的偏好是啥", "我的偏好呢", "我有哪些偏好", "我有什么偏好",
+                "设置过什么偏好", "我说过什么", "之前说过什么", "之前让我记", "让你记了什么", "让你记住什么", "你记着",
+                "what do you remember", "what preferences do i have",
+                "what have i told you", "what did i ask")) {
             return new Classification(CopilotIntent.MEMORY_QUERY, DETERMINISTIC_CONFIDENCE, null);
         }
-        if (contains(normalized, "忘掉", "忘记这条", "不要再记住", "删除这个偏好", "删除农场的偏好", "forget this preference", "forget my preference")) {
+        if (contains(normalized, "忘掉", "忘了", "忘记", "不用记", "不用再记", "别记", "别再记",
+                "不要记", "不要记住", "不要再记", "不要再记住", "别记住", "删除这个偏好",
+                "删除农场的偏好", "删除这条记忆", "清除记忆", "清除这个偏好", "forget this preference",
+                "forget my preference", "forget that", "forget it", "stop remembering", "remove this memory")) {
             return new Classification(CopilotIntent.MEMORY_FORGET_REQUEST, DETERMINISTIC_CONFIDENCE, null);
         }
-        if (contains(normalized, "记住", "请记住", "以后都", "以后给这个农场", "以后针对这个农场", "remember that", "remember my preference")) {
+        if (contains(normalized, "记住", "记一下", "帮我记", "请记下", "帮我记下", "记录一下", "记录下来", "存一下",
+                "保存这个偏好", "以后记得", "以后都", "以后给这个农场", "以后针对这个农场",
+                "remember that", "remember my preference", "keep in mind")) {
             return new Classification(CopilotIntent.MEMORY_WRITE_REQUEST, DETERMINISTIC_CONFIDENCE, null);
         }
-        if (CopilotOperationQuery.farmDirectory(normalized)) return new Classification(CopilotIntent.FARM_STATUS_QUERY, DETERMINISTIC_CONFIDENCE, null);
+        if (isFarmDirectoryRequest(normalized)) return new Classification(CopilotIntent.FARM_STATUS_QUERY, DETERMINISTIC_CONFIDENCE, null);
         if (CopilotOperationQuery.viewOf(normalized) != null) return new Classification(CopilotIntent.OPERATIONS_STATUS_QUERY, DETERMINISTIC_CONFIDENCE, null);
         if (CopilotOperationQuery.adviceView(normalized)) return new Classification(CopilotIntent.RECOMMENDATION_QUERY, DETERMINISTIC_CONFIDENCE, null);
         if (CopilotOperationQuery.harvestPlan(normalized)) return new Classification(CopilotIntent.ACTION_REQUEST, DETERMINISTIC_CONFIDENCE, null);
         if (isFarmMaturityScan(normalized)) return new Classification(CopilotIntent.FARM_MATURITY_SCAN, DETERMINISTIC_CONFIDENCE, null);
-        boolean navigation = contains(normalized, "打开", "带我去", "跳转", "导航到", "open ", "go to", "navigate", "navigation");
-        boolean explicitDraft = isTaskCreationRequest(normalized);
-        boolean action = explicitDraft ? !contains(normalized, "不要创建", "不创建", "拒绝创建", "无需创建", "不要新建", "不新建", "不要生成", "不要安排", "不安排",
-                    "只分析", "仅分析", "只解释", "不要制定", "do not create", "analysis only")
-                : contains(normalized, "安排", "执行", "启动agent", "启动 agent", "帮我处理", "落实", "schedule", "execute", "start agent") && !hasNegatedActionConstraint(normalized);
+        boolean navigation = isNavigationRequest(normalized);
+        boolean explicitDraft = isDirectTaskRequest(normalized);
+        boolean action = explicitDraft
+                || contains(normalized, "安排", "执行", "启动agent", "启动 agent", "帮我处理", "落实", "schedule", "execute", "start agent")
+                && !hasNegatedActionConstraint(normalized);
         boolean priorities = contains(normalized, "今天最需要", "优先处理", "今天关注", "值得关注", "今日重点", "priority", "priorities", "what should i handle today", "what needs attention");
         boolean historicalCases = contains(normalized, "历史病例", "相似病例", "历史案例", "类似案例", "找病例", "similar case", "historical case");
         boolean farmStatus = contains(normalized, "今天农场怎么样", "农场状态", "农场概况", "farm status", "farm overview", "how is the farm");
@@ -105,7 +118,7 @@ public class CopilotIntentRouter {
         if ((navigation && action) || (navigation && (diagnosis || recommendation) && contains(normalized, "并", " and ")) || strongSignals > 2) {
             return new Classification(CopilotIntent.CLARIFICATION_REQUIRED, CONFLICT_CONFIDENCE, null);
         }
-        if (navigation) return new Classification(CopilotIntent.NAVIGATION_REQUEST, DETERMINISTIC_CONFIDENCE, safeRoute(normalized));
+        if (navigation) return new Classification(CopilotIntent.NAVIGATION_REQUEST, DETERMINISTIC_CONFIDENCE, safeNavigationRoute(normalized));
         if (priorities) return new Classification(CopilotIntent.PRIORITIES_QUERY, DETERMINISTIC_CONFIDENCE, null);
         if (historicalCases) return new Classification(CopilotIntent.HISTORICAL_CASE_QUERY, DETERMINISTIC_CONFIDENCE, null);
         if (farmStatus) return new Classification(CopilotIntent.FARM_STATUS_QUERY, DETERMINISTIC_CONFIDENCE, null);
@@ -126,31 +139,22 @@ public class CopilotIntentRouter {
         return new Classification(CopilotIntent.GENERAL_QA, 0.85D, null);
     }
 
-    /** Harness routing reserves explicit administrative commands and lets Pi decide which reads to perform. */
+    /**
+     * Pi Harness entry point. Ordinary language is deliberately not split into
+     * memory, navigation, directory, task or image intents here: Pi selects
+     * reads and proposals through the authenticated tool registry. Only empty
+     * input, hard security boundaries and an explicit formal diagnosis report
+     * remain deterministic Java routes.
+     */
     public HybridClassification classifyHarness(String message) {
         String normalized = CopilotQueryNormalizer.forMatching(message);
         String compact = CopilotQueryNormalizer.compactForMatching(message);
-        CopilotIntent intent = CopilotIntent.GENERAL_QA;
-        String target = null;
+        CopilotIntent intent;
         if (compact.isEmpty()) intent = CopilotIntent.CLARIFICATION_REQUIRED;
-        else if (CopilotSecurityGuard.isPromptOverride(normalized)
-                || contains(normalized, "删除数据库", "删除服务器", "转账", "修改系统密码",
-                        "delete database", "delete server", "transfer money", "change system password")) intent = CopilotIntent.UNSUPPORTED;
-        else if (compact.matches("(?:请)?(?:查看|列出|显示)?(?:我有|当前有|现在有|有)?(?:哪些|几个|所有)?农场(?:列表|清单)?")) intent = CopilotIntent.FARM_STATUS_QUERY;
-        else if (compact.startsWith("请记住") || compact.startsWith("记住") || normalized.startsWith("remember that ")) intent = CopilotIntent.MEMORY_WRITE_REQUEST;
-        else if (compact.startsWith("忘掉") || compact.startsWith("忘记这条") || normalized.startsWith("forget this preference")) intent = CopilotIntent.MEMORY_FORGET_REQUEST;
-        else if (compact.startsWith("你还记得") || compact.startsWith("你记得我") || normalized.startsWith("what do you remember")) intent = CopilotIntent.MEMORY_QUERY;
-        else if (contains(compact, "正式诊断", "生成诊断报告", "出具诊断报告", "深度多模态诊断")
-                && !contains(compact, "不要生成诊断报告", "不生成诊断报告", "不用正式诊断", "无需正式诊断")) {
-            intent = CopilotIntent.DIAGNOSIS_REQUEST;
-        }
-        else if (!hasNegatedActionConstraint(normalized)
-                && (isTaskCreationRequest(normalized) || CopilotOperationQuery.harvestPlan(normalized))) intent = CopilotIntent.ACTION_REQUEST;
-        else if (compact.startsWith("打开") || compact.startsWith("导航到") || normalized.startsWith("go to ")) {
-            target = safeRoute(normalized);
-            if (target != null) intent = CopilotIntent.NAVIGATION_REQUEST;
-        }
-        var classification = new Classification(intent, DETERMINISTIC_CONFIDENCE, target);
+        else if (isHardSecurityBoundary(normalized)) intent = CopilotIntent.UNSUPPORTED;
+        else if (isExplicitFormalDiagnosis(compact)) intent = CopilotIntent.DIAGNOSIS_REQUEST;
+        else intent = CopilotIntent.GENERAL_QA;
+        var classification = new Classification(intent, DETERMINISTIC_CONFIDENCE, null);
         return new HybridClassification(classification, classification, null, null);
     }
 
@@ -173,7 +177,7 @@ public class CopilotIntentRouter {
     public HybridClassification classifyHybrid(String rawMessage, HybridContext context, boolean hasUserImages) {
         Classification rule = classify(rawMessage);
         if (rule.intent() == CopilotIntent.OPERATIONS_STATUS_QUERY && CopilotOperationQuery.viewOf(rawMessage) != null
-                || rule.intent() == CopilotIntent.FARM_STATUS_QUERY && CopilotOperationQuery.farmDirectory(rawMessage)) {
+                || rule.intent() == CopilotIntent.FARM_STATUS_QUERY && isFarmDirectoryRequest(rawMessage)) {
             return new HybridClassification(rule, rule, null, null);
         }
         String imageText = rawMessage == null ? "" : rawMessage.toLowerCase(java.util.Locale.ROOT);
@@ -249,7 +253,7 @@ public class CopilotIntentRouter {
                 || intent == CopilotIntent.MEMORY_QUERY || intent == CopilotIntent.MEMORY_FORGET_REQUEST;
     }
 
-    private boolean contains(String value, String... terms) {
+    private static boolean contains(String value, String... terms) {
         for (String term : terms) if (value.contains(term)) return true;
         return false;
     }
@@ -276,10 +280,12 @@ public class CopilotIntentRouter {
      * is intentionally conservative: the request can still be diagnosed or
      * answered, but it cannot enter an Agent-start path by keyword accident.
      */
-    private boolean hasNegatedActionConstraint(String normalized) {
-        return contains(normalized, "不执行", "不要执行", "别执行", "暂不执行", "不创建任务", "不要创建", "无需创建",
-                "不安排", "不要安排", "只分析", "仅分析", "先给方案", "等我确认", "do not execute", "don't execute",
-                "do not create", "without executing", "analysis only", "wait for my confirmation");
+    private static boolean hasNegatedActionConstraint(String normalized) {
+        return contains(normalized, "不执行", "不要执行", "别执行", "暂不执行", "不创建任务", "不要创建", "不创建",
+                "拒绝创建", "无需创建", "不用创建", "不要新建", "不新建", "不要生成", "不生成",
+                "不安排", "不要安排", "不要制定", "不制定", "只分析", "仅分析", "只解释", "仅解释",
+                "先给方案", "等我确认", "do not execute", "don't execute", "do not create", "without executing",
+                "analysis only", "wait for my confirmation");
     }
 
     /**
@@ -287,18 +293,81 @@ public class CopilotIntentRouter {
      * enter the Agent approval workflow, where the server validates the current
      * field and the Agent produces a proposed task before any write.
      */
-    private boolean isTaskCreationRequest(String normalized) {
+    private static boolean isTaskCreationRequest(String normalized) {
         return contains(normalized, "创建任务", "创建农事任务", "生成任务", "新建任务", "创建浇水任务", "创建施肥任务",
                 "安排农事任务", "安排浇水任务", "安排施肥任务", "create task", "schedule task")
                 || normalized.matches(".*(?:创建|生成|新建|安排).{0,12}任务.*")
                 || isAgentPlanningRequest(normalized);
     }
 
-    private boolean isAgentPlanningRequest(String normalized) {
+    /**
+     * Shared by routing, application draft selection and context validation so
+     * the same utterance cannot be a direct task in one layer and a
+     * diagnosis-backed action in another.
+     */
+    public static boolean isDirectTaskRequest(String message) {
+        String normalized = CopilotQueryNormalizer.forMatching(message);
+        return !normalized.isBlank() && isTaskCreationRequest(normalized) && !hasNegatedActionConstraint(normalized);
+    }
+
+    private static boolean isAgentPlanningRequest(String normalized) {
         boolean planningObject = contains(normalized, "农事计划", "农事安排", "作业计划", "管理计划", "采收计划", "一周计划", "周计划", "未来一周", "本周计划", "farm plan", "weekly plan");
         boolean directive = contains(normalized, "帮我制定", "请制定", "给我制定", "制定一份", "帮我生成", "请生成", "给我生成", "生成一份",
                 "帮我规划", "请规划", "给我规划", "规划一份", "create a plan", "make a plan");
         return planningObject && directive;
+    }
+
+    private static boolean isHardSecurityBoundary(String normalized) {
+        String compact = CopilotQueryNormalizer.compactForMatching(normalized);
+        return CopilotSecurityGuard.isPromptOverride(normalized)
+                || CopilotSecurityGuard.isPromptOverride(compact)
+                || contains(normalized, UNSAFE_COMMAND_TERMS)
+                || contains(compact, UNSAFE_COMMAND_TERMS);
+    }
+
+    private static boolean isExplicitFormalDiagnosis(String compact) {
+        if (compact.matches(".*(?:不要|不|别|无需|不用|如何|怎么|为什么|为何|是否|要不要|该不该|需不需要|什么时候|何时).{0,8}(?:生成|出具|创建|做|出)?(?:一份)?(?:正式诊断|诊断报告|深度多模态诊断).*")) {
+            return false;
+        }
+        return compact.matches("^(?:请|帮我|麻烦)?(?:正式诊断|深度多模态诊断)(?:报告)?$")
+                || compact.matches(".*(?:生成|出具|创建|撰写|产出|正式出|出一份)(?:一份|一个|本次|正式){0,3}诊断报告.*")
+                || compact.matches(".*(?:做|进行|需要|开始|启动).{0,8}(?:正式诊断|深度多模态诊断).*");
+    }
+
+    private static boolean isNavigationRequest(String normalized) {
+        if (contains(normalized, "打开", "带我去", "带我看", "领我去", "跳转", "导航到", "前往",
+                "切换到", "切到", "跳到", "open ", "go to", "navigate", "navigation", "take me to", "switch to ")) {
+            return true;
+        }
+        return contains(normalized, "去", "回到", "返回", "回", "看看", "看一下", "导航")
+                && contains(normalized, "首页", "概览", "总览", "工作台", "控制台", "任务页", "任务列表", "任务日历",
+                "作业页", "作业列表", "诊断页", "诊断列表", "地块页", "农场页", "地图", "知识库", "知识页",
+                "分析页", "运行页", "报告页", "dashboard", "workspace", "task page", "tasks page", "diagnosis page",
+                "farm page", "field page", "knowledge page", "analysis page", "home", "overview", "operations page");
+    }
+
+    /** Returns one of the explicit frontend navigation routes, never a model-supplied URL. */
+    public static String safeNavigationRoute(String message) {
+        String normalized = CopilotQueryNormalizer.forMatching(message);
+        String target;
+        if (contains(normalized, "任务", "作业", "operations", "task")) target = "/operations";
+        else if (contains(normalized, "诊断", "病害", "diagnos")) target = "/diagnosis";
+        else if (contains(normalized, "分析", "agent")) target = "/analysis";
+        else if (contains(normalized, "知识", "knowledge")) target = "/knowledge";
+        else if (contains(normalized, "地块", "农场", "地图", "field", "farm", "map")) target = "/farm/map";
+        else target = "/overview";
+        return NAVIGATION_ROUTES.contains(target) ? target : "/overview";
+    }
+
+    public static boolean isFarmDirectoryRequest(String message) {
+        String normalized = CopilotQueryNormalizer.forMatching(message);
+        if (contains(normalized, "删除", "新建", "创建", "解绑", "地块", "摄像头", "成熟度", "任务")) return false;
+        return CopilotOperationQuery.farmDirectory(normalized)
+                || contains(normalized, "我的农场有哪些", "我的农场都有哪些", "我的农场有哪几个", "我有哪几个农场",
+                "农场都有哪些", "农场都有什么", "列出我的农场", "查看我的农场", "看看我的农场", "我的农场列表",
+                "我的农场清单", "我能访问哪些农场", "哪些农场我能访问", "我能看到哪些农场", "我管理哪些农场",
+                "我的农场有几个", "农场有多少个", "how many farms do i have", "which farms do i have",
+                "list my farms", "my farm list", "which farms can i access");
     }
 
     private int count(boolean... values) {
@@ -316,15 +385,6 @@ public class CopilotIntentRouter {
         return hasPhenologySignal(normalized)
                 || contains(normalized, "什么时期", "哪个时期", "哪一时期", "什么阶段", "哪个阶段", "哪一阶段", "什么期", "哪个物候",
                 "下一个", "下一阶段", "下一期", "之后", "上一个", "上一阶段", "上一期", "之前");
-    }
-
-    private String safeRoute(String message) {
-        if (contains(message, "任务", "作业", "operations", "task")) return "/operations";
-        if (contains(message, "诊断", "病害", "diagnos")) return "/diagnosis";
-        if (contains(message, "分析", "agent")) return "/analysis";
-        if (contains(message, "知识", "knowledge")) return "/knowledge";
-        if (contains(message, "地块", "field")) return "/farm/map";
-        return "/overview";
     }
 
     public record HybridContext(String recentConversation, CopilotPageContext pageContext, String contextCrop) { }

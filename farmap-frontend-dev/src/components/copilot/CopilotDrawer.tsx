@@ -4,9 +4,10 @@ import { applyChatActivity, chatToolLabel } from "@/features/copilot/chatActivit
 import { farmMaturityPrompt } from "@/features/farm/cameras";
 import MaturityWorkspace from "@/features/maturity/MaturityWorkspace";
 import { isExecutionBlock, parsePresentation } from "@/features/copilot/presentation";
-import { parseUiBlocks, uiId } from "@/features/copilot/uiBlocks";
+import { detailRoute, parseUiBlocks, uiId } from "@/features/copilot/uiBlocks";
 import { messagePartCitations, parseMessageParts } from "@/features/copilot/messageParts";
 import { isKnowledgeEvidenceBlock, useCopilotStream, type CopilotStreamSnapshot } from "@/features/copilot/useCopilotStream";
+import { routeMemoryMutation, type CopilotMemoryMutation } from "@/features/copilot/memoryEvents";
 import { CopilotEvidenceDrawer, type EvidenceSelection } from "./CopilotEvidenceDrawer";
 import { CopilotLegacyCommandPanel, type CommandBarResult } from "./CopilotLegacyCommandPanel";
 import { CopilotMessageStream } from "./CopilotMessageStream";
@@ -375,6 +376,7 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
   const [memories, setMemories] = useState<CopilotMemoryView[]>([]);
   const [memoryLoading, setMemoryLoading] = useState(false);
   const [memoryRevision, setMemoryRevision] = useState(0);
+  const handledMemoryMutations = useRef(new Set<string>());
   const [imageUploading, setImageUploading] = useState(false);
   const [imageUploadError, setImageUploadError] = useState("");
   const [voiceListening, setVoiceListening] = useState(false);
@@ -543,6 +545,17 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
 
   const memoryFarmId = context.currentFarm.id;
   const memoryFieldId = context.currentField?.id;
+  const handleMemoryMutation = (requestId: string | undefined, mutation: CopilotMemoryMutation | undefined) => {
+    if (!mutation) return;
+    const key = `${requestId ?? "unknown"}:${mutation.key}`;
+    if (handledMemoryMutations.current.has(key)) return;
+    if (handledMemoryMutations.current.size > 256) handledMemoryMutations.current.clear();
+    handledMemoryMutations.current.add(key);
+    setMemoryRevision((value) => value + 1);
+  };
+  const handleSnapshotMemory = (snapshot: CopilotStreamSnapshot) => {
+    for (const mutation of snapshot.memoryMutations) handleMemoryMutation(snapshot.requestId, mutation);
+  };
   useEffect(() => {
     if (!isOpen) return;
     let active = true;
@@ -801,6 +814,7 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
 
     const updateFromSnapshot = (snapshot: CopilotStreamSnapshot) => {
       if (!isActive()) return;
+      handleSnapshotMemory(snapshot);
       // A zero-event transport failure is recoverable through the established
       // route/command path. Do not leave a stale error bubble if that succeeds.
       if (snapshot.phase === "failed" && snapshot.eventCount === 0) return;
@@ -983,9 +997,7 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
       if (streamed.phase !== "failed" || streamed.eventCount > 0) return;
       const routed = await withTimeout(routeCopilot(content, context, copilotContext), COPILOT_ROUTE_TIMEOUT_MS, "Copilot 路由超时，请重试。");
       if (!isActive()) return;
-      if (routed.resolutionStatus === "RESOLVED" && ["MEMORY_WRITE_REQUEST", "MEMORY_FORGET_REQUEST"].includes(routed.intent)) {
-        setMemoryRevision((value) => value + 1);
-      }
+      handleMemoryMutation(requestId, routeMemoryMutation(routed));
       const routePresentation = responsePresentation(routed, imageAttachments.length > 0);
       if (shouldShowRouteAcknowledgement(routed)) {
         addMessage({ role: "assistant", content: formatRouteMessage(routed), responseMode: routePresentation.mode, responseLabel: routePresentation.label });
@@ -1342,6 +1354,9 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
     if (result.intent === "MEMORY_WRITE_REQUEST" && result.resolutionStatus === "RESOLVED") return result.memoryStatus === "ACTIVE" ? "已记住这项偏好；它不会改变农业 Evidence、授权或人工审批。" : "这项长期偏好已处理。";
     if (result.intent === "MEMORY_FORGET_REQUEST" && result.resolutionStatus === "RESOLVED") return "已撤销这项长期偏好；后续新对话不会再加载它。";
     if (result.intent === "MEMORY_QUERY" && result.resolutionStatus === "RESOLVED") return result.relevantLongTermMemories?.length ? `当前账号可用的长期偏好：${result.relevantLongTermMemories.map((memory) => memory.displayText || `${memory.key}=${memory.value}`).join("；")}` : "当前上下文没有可用的长期偏好。";
+    if (result.intent === "NAVIGATION_REQUEST" && result.resolutionStatus === "RESOLVED") {
+      return detailRoute(result.safeRoute) ? "已准备安全的工作台入口，请确认后打开。" : "目标页面不在允许的范围内，未执行跳转。";
+    }
     if (result.requiresClarification) return result.clarificationQuestion || "请明确要查询的对象或希望执行的动作。";
     if (result.resolutionStatus === "UNSUPPORTED") return result.clarificationQuestion || "当前请求不属于农业 Agent 支持范围。";
     if (result.resolutionStatus === "FORBIDDEN") return "当前账号无权访问该上下文，未继续处理。";
@@ -1432,6 +1447,7 @@ export default function CopilotDrawer({ variant = "drawer" }: { variant?: "drawe
         continuation: route,
         onUpdate: (snapshot) => {
           if (activeRequestId.current !== requestId) return;
+          handleSnapshotMemory(snapshot);
           const blocks = snapshot.blocks;
           if (snapshot.text || snapshot.parts.length || snapshot.error || blocks.length || snapshot.activity) {
             upsertMessage({

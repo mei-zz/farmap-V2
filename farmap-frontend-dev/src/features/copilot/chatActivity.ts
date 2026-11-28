@@ -66,6 +66,8 @@ const toolLabels: Record<string, string> = {
   read_workflow_status: "查询工作流状态",
   propose_task_draft: "准备任务草稿",
   propose_memory_update: "准备果园资料提案",
+  navigate_workspace: "打开工作台页面",
+  manage_user_preference: "管理用户偏好",
   lookup_reference_atlas: "查找病虫害图鉴",
   search_historical_cases: "检索历史病例",
   analyze_uploaded_images: "分析上传图片",

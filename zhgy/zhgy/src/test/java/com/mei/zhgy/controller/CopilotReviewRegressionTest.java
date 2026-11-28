@@ -1,19 +1,27 @@
 package com.mei.zhgy.controller;
 
 import com.mei.zhgy.context.BaseContext;
+import com.mei.zhgy.service.agent.AgentRun;
+import com.mei.zhgy.service.agent.AgentRuntime;
+import com.mei.zhgy.service.agent.RunStatus;
 import com.mei.zhgy.service.agent.pi.PiAgentRuntime;
+import com.mei.zhgy.service.agriculture.CropResolver;
+import com.mei.zhgy.service.agriculture.PhenologyService;
 import com.mei.zhgy.service.copilot.AgriculturalToolRegistry;
 import com.mei.zhgy.service.copilot.CopilotApplicationService;
 import com.mei.zhgy.service.copilot.CopilotConversationService;
 import com.mei.zhgy.service.copilot.CopilotConversationTurn;
 import com.mei.zhgy.service.copilot.CopilotIntent;
+import com.mei.zhgy.service.copilot.CopilotLongTermMemoryService;
 import com.mei.zhgy.service.copilot.CopilotResolutionStatus;
 import com.mei.zhgy.service.copilot.CopilotRouteResult;
 import com.mei.zhgy.service.copilot.CopilotRouteService;
 import com.mei.zhgy.service.copilot.CopilotStableContext;
 import com.mei.zhgy.service.copilot.InMemoryCopilotConversationRepository;
+import com.mei.zhgy.service.copilot.InMemoryCopilotLongTermMemoryRepository;
 import com.mei.zhgy.service.field.FarmField;
 import com.mei.zhgy.service.field.FarmFieldService;
+import com.mei.zhgy.service.field.FieldContext;
 import com.mei.zhgy.vo.CurrentWeatherResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -119,6 +127,111 @@ class CopilotReviewRegressionTest {
         assertFalse(response.contains("通用物候历推算"), response);
         verify(runtime, atLeastOnce()).isEnabled();
         verifyNoMoreInteractions(runtime);
+    }
+
+    @Test
+    void compatibilityIntentsCompleteAcrossSseWithoutCallingTheModel() throws Exception {
+        var application = new CopilotApplicationService(routes, null);
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new CopilotController(application)).build();
+        for (var intent : List.of(CopilotIntent.MEMORY_WRITE_REQUEST, CopilotIntent.MEMORY_FORGET_REQUEST,
+                CopilotIntent.MEMORY_QUERY, CopilotIntent.NAVIGATION_REQUEST)) {
+            var decision = route().intent(intent).safeRoute("/operations").memoryId("memory-demo")
+                    .memoryStatus(intent == CopilotIntent.MEMORY_FORGET_REQUEST ? "REVOKED" : "ACTIVE").build();
+            when(routes.route(any(), eq(7L), eq(false))).thenReturn(decision);
+            String response = send(mvc, post("/api/copilot/chat").content("{\"message\":\"处理请求\"}"));
+            assertTrue(response.contains("COMPLETED"), response);
+            assertFalse(response.contains("HEAVY_CONTEXT_OR_CAPABILITY_UNAVAILABLE"), response);
+            if (intent == CopilotIntent.NAVIGATION_REQUEST) {
+                assertTrue(response.contains("WorkspaceNavigationCard"), response);
+                assertTrue(response.contains("open-detail"), response);
+            } else assertTrue(response.contains("MemoryPreferenceCard"), response);
+        }
+    }
+
+    @Test
+    void naturalLanguageDraftFromTheNormalHarnessStopsAtHumanApproval() throws Exception {
+        String message = "帮我把后天清园排进日程";
+        var fields = mock(FarmFieldService.class);
+        var workflows = mock(AgentRuntime.class);
+        when(fields.get("field-demo", 7L)).thenReturn(FarmField.builder()
+                .fieldId("field-demo").farmId(42).name("东坡").crop("脆李").build());
+        when(fields.context("field-demo", 7L)).thenReturn(FieldContext.builder().farm(Map.of("id", 42))
+                .field(Map.of("fieldId", "field-demo")).crop(Map.of("name", "脆李")).build());
+        when(routes.routeHarness(any(), eq(7L), eq(false))).thenReturn(route()
+                .resolvedContext(CopilotStableContext.builder().farmId("42").fieldId("field-demo").build()).build());
+        var pending = AgentRun.builder().runId("run-semantic-draft").status(RunStatus.WAITING_FOR_APPROVAL)
+                .actions(List.of()).build();
+        when(workflows.prepareTaskDraftBatch(eq(message), eq(7L), anyList())).thenReturn(List.of(pending));
+        when(workflows.require(pending.getRunId(), 7L)).thenReturn(pending);
+        var crops = new CropResolver();
+        var phenology = new PhenologyService(crops);
+        var application = new CopilotApplicationService(routes, null, null, null, null, null, fields,
+                workflows, null, crops, phenology);
+        application.setPiRuntime(runtime);
+        ReflectionTestUtils.setField(application, "agriculturalTools", new AgriculturalToolRegistry(
+                fields, null, null, null, null, null, crops, phenology));
+        var json = new com.fasterxml.jackson.databind.ObjectMapper();
+        when(runtime.run(anyString(), nullable(Long.class), anyString(), eq(message), anyString(), anyString(),
+                nullable(String.class), nullable(String.class), anyList(), anyList(), any(), any(), any()))
+                .thenAnswer(invocation -> {
+                    List<PiAgentRuntime.ReadTool> tools = invocation.getArgument(9);
+                    Consumer<PiAgentRuntime.ToolObservation> observed = invocation.getArgument(12);
+                    var context = tools.stream().filter(tool -> "read_field_context".equals(tool.name())).findFirst().orElseThrow();
+                    var draft = tools.stream().filter(tool -> "propose_task_draft".equals(tool.name())).findFirst().orElseThrow();
+                    var evidence = context.execute().apply(json.createObjectNode());
+                    assertFalse(evidence.isError(), evidence.toString());
+                    observed.accept(new PiAgentRuntime.ToolObservation(context.name(), evidence));
+                    var proposal = draft.execute().apply(json.readTree("""
+                            {"tasks":[{"fieldId":"field-demo","title":"清园巡查","detail":"清点枯枝和病落果","taskType":"INSPECTION"}],"evidenceIds":["E1"]}
+                            """));
+                    assertFalse(proposal.isError(), proposal.toString());
+                    observed.accept(new PiAgentRuntime.ToolObservation(draft.name(), proposal));
+                    return new PiAgentRuntime.Result("草稿已整理，请确认后执行。", "completed");
+                });
+
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new CopilotController(application)).build();
+        String response = send(mvc, post("/api/copilot/chat").content("{\"message\":\"" + message + "\"}"));
+        assertTrue(response.contains("RUN_CREATED"), response);
+        assertTrue(response.contains("WAITING_FOR_APPROVAL"), response);
+        verify(workflows).prepareTaskDraftBatch(eq(message), eq(7L), argThat(drafts -> drafts.size() == 1
+                && "field-demo".equals(drafts.get(0).scope().getFieldId()) && !drafts.get(0).evidence().isEmpty()));
+        verify(workflows, never()).start(anyString());
+    }
+
+    @Test
+    void semanticMemoryCommitEmitsOneRefreshEventAndCompletesTheChat() throws Exception {
+        String message = "帮我记住以后优先推荐生物防治";
+        var conversations = new CopilotConversationService(new InMemoryCopilotConversationRepository());
+        var memory = new CopilotLongTermMemoryService(new InMemoryCopilotLongTermMemoryRepository(), null, null, null);
+        var snapshot = conversations.create(7L);
+        var scope = new CopilotStableContext();
+        when(routes.routeHarness(any(), eq(7L), eq(false))).thenReturn(route().resolvedContext(scope)
+                .conversationId(snapshot.getConversationId()).contextVersion(snapshot.getVersion())
+                .traceId("trace-memory-sse").turnId("turn-memory-sse").build());
+        var application = new CopilotApplicationService(routes, conversations, memory);
+        application.setPiRuntime(runtime);
+        ReflectionTestUtils.setField(application, "agriculturalTools", mock(AgriculturalToolRegistry.class));
+        var json = new com.fasterxml.jackson.databind.ObjectMapper();
+        when(runtime.run(anyString(), eq(snapshot.getVersion()), anyString(), eq(message), anyString(), anyString(),
+                eq("turn-memory-sse"), nullable(String.class), anyList(), anyList(), any(), any(), any()))
+                .thenAnswer(invocation -> {
+                    List<PiAgentRuntime.ReadTool> tools = invocation.getArgument(9);
+                    Consumer<PiAgentRuntime.ToolObservation> observed = invocation.getArgument(12);
+                    var preference = tools.stream().filter(tool -> "manage_user_preference".equals(tool.name())).findFirst().orElseThrow();
+                    for (int retry = 0; retry < 2; retry++) {
+                        var reply = preference.execute().apply(json.createObjectNode().put("operation", "SAVE"));
+                        assertFalse(reply.isError(), reply.toString());
+                        observed.accept(new PiAgentRuntime.ToolObservation(preference.name(), reply));
+                    }
+                    return new PiAgentRuntime.Result("已保存生物防治偏好。", "completed");
+                });
+
+        var mvc = MockMvcBuilders.standaloneSetup(new CopilotController(application)).build();
+        String response = send(mvc, post("/api/copilot/chat").content("{\"message\":\"" + message + "\"}"));
+        assertEquals(1, response.split("event:memory\\.changed", -1).length - 1, response);
+        assertTrue(response.contains("MemoryPreferenceCard"), response);
+        assertTrue(response.contains("COMPLETED"), response);
+        assertEquals(List.of("BIOLOGICAL"), memory.retrieve(7L, scope, null).stream().map(item -> item.getValue()).toList());
     }
 
     private CopilotRouteResult.CopilotRouteResultBuilder route() {

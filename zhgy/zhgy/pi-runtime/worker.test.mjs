@@ -417,6 +417,11 @@ test('start validation enforces tool registration bounds and tool responses bypa
   assert.equal(outputs.at(-1).code, 'INVALID_REQUEST');
   runtime.handle({ ...start('bad-schema', 's'), tools: [{ name: 'lookup', description: 'Lookup', parameters: null }] });
   assert.equal(outputs.at(-1).code, 'INVALID_REQUEST');
+  const oversized = Array.from({ length: 25 }, (_, index) => ({
+    name: `tool_${index}`, description: "Lookup", parameters: { type: "object" }
+  }));
+  runtime.handle({ ...start('large-toolset', 's'), tools: oversized });
+  assert.equal(outputs.at(-1).code, 'INVALID_REQUEST');
   runtime.handle({ ...start('empty-message', 's'), message: '' });
   assert.equal(outputs.at(-1).code, 'INVALID_REQUEST');
   runtime.handle({ ...start('bad-turn-id', 's'), turnId: '' });

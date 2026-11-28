@@ -344,7 +344,9 @@ class CopilotPiRuntimeIntegrationTest {
             requests.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             if (requests.size() == 1) {
                 var calls = List.of(call(0, "tasks", "query_operations_tasks", "{\"farmId\":\"42\"}"),
-                        call(1, "scan", "inspect_camera_maturity", "{\"scope\":\"FARM\",\"kind\":\"MATURITY\"}"));
+                        call(1, "scan", "inspect_camera_maturity", "{\"scope\":\"FARM\",\"kind\":\"MATURITY\"}"),
+                        call(2, "farms", "read_farm_directory", "{}"),
+                        call(3, "nav", "navigate_workspace", "{\"route\":\"/operations\"}"));
                 sendCompletion(exchange, mapper.writeValueAsString(Map.of("tool_calls", calls)), "tool_calls");
             } else sendCompletion(exchange, "{\"content\":\"已检查区域观测和任务。\"}", "stop");
         });
@@ -356,10 +358,11 @@ class CopilotPiRuntimeIntegrationTest {
         try {
             var routes = mock(CopilotRouteService.class);
             when(routes.routeHarness(any(), eq(1L), eq(false))).thenReturn(CopilotRouteResult.builder()
-                    .intent(CopilotIntent.GENERAL_QA).traceId("compound-harness")
+                    .intent(CopilotIntent.GENERAL_QA).traceId("compound-harness").turnId("turn-compound-harness")
                     .resolvedContext(CopilotStableContext.builder().farmId("42").build())
                     .resolutionStatus(CopilotResolutionStatus.RESOLVED).build());
             var fields = mock(FarmFieldService.class);
+            when(fields.accessibleFarms(1L)).thenReturn(List.of(new com.mei.zhgy.vo.SimplifiedFarmVO(42, "东边果园")));
             var views = mock(com.mei.zhgy.service.operations.OperationsTaskViewService.class);
             when(views.view(42, null, null, null, "tasks", null, 1L)).thenReturn(Map.of("items", List.of(),
                     "counts", Map.of("total", 0), "truncated", false));
@@ -373,23 +376,32 @@ class CopilotPiRuntimeIntegrationTest {
             var crops = new com.mei.zhgy.service.agriculture.CropResolver();
             var registry = new AgriculturalToolRegistry(fields, views, null, null, null, maturity, crops,
                     new com.mei.zhgy.service.agriculture.PhenologyService(crops));
-            var controller = new CopilotController(new CopilotApplicationService(routes, null, null, null, null, null, fields, null, null, crops, null));
+            var controller = new CopilotController(new CopilotApplicationService(routes, null,
+                    mock(CopilotLongTermMemoryService.class), null, null, null, fields, mock(AgentRuntime.class), null, crops, null));
             controller.application.setPiRuntime(runtime);
+            controller.application.setCurrentWeatherService(mock(com.mei.zhgy.service.CurrentWeatherService.class));
+            controller.application.setMonthlyGuidanceService(mock(com.mei.zhgy.service.AgriculturalContextService.class));
             ReflectionTestUtils.setField(controller.application, "agriculturalTools", registry);
+            ReflectionTestUtils.setField(controller.application, "memoryProposals", mock(CopilotMemoryProposalService.class));
             MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
             BaseContext.setCurrentId(1L);
             var pending = mvc.perform(post("/api/copilot/chat").contentType(MediaType.APPLICATION_JSON)
-                    .content("{\"message\":\"看看农场成熟度和本周任务，再给采收建议\"}")).andExpect(request().asyncStarted()).andReturn();
+                    .content("{\"message\":\"看看农场成熟度、本周任务和我名下的果园，再给我任务页入口\"}")).andExpect(request().asyncStarted()).andReturn();
             String output = mvc.perform(asyncDispatch(pending)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
             assertTrue(output.contains("OperationsQueryCard"), output);
             assertTrue(output.contains("FarmInspectionProgress"), output);
             assertTrue(output.contains("ui.block.updated"), output);
             assertTrue(output.contains("FarmMaturityCard"), output);
+            assertTrue(output.contains("FarmDirectoryCard"), output);
+            assertTrue(output.contains("WorkspaceNavigationCard"), output);
+            assertTrue(output.contains("open-detail"), output);
             assertTrue(output.contains("已检查区域观测和任务。"), output);
             assertFalse(output.contains("event:diagnosis.job"), output);
             assertEquals(2, requests.size());
+            assertEquals(18, mapper.readTree(requests.get(0)).path("tools").size());
             assertTrue(requests.get(1).contains("maturity-verified"));
             verify(views).view(42, null, null, null, "tasks", null, 1L);
+            verify(fields).accessibleFarms(1L);
         } finally {
             BaseContext.removeCurrentId();
             runtime.close();

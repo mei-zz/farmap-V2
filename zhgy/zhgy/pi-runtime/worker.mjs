@@ -5,7 +5,7 @@ import readline from 'node:readline';
 import { createHash, randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
-const MAX_SESSIONS = 64, MAX_TURNS = 8, MAX_CALLS = 16, MAX_INPUT = 262144, MAX_RUN_MS = 120000, TTL = 30 * 60 * 1000;
+const MAX_SESSIONS = 64, MAX_TURNS = 8, MAX_CALLS = 16, MAX_REGISTERED_TOOLS = 24, MAX_INPUT = 262144, MAX_RUN_MS = 120000, TTL = 30 * 60 * 1000;
 const MAX_ENVIRONMENT = 30000, MAX_SCHEMA = 30000, MAX_TOOL_TEXT = 30000;
 export const CONTEXT_BUDGET_RATIO = 0.72;
 export const DEFAULT_CONTEXT_WINDOW = 32768;
@@ -240,7 +240,7 @@ export function createRuntime({ emit = () => {}, stream = streamSimple, env = pr
     let s = sessions.get(key);
     if (req.op === 'start') {
       if (!s && sessions.size >= MAX_SESSIONS) { const idle = [...sessions.values()].filter(x => !x.active).sort((a,b) => a.updated - b.updated)[0]; if (!idle) return error(id, 'SESSION_LIMIT'); sessions.delete(idle.key); }
-      if (!textOk(req.message) || typeof req.systemPrompt !== 'string' || req.systemPrompt.length > 16000 || !Array.isArray(req.history) || req.history.length > 40 || !Array.isArray(req.tools) || req.tools.length > 16) return error(id, 'INVALID_REQUEST');
+      if (!textOk(req.message) || typeof req.systemPrompt !== 'string' || req.systemPrompt.length > 16000 || !Array.isArray(req.history) || req.history.length > 40 || !Array.isArray(req.tools) || req.tools.length > MAX_REGISTERED_TOOLS) return error(id, 'INVALID_REQUEST');
       if (!req.history.every(h => ['user', 'assistant'].includes(h?.role) && textOk(h.text))) return error(id, 'INVALID_REQUEST');
       if (req.environment !== undefined && (typeof req.environment !== 'string' || req.environment.length > MAX_ENVIRONMENT)) return error(id, 'INVALID_REQUEST');
       if (req.toolsetId !== undefined && !toolsetOk(req.toolsetId)) return error(id, 'INVALID_REQUEST');

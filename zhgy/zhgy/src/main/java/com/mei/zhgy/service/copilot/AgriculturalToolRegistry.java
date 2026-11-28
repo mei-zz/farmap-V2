@@ -282,6 +282,32 @@ public class AgriculturalToolRegistry {
         return value.substring(0, Math.min(limit, value.length()));
     }
 
+    static List<ReadTool> workspaceTools(FarmFieldService fields, Long actor, CopilotPreferenceTool preferences) {
+        var tools = new ArrayList<ReadTool>();
+        if (fields != null) tools.add(tool("read_farm_directory", "查询当前用户有权访问的全部农场。优先用于名下农场、果园数量或目录。",
+                args -> {
+                    var farms = fields.accessibleFarms(actor);
+                    return new ToolReply(Map.of("status", "READY", "farms", farms, "count", farms.size()),
+                            Map.of("componentType", "FarmDirectoryCard", "title", "农场列表", "data", Map.of("farms", farms),
+                                    "blockKey", "farm-directory"), false);
+                }));
+        tools.add(tool("navigate_workspace", "用户想打开工作台页面时提供入口。只允许下列目的地。",
+                args -> {
+                    String path = args.text("route");
+                    String title = CopilotWorkspaceRoutes.title(path);
+                    if (title == null) return ToolReply.error("NAVIGATION_UNAVAILABLE");
+                    return new ToolReply(Map.of("status", "READY", "route", path, "destination", title),
+                            Map.of("componentType", "WorkspaceNavigationCard", "title", title, "data", Map.of("route", path),
+                                    "blockKey", "navigation:" + path.replace('/', '-')), false);
+                }, enumeration("route", "农事任务、诊断、分析、知识、地图或总览", true,
+                        CopilotWorkspaceRoutes.PATHS.toArray(String[]::new))));
+        if (preferences != null) tools.add(tool("manage_user_preference",
+                "查询、保存或忘掉长期偏好。写入和撤销只接受用户本轮明确授权，偏好内容及撤销目标由后端核对原话。",
+                preferences::execute,
+                enumeration("operation", "LIST 查询，SAVE 保存，FORGET 撤销", true, "LIST", "SAVE", "FORGET")));
+        return List.copyOf(tools);
+    }
+
     static ReadTool memoryProposal(java.util.function.Function<CopilotToolArguments, ToolReply> handler) {
         return tool("propose_memory_update", "将用户本轮明确披露的果园属性提议为长期记忆，须用户确认。", handler,
                 enumeration("scope", "资料归属", true, "FARM", "FIELD"),

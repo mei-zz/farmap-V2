@@ -15,12 +15,25 @@ export const componentTypes = [
   "FarmInspectionProgress", "FarmRecommendationCard", "FarmAdviceCard", "OperationTaskCard", "OperationsQueryCard",
   "PlumPhenologyTimeline", "SprayWeatherWindowCard", "PestComparisonCard",
   "EChartsAnalyticsCard", "ComparisonMatrixCard", "ActionChecklistCard",
-  "MemoryProposalCard",
+  "MemoryProposalCard", "WorkspaceNavigationCard", "MemoryPreferenceCard",
   "FarmOperationChecklist",
 ] as const;
 
 const statuses = ["ready", "loading", "unavailable", "needs-input", "completed", "failed"] as const;
 const actionTypes = ["expand", "prompt", "select-field", "open-detail", "draft-task", "open-evidence-drawer", "confirm-memory"] as const;
+
+export const workspaceNavigationTitles: Readonly<Record<string, string>> = {
+  "/overview": "农场总览",
+  "/operations": "农事任务",
+  "/diagnosis": "农情诊断",
+  "/analysis": "农场分析",
+  "/knowledge": "农业知识",
+  "/farm/map": "地块空间",
+};
+
+function workspaceNavigationRoute(value: unknown): string | undefined {
+  return typeof value === "string" && Object.prototype.hasOwnProperty.call(workspaceNavigationTitles, value) ? value : undefined;
+}
 
 export type BlockComponentType = typeof componentTypes[number];
 export type AgentUiActionType = typeof actionTypes[number];
@@ -92,6 +105,7 @@ export type BlockData = {
   comparisonMatrix?: ComparisonMatrixData;
   actionChecklist?: ActionChecklistData;
   memoryProposal?: MemoryProposalData;
+  route?: string;
 };
 
 export type AgentUiBlock = {
@@ -507,6 +521,7 @@ function parseData(raw: unknown): BlockData | undefined {
     comparisonMatrix: parseComparisonMatrix(input.comparisonMatrix ?? input.matrix, fieldId),
     actionChecklist: parseActionChecklist(input.actionChecklist ?? input.checklist, fieldId),
     memoryProposal: parseMemoryProposal(input.memoryProposal),
+    route: workspaceNavigationRoute(input.route),
     atlasFigures: parseAtlasFigures(input.atlasFigures),
   };
 }
@@ -760,7 +775,7 @@ function parseInspection(input: Record<string, unknown>): BlockData["inspection"
 /** Detail hrefs are app routes, never arbitrary URLs from an event. */
 export function detailRoute(value: unknown): string | undefined {
   const path = typeof value === "string" ? value : "";
-  return /^\/(?:fields|monitoring|planning|farm\/(?:map|fields|devices)|weather|monitor|operations(?:\/[\w.-]+)?|diagnosis\/[\w.-]+|analysis\/[\w.-]+|knowledge(?:\/(?:library|expert-review|cases))?)(?:\?[\w=&.%-]+)?$/u.test(path)
+  return /^\/(?:overview|fields|monitoring|planning|farm\/(?:map|fields|devices)|weather|monitor|operations(?:\/[\w.-]+)?|diagnosis(?:\/[\w.-]+)?|analysis(?:\/[\w.-]+)?|knowledge(?:\/(?:library|expert-review|cases))?)(?:\?[\w=&.%-]+)?$/u.test(path)
     && !path.split(/[/?]/u).some((segment) => segment === ".." || segment === ".") ? path : undefined;
 }
 
@@ -823,12 +838,16 @@ export function parseUiBlock(input: unknown): AgentUiBlock | undefined {
     ...list(block.evidenceIds, 24, evidenceRef),
     ...provenance.flatMap((source) => source.reference && /^E[1-9][0-9]{0,3}$/u.test(source.reference) ? [source.reference] : []),
   ])];
+  const parsedActions = list(block.actions, 12, (entry) => parseAction(entry, data?.fieldId));
+  const actions = componentType === "WorkspaceNavigationCard"
+    ? parsedActions.filter((action) => action.type === "open-detail" && Boolean(data?.route) && action.value === data?.route).slice(0, 1)
+    : parsedActions;
   return {
     blockId, runId, title, componentType, schemaVersion: 1, status, createdAt, updatedAt, data, dataRef,
     summary: string(block.summary, 2400),
     provenance,
     evidenceIds,
-    actions: list(block.actions, 12, (entry) => parseAction(entry, data?.fieldId)),
+    actions,
   };
 }
 

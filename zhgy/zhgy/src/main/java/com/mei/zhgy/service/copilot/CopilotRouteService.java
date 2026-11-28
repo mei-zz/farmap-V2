@@ -70,7 +70,7 @@ public class CopilotRouteService {
         CopilotIntentRouter.Classification classification = hybrid.finalClassification();
         CopilotIntent intent = classification.intent();
         boolean pendingContinuation = conversation != null && pendingRecommendationContinuation(conversation.snapshot(), safeRequest.getMessage());
-        if (pendingContinuation || pendingActionConfirmation) intent = CopilotIntent.ACTION_REQUEST;
+        if (intent != CopilotIntent.UNSUPPORTED && (pendingContinuation || pendingActionConfirmation)) intent = CopilotIntent.ACTION_REQUEST;
 
         if (intent == CopilotIntent.UNSUPPORTED) return persist(conversation, safeRequest, withIntentDiagnostics(result(traceId, intent, CopilotResolutionStatus.UNSUPPORTED, null, null, false, "当前请求不属于 FarMap Copilot 支持范围。", "REJECT", classification.safeRoute(), classification.confidence()), hybrid, safeRequest.getMessage(), effectiveMessage, hasUserImages));
         if (intent == CopilotIntent.CLARIFICATION_REQUIRED || (!pendingContinuation && router.belowThreshold(classification.confidence()))) {
@@ -95,7 +95,7 @@ public class CopilotRouteService {
                     CopilotLongTermMemory memory = longTermMemory.revoke(decision.target(), userId);
                     persisted.setMemoryId(memory.getMemoryId()); persisted.setMemoryScope(memory.getScope()); persisted.setMemoryType(memory.getType()); persisted.setMemoryStatus(memory.getStatus().name());
                 }
-                conversations.updatePersistedResult(persisted, userId);
+                if (conversations != null) conversations.updatePersistedResult(persisted, userId);
             }
             return persisted;
         }

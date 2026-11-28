@@ -16,7 +16,7 @@ import { ActionChecklistCard } from "./blocks/ActionChecklistCard";
 import { MemoryProposalCard } from "./blocks/MemoryProposalCard";
 import { operationsViews } from "@/routes/navigation";
 import PlanningRecommendations from "@/features/pro-workspaces/PlanningRecommendations";
-import { detailRoute, parseUiBlock, uiId, type AgentUiAction, type AgentUiBlock, type BlockComponentType, type BlockData, type BlockItem, type DraftTaskPayload, type MaturityStage } from "./uiBlocks";
+import { detailRoute, parseUiBlock, uiId, workspaceNavigationTitles, type AgentUiAction, type AgentUiBlock, type BlockComponentType, type BlockData, type BlockItem, type DraftTaskPayload, type MaturityStage } from "./uiBlocks";
 import "./agent-ui-blocks.css";
 
 type BlockActions = {
@@ -60,6 +60,23 @@ function DataRows({ block }: ContentProps) {
     </div>)}</dl>}
     {!metrics.length && !items.length && block.status === "unavailable" && !block.summary && <p>当前没有可展示的数据。</p>}
   </>;
+}
+
+function WorkspaceNavigation({ block }: ContentProps) {
+  const route = block.data?.route;
+  const destination = route ? workspaceNavigationTitles[route] : undefined;
+  const hasOpenAction = block.actions.some((action) => action.type === "open-detail" && action.value === route);
+  return <section className="farmap-workspace-navigation">
+    {destination && hasOpenAction
+      ? <p><Map size={16} aria-hidden="true" /> 可前往 <strong>{destination}</strong></p>
+      : <p>该页面入口未通过安全校验，请明确要打开的工作台页面。</p>}
+  </section>;
+}
+
+function MemoryPreferences({ block, ...actions }: ContentProps) {
+  const items = block.data?.items ?? [];
+  if (items.length) return <DataRows block={block} {...actions} />;
+  return <p>{block.status === "completed" ? "长期偏好已更新，右侧记忆列表已同步。" : "当前没有已保存的长期偏好。"}</p>;
 }
 
 function hasNumericSeries(block: AgentUiBlock) {
@@ -267,7 +284,7 @@ function ParcelOverview({ block, ...actions }: ContentProps) {
 }
 
 const actionCards = new Set<BlockComponentType>(["FarmPlanCard", "FertilizerPlanCard", "IrrigationPlanCard", "FarmCalendarCard",
-  "FarmTaskList", "ClarificationForm", "ConfirmationCard", "ApprovalCard", "TaskProgressCard", "FeedbackCard", "FarmRecommendationCard", "OperationTaskCard", "OperationsQueryCard", "ActionChecklistCard"]);
+  "FarmTaskList", "ClarificationForm", "ConfirmationCard", "ApprovalCard", "TaskProgressCard", "FeedbackCard", "FarmRecommendationCard", "OperationTaskCard", "OperationsQueryCard", "ActionChecklistCard", "WorkspaceNavigationCard"]);
 const analysisCards = new Set<BlockComponentType>(["CropGrowthChart", "WeatherTrendChart", "SoilTrendChart", "ParcelCompareChart", "FarmAnalyticsCard",
   "DiagnosisCard", "PestDiagnosisCard", "RiskAlertCard", "DiagnosisEvidenceCard", "EvidenceCard", "ExpertReviewCard", "FarmMapCard", "FarmMaturityCard", "FarmAdviceCard",
   "SprayWeatherWindowCard", "PestComparisonCard", "EChartsAnalyticsCard", "ComparisonMatrixCard"]);
@@ -410,6 +427,8 @@ const registry: Record<BlockComponentType, { content: (props: ContentProps) => R
   ComparisonMatrixCard: { content: ComparisonMatrixCard, icon: ChartNoAxesCombined },
   ActionChecklistCard: { content: ActionChecklistCard, icon: ListChecks },
   MemoryProposalCard: { content: MemoryProposalCard, icon: BookOpen },
+  WorkspaceNavigationCard: { content: WorkspaceNavigation, icon: Map },
+  MemoryPreferenceCard: { content: MemoryPreferences, icon: BookOpen },
   FarmOperationChecklist: { content: DataRows, icon: ListChecks },
 };
 

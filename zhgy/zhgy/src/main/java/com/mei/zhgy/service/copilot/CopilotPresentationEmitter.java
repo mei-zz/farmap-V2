@@ -55,6 +55,10 @@ public final class CopilotPresentationEmitter {
     }
 
     private List<Map<String, Object>> actions(String type, Map<String, Object> data) {
+        if ("WorkspaceNavigationCard".equals(type) && data.get("route") instanceof String route
+                && CopilotWorkspaceRoutes.title(route) != null) {
+            return List.of(Map.of("type", "open-detail", "label", "打开" + CopilotWorkspaceRoutes.title(route), "value", route));
+        }
         if ("MemoryProposalCard".equals(type) && data.get("memoryProposal") instanceof CopilotMemoryProposalService.ProposalView proposal) {
             return List.of(Map.of("type", "confirm-memory", "label", "确认保存", "proposalId", proposal.proposalId(), "decision", "confirm"),
                     Map.of("type", "confirm-memory", "label", "忽略", "proposalId", proposal.proposalId(), "decision", "ignore"));
@@ -176,6 +180,8 @@ public final class CopilotPresentationEmitter {
             case "read_current_weather" -> "读取农场天气";
             case "read_field_context" -> "核对地块与物候";
             case "read_farm_directory" -> "读取农场列表";
+            case "navigate_workspace" -> "打开工作台页面";
+            case "manage_user_preference" -> "管理用户偏好";
             case "search_agricultural_knowledge", "read_agricultural_knowledge" -> "检索农业知识";
             case "analyze_uploaded_images" -> "分析上传图片";
             case "lookup_reference_atlas" -> "查找病虫害图鉴";

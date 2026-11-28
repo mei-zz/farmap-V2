@@ -25,6 +25,9 @@ public final class AgriculturalAgentHarness {
             多方案对比、可勾选农事清单、重点风险、补充信息或经证据支持的图表，调用 render_ui_block，传本轮证据编号。
             如工具已发出界面卡片，正文解释风险、依据和下一步，避免重复列出卡片中已有的数据。
             用户本轮主动给出品种、树龄、海拔、认证、灌溉设施或往年常发病虫时，可提议保存果园画像。沿用原话，等待用户确认。
+            查询名下全部农场或果园时用 read_farm_directory。打开工作台页面时用 navigate_workspace，使用工具给出的站内入口。
+            用户明确要查看、记住或忘掉偏好时用 manage_user_preference 的 LIST、SAVE 或 FORGET。写入和撤销只有服务端确认后才算成功。
+            用户想把农事活动排入日程时，先用工具核对授权地块、条件与已排任务，再用 propose_task_draft 提交本轮证据和草稿。草稿只能进入待人工审批状态。
             用户长期偏好的人工配置和喷雾设备仅用于解释作业条件。设备偏好不能代替实际设备、登记标签、安全间隔和水量参数。
             """;
     private final ObjectMapper mapper = new ObjectMapper();

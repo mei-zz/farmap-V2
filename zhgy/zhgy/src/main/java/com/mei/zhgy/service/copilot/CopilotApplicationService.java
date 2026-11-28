@@ -271,6 +271,7 @@ public class CopilotApplicationService {
                 else if ("aborted".equals(result.status())) continuationGrounding.remember(key, turn.grounding());
                 if (queuedInput) conversations.recordActivity(conversationId, userId, Map.of("type", "input", "requestId", controlId,
                         "operation", command.operation(), "status", "delivered", "at", Instant.now().toString()));
+                boolean approval = false;
                 if ("continue".equals(command.operation()) && "completed".equals(result.status()) && !safe(result.text()).isBlank()) {
                     String answer = finalAnswer(result.text());
                     if (!allowUngrounded) {
@@ -278,10 +279,18 @@ public class CopilotApplicationService {
                         streamDelta(emitter, answer);
                     }
                     emitPiSource(emitter, turn);
-                    if (userTurn != null) conversations.appendAssistantAnswer(conversationId, userId,
-                            userTurn.getIntent(), userTurn.getTraceId(), answer, responsePersistence(null, controlUi, userTurn.getTraceId()));
+                    if (userTurn != null) {
+                        var resumed = new CopilotChatRequest();
+                        resumed.setConversationId(conversationId);
+                        resumed.setMessage(userTurn.getMessage());
+                        var route = CopilotRouteResult.builder().intent(userTurn.getIntent()).traceId(userTurn.getTraceId())
+                                .resolvedContext(view.getActiveContext()).build();
+                        approval = presentHarnessDrafts(resumed, route, userId, emitter, turn, answer);
+                        conversations.appendAssistantAnswer(conversationId, userId, userTurn.getIntent(), userTurn.getTraceId(),
+                                answer, responsePersistence(null, controlUi, userTurn.getTraceId()));
+                    }
                 }
-                sendDone(emitter, "aborted".equals(result.status()) ? "ABORTED" : "COMPLETED");
+                sendDone(emitter, approval ? "RUN_CREATED" : "aborted".equals(result.status()) ? "ABORTED" : "COMPLETED");
             } catch (Exception error) {
                 if (queuedInput) try { conversations.recordActivity(conversationId, userId, Map.of("type", "input", "requestId", controlId,
                         "operation", command.operation(), "status", "uncertain", "at", Instant.now().toString())); } catch (RuntimeException ignored) { }
@@ -327,7 +336,8 @@ public class CopilotApplicationService {
             ui.traceId = routed.getTraceId(); ui.intent = routed.getIntent();
             recordActivity(ui, Map.of("type", "run.started", "runId", ui.runId, "at", Instant.now().toString()));
             send(emitter, "route", routed);
-            if (streamFarmDirectory(request, routed, userId, emitter)) return;
+            if (streamResolvedCommand(request, routed, userId, emitter)) return;
+            if ((!usesPi() || agriculturalTools == null) && streamFarmDirectory(request, routed, userId, emitter)) return;
             if (usesPi() && agriculturalTools != null && routed.getIntent() == CopilotIntent.GENERAL_QA
                     && routed.getResolutionStatus() == CopilotResolutionStatus.RESOLVED && !isCasualGreeting(request.getMessage())) {
                 streamHarnessTurn(request, routed, userId, emitter, hasImages);
@@ -381,7 +391,7 @@ public class CopilotApplicationService {
                 }
                 if (routed.getIntent() == CopilotIntent.ACTION_REQUEST && routed.getResolutionStatus() == CopilotResolutionStatus.RESOLVED) {
                     try {
-                        if ((isDirectTaskRequest(request.getMessage()) || routed.getRequestedAction() != null)
+                        if ((CopilotIntentRouter.isDirectTaskRequest(request.getMessage()) || routed.getRequestedAction() != null)
                                 && (routed.getResolvedContext() == null || routed.getResolvedContext().getDiagnosisId() == null
                                 || routed.getResolvedContext().getDiagnosisId().isBlank())) {
                             startDirectTaskAgent(request, routed, userId, emitter);
@@ -492,8 +502,24 @@ public class CopilotApplicationService {
             streamDelta(emitter, answer);
         }
         emitPiSource(emitter, turn);
+        boolean approval = presentHarnessDrafts(request, route, actor, emitter, turn, answer);
         appendChatAnswer(request, route, answer, actor);
-        sendDone(emitter, "COMPLETED");
+        sendDone(emitter, approval ? "RUN_CREATED" : "COMPLETED");
+    }
+
+    private boolean presentHarnessDrafts(CopilotChatRequest request, CopilotRouteResult route, Long actor,
+                                         SseEmitter emitter, PiTurn turn, String explanation) throws IOException {
+        if (turn.batch == null || turn.conflictingDrafts || agentRuntime == null) return false;
+        var drafts = turn.batch.tasks().stream().map(item -> new AgentRuntime.ScopedTaskDraft(
+                item.scope(), approvalDraft(item.scope(), item.draft(), turn, explanation), item.evidence())).toList();
+        var runs = agentRuntime.prepareTaskDraftBatch(request.getMessage(), actor, drafts);
+        for (var run : runs) {
+            emitWorkflowBlock(request, route, actor, emitter, run.getRunId(), null);
+            send(emitter, "run.created", Map.of("runId", run.getRunId(), "status", run.getStatus().name(),
+                    "workflow", "OPERATIONS_TASK_DRAFT"));
+            projectWorkflow(request, route, actor, emitter, run.getRunId());
+        }
+        return !runs.isEmpty();
     }
 
     private void streamFarmMaturity(CopilotChatRequest request, CopilotRouteResult routed, Long userId, SseEmitter emitter) throws IOException {
@@ -620,6 +646,43 @@ public class CopilotApplicationService {
         publishSummary(emitter, summary);
         emitBlock(emitter, "FarmDirectoryCard", "农场列表", null, Map.of("farms", farms), farms.isEmpty() ? "unavailable" : "ready", List.of());
         finishPresentedTurn(request, route, userId, emitter, summary, null, List.of());
+        return true;
+    }
+
+    private boolean streamResolvedCommand(CopilotChatRequest request, CopilotRouteResult route,
+                                          Long actor, SseEmitter emitter) throws IOException {
+        if (route.getResolutionStatus() != CopilotResolutionStatus.RESOLVED) return false;
+        String summary;
+        switch (route.getIntent()) {
+            case MEMORY_WRITE_REQUEST, MEMORY_FORGET_REQUEST -> {
+                boolean save = route.getIntent() == CopilotIntent.MEMORY_WRITE_REQUEST;
+                String expected = save ? "ACTIVE" : "REVOKED";
+                summary = route.getMemoryId() != null && expected.equals(route.getMemoryStatus())
+                        ? (save ? "已保存长期偏好。" : "已撤销长期偏好。")
+                        : "当前请求没有产生已确认的记忆变更。";
+                publishSummary(emitter, summary);
+                if (route.getMemoryId() != null && expected.equals(route.getMemoryStatus())) {
+                    emitBlock(emitter, "MemoryPreferenceCard", save ? "已保存长期偏好" : "已撤销长期偏好",
+                            null, Map.of("items", List.of()), "completed", List.of());
+                }
+            }
+            case MEMORY_QUERY -> {
+                var memories = route.getRelevantLongTermMemories() == null ? List.<CopilotMemoryView>of() : route.getRelevantLongTermMemories();
+                summary = memories.isEmpty() ? "当前没有已保存的偏好。" : "已找到 " + memories.size() + " 条长期记忆。";
+                publishSummary(emitter, summary);
+                emitBlock(emitter, "MemoryPreferenceCard", "已保存的长期记忆", null,
+                        Map.of("items", memories.stream().map(CopilotPreferenceTool::row).toList()), "ready", List.of());
+            }
+            case NAVIGATION_REQUEST -> {
+                String destination = CopilotWorkspaceRoutes.title(route.getSafeRoute());
+                summary = destination == null ? "请明确要打开的工作台页面。" : "可打开" + destination + "。";
+                publishSummary(emitter, summary);
+                if (destination != null) emitBlock(emitter, "WorkspaceNavigationCard", destination, null,
+                        Map.of("route", route.getSafeRoute()), "ready", List.of());
+            }
+            default -> { return false; }
+        }
+        finishPresentedTurn(request, route, actor, emitter, summary, null, List.of());
         return true;
     }
 
@@ -1274,22 +1337,6 @@ public class CopilotApplicationService {
         return value.matches("^(你好|您好|嗨|哈喽|hello|hi|谢谢|多谢|辛苦了|在吗|你是谁)[！!。,.？? ]*$");
     }
 
-    private boolean isDirectTaskRequest(String message) {
-        String value = safe(message).toLowerCase(Locale.ROOT);
-        boolean requested = (contains(value, "创建任务", "创建农事任务", "生成任务", "新建任务", "创建浇水任务", "创建施肥任务",
-                "安排农事任务", "安排浇水任务", "安排施肥任务", "create task", "schedule task")
-                || value.matches(".*(?:创建|生成|新建|安排).{0,12}任务.*")
-                || isAgentPlanningRequest(value));
-        return requested && !contains(value, "不要创建", "不创建", "无需创建", "只分析", "仅分析", "do not create", "without executing");
-    }
-
-    private boolean isAgentPlanningRequest(String value) {
-        boolean planningObject = contains(value, "农事计划", "农事安排", "作业计划", "管理计划", "采收计划", "一周计划", "周计划", "未来一周", "本周计划", "farm plan", "weekly plan");
-        boolean directive = contains(value, "帮我制定", "请制定", "给我制定", "制定一份", "帮我生成", "请生成", "给我生成", "生成一份",
-                "帮我规划", "请规划", "给我规划", "规划一份", "create a plan", "make a plan");
-        return planningObject && directive;
-    }
-
     private String visualEvidenceClarification(CopilotChatRequest request, CopilotRouteResult routed, CopilotFacts facts) {
         String fieldId = routed == null || routed.getResolvedContext() == null ? null : routed.getResolvedContext().getFieldId();
         String crop = facts == null ? null : facts.cropLabel();
@@ -1556,11 +1603,18 @@ public class CopilotApplicationService {
         }
         CopilotStableContext scope = (routed.getResolutionStatus() == null || routed.getResolutionStatus() == CopilotResolutionStatus.RESOLVED)
                 && routed.getResolvedContext() != null ? routed.getResolvedContext().copy() : new CopilotStableContext();
-        List<PiAgentRuntime.ReadTool> tools = liveTools(request, scope, userId, drafting, turn, emitter != null);
+        boolean workspaceTools = agriculturalTools != null && emitter != null && userId != null;
+        boolean canDraft = drafting || (workspaceTools && agentRuntime != null);
+        List<PiAgentRuntime.ReadTool> tools = liveTools(request, scope, userId, canDraft, turn, emitter != null);
         if (agriculturalTools != null) tools.addAll(agriculturalTools.tools(scope, userId, facts.cropLabel(), request.getMessage(),
                 trustedImageUrls(request.getImageUrls()), emitter != null, turn.evidence));
         if (memoryProposals != null && emitter != null && routed.getTurnId() != null) {
             tools.add(memoryProposalTool(request, routed.getTurnId(), scope, userId));
+        }
+        if (workspaceTools) {
+            var preferences = memories == null ? null : new CopilotPreferenceTool(memories, scope, request.getMessage(),
+                    userId, request.getConversationId(), routed.getTurnId());
+            tools.addAll(AgriculturalToolRegistry.workspaceTools(farmFieldService, userId, preferences));
         }
         Integer activeFarm = parseInt(scope.getFarmId());
         tools = tools.stream().map(tool -> CopilotPiToolEvidence.bind(tool, turn.evidence, activeFarm)).toList();
@@ -1952,6 +2006,7 @@ public class CopilotApplicationService {
         String knowledgeStatus = "NOT_REQUESTED";
         boolean privateFacts;
         boolean publicFacts;
+        final Set<String> memoryChanges = new java.util.HashSet<>();
         final int inheritedKnowledgeCount;
         AgentRuntime.TaskDraft draft;
         AgriculturalTaskDraftTool.Batch batch;
@@ -2031,7 +2086,17 @@ public class CopilotApplicationService {
             if (data instanceof Map<?, ?> value && turn != null && "READY".equals(value.get("status"))) {
                 if (Set.of("query_operations_tasks", "analyze_uploaded_images", "read_current_weather", "read_previous_analysis").contains(observation.name())
                         || "OWNER_EXPERT_REVIEW".equals(value.get("source"))) turn.privateFacts = true;
+                if ("read_farm_directory".equals(observation.name()) || "manage_user_preference".equals(observation.name())) turn.privateFacts = true;
+                if ("navigate_workspace".equals(observation.name())) turn.publicFacts = true;
                 if ("lookup_reference_atlas".equals(observation.name()) || "search_historical_cases".equals(observation.name())) turn.publicFacts = true;
+            }
+            if ("manage_user_preference".equals(observation.name()) && data instanceof Map<?, ?> mutation
+                    && mutation.get("memoryId") instanceof String memoryId
+                    && mutation.get("status") instanceof String status && Set.of("SAVED", "REVOKED").contains(status)) {
+                if (turn != null) turn.privateFacts = true;
+                if (emitter != null && (turn == null || turn.memoryChanges.add(memoryId + ":" + status))) {
+                    send(emitter, "memory.changed", Map.of("memoryId", memoryId, "status", status));
+                }
             }
             if (data instanceof Map<?, ?> report && turn != null && "COMPLETED".equals(report.get("status"))
                     && Set.of("inspect_camera_maturity", "analyze_uploaded_images").contains(observation.name())) {

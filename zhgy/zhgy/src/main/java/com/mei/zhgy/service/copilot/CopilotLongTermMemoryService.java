@@ -61,6 +61,9 @@ public class CopilotLongTermMemoryService {
         String normalized = lower(message);
         if (containsSensitive(normalized)) return CopilotMemoryDecision.reject("SENSITIVE_MEMORY_REJECTED");
         if (containsSafetyOverride(normalized)) return CopilotMemoryDecision.reject("SAFETY_OVERRIDE_MEMORY_REJECTED");
+        if (isDosageKey(normalized) || normalized.matches("(?s).*\\d+(?:[.．]\\d+)?\\s*(?:倍液|毫升/亩|克/亩|ml/l|g/l|ppm).*")) {
+            return CopilotMemoryDecision.reject("PESTICIDE_DOSAGE_NOT_MEMORY");
+        }
         CopilotMemoryCandidate candidate = extract(normalized, message, active, page);
         if (candidate == null) return CopilotMemoryDecision.question("你希望我长期记住哪一项明确的偏好或约束？");
         try { validateScope(candidate, userId); return CopilotMemoryDecision.candidate(candidate); }
@@ -152,13 +155,17 @@ public class CopilotLongTermMemoryService {
             return CopilotMemoryCandidate.builder().scope(CopilotMemoryScope.USER).type(CopilotMemoryType.USER_PREFERENCE)
                     .key(KEY_PREFERRED_SPRAY_EQUIPMENT).value(sprayEquipment).displayText(display(original, sprayEquipment)).build();
         }
-        if (contains(normalized, "低残留", "low residue")) { key = "preferred_treatment_style"; value = "LOW_RESIDUE"; }
+        if (contains(normalized, "生物防治", "biological control")) { key = "preferred_treatment_style"; value = "BIOLOGICAL"; }
+        else if (contains(normalized, "低残留", "low residue")) { key = "preferred_treatment_style"; value = "LOW_RESIDUE"; }
         else if (contains(normalized, "成本", "低成本", "low cost")) { key = "preferred_treatment_style"; value = "LOW_COST"; }
         else if (contains(normalized, "尽量简短", "简短", "brief", "short")) { key = "preferred_response_detail"; value = "SHORT"; }
         else if (contains(normalized, "尽量详细", "详细", "detailed")) { key = "preferred_response_detail"; value = "DETAILED"; }
-        else if (contains(normalized, "风险最低", "风险最小", "保守", "conservative")) { key = "preferred_risk_level"; value = "CONSERVATIVE"; }
+        else if (contains(normalized, "风险最低", "风险最小", "保守", "别推高毒", "不要推荐高毒", "conservative")) { key = "preferred_risk_level"; value = "CONSERVATIVE"; }
         else if (contains(normalized, "风险平衡", "balanced")) { key = "preferred_risk_level"; value = "BALANCED"; }
         else if (contains(normalized, "夜间", "night")) { key = "avoid_operation_window"; value = "NIGHT"; }
+        else if (contains(normalized, "中午", "正午", "midday") && contains(normalized, "避开", "避免", "不要", "不在", "avoid")) { key = "avoid_operation_window"; value = "MIDDAY"; }
+        else if (contains(normalized, "早上", "上午", "morning") && contains(normalized, "习惯", "通常", "优先", "一般", "prefer")
+                && contains(normalized, "打药", "施药", "喷雾", "spray")) { key = "preferred_operation_window"; value = "MORNING"; }
         else if (contains(normalized, "不考虑增加灌溉", "不要增加灌溉", "avoid irrigation")) { key = "avoid_operation_type"; value = "IRRIGATION"; }
         else return null;
         if (key.startsWith("preferred_response")) type = CopilotMemoryType.COMMUNICATION_PREFERENCE;
@@ -360,6 +367,9 @@ public class CopilotLongTermMemoryService {
     }
 
     private boolean matchesForget(CopilotLongTermMemory memory, String message) {
+        if (contains(message, "生物防治", "biological control")) return "BIOLOGICAL".equals(memory.getValue());
+        if (contains(message, "中午", "正午", "midday")) return "MIDDAY".equals(memory.getValue());
+        if (contains(message, "早上", "上午", "morning")) return "MORNING".equals(memory.getValue());
         if (contains(message, "低残留", "low residue")) return "LOW_RESIDUE".equals(memory.getValue());
         if (contains(message, "成本", "低成本", "low cost")) return "LOW_COST".equals(memory.getValue());
         if (contains(message, "简短", "short", "brief")) return "SHORT".equals(memory.getValue());

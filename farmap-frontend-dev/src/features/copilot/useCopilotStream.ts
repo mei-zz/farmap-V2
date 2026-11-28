@@ -6,6 +6,7 @@ import { mergePresentation, parsePresentation, updatePresentationBlocks, type Me
 import { abortCopilotAgent, controlCopilotAgent, getCopilotConversationId, loadCopilotConversation, streamCopilotChat } from "./service";
 import { parseUiBlock, parseUiBlocks, uiId, type AgentUiBlock } from "./uiBlocks";
 import type { CopilotChatRequest, CopilotResponseMetadata, CopilotRouteResult } from "./contract";
+import { memoryMutation, routeMemoryMutation, type CopilotMemoryMutation } from "./memoryEvents";
 
 export type CopilotStreamPhase = "idle" | "streaming" | "completed" | "failed" | "aborted";
 
@@ -51,6 +52,10 @@ export type CopilotStreamSnapshot = {
   doneStatus?: string;
   terminal: boolean;
   eventCount: number;
+  /** Confirmed mutations observed in this turn, deduplicated by memory id and status. */
+  memoryMutations: CopilotMemoryMutation[];
+  /** Monotonic signal that changes once per confirmed memory mutation. */
+  memoryRevision: number;
   timedOut: boolean;
   startedAt?: number;
   finishedAt?: number;
@@ -75,6 +80,8 @@ const emptySnapshot = (): CopilotStreamSnapshot => ({
   workspacePending: false,
   terminal: false,
   eventCount: 0,
+  memoryMutations: [],
+  memoryRevision: 0,
   timedOut: false,
 });
 
@@ -92,6 +99,11 @@ function withText(snapshot: CopilotStreamSnapshot): CopilotStreamSnapshot {
 
 function hasAnswer(snapshot: CopilotStreamSnapshot): boolean {
   return Boolean(messageText(snapshot).trim() || snapshot.blocks.length || hasVisibleMessageParts(snapshot.parts));
+}
+
+function addMemoryMutation(snapshot: CopilotStreamSnapshot, mutation: CopilotMemoryMutation | undefined): CopilotStreamSnapshot {
+  if (!mutation || snapshot.memoryMutations.some((item) => item.key === mutation.key)) return snapshot;
+  return { ...snapshot, memoryMutations: [...snapshot.memoryMutations, mutation], memoryRevision: snapshot.memoryRevision + 1 };
 }
 
 function protocolActivity(activity: ChatActivity | undefined, part: ReturnType<typeof parseMessagePart>): ChatActivity | undefined {
@@ -163,6 +175,7 @@ function applyEvent(snapshot: CopilotStreamSnapshot, event: ServerSentEvent): Co
 
   if (event.event === "route") {
     next.route = data as CopilotRouteResult;
+    next = addMemoryMutation(next, routeMemoryMutation(next.route));
     return withText(next);
   }
 
@@ -196,6 +209,11 @@ function applyEvent(snapshot: CopilotStreamSnapshot, event: ServerSentEvent): Co
 
   if (event.event === "status") {
     next.statusMessage = typeof data.message === "string" ? data.message : snapshot.statusMessage;
+    return withText(next);
+  }
+
+  if (event.event === "memory.changed") {
+    next = addMemoryMutation(next, memoryMutation(data.memoryId, data.status));
     return withText(next);
   }
 
